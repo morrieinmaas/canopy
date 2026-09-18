@@ -4,9 +4,12 @@
 # Manifest format (tab-separated), five columns, defined once here:
 #   action<TAB>path<TAB>pre(absent|sha256)<TAB>backup_rel(-|path)<TAB>post(sha256|absent)
 # action is one of: own|splice|drop|generate|env
-# Assumption: paths must not contain tab or newline characters. A path
-# that does would produce a malformed row (extra fields), and restore.sh
-# silently skips rows it can't parse cleanly.
+# Paths must not contain tab or newline characters — the manifest format
+# cannot represent them (a tab or newline in a path corrupts the row into
+# extra fields). canopy_tx_record enforces this at record time: it fails
+# loudly via canopy_die instead of writing a row that cannot round-trip,
+# which restore.sh would otherwise silently skip during recovery — far
+# from the cause, and precisely when someone is relying on the tool.
 
 # Path mangling for backup filenames: percent-encode "%" as "%25" and
 # "/" as "%2F", leaving every other character as-is. This is fixed-width
@@ -61,6 +64,15 @@ canopy_tx_record() {
   case "$action" in
     own | splice | drop | generate | env) ;;
     *) canopy_die "canopy_tx_record: invalid action '$action' (expected own|splice|drop|generate|env)" ;;
+  esac
+  nl='
+'
+  tab="$(printf '\t')"
+  case "$path" in
+    *"$tab"* | *"$nl"*)
+      canopy_die "canopy_tx_record: path contains a tab or newline, which the manifest format cannot represent: $path"
+      ;;
+    *) ;;
   esac
   if [ -e "$path" ]; then
     mangled="$(canopy_tx_mangle "$path")"
