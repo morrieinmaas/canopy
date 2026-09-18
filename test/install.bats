@@ -108,6 +108,91 @@ setup() {
   [ -f "$XDG_CONFIG_HOME/tmux/plugins/.keep" ]
 }
 
+@test "restore --all returns the tree to its exact pre-install state, directories included" {
+  # A fake mise on PATH makes write_mise deterministic regardless of
+  # whether the real dev/CI machine happens to have mise installed, while
+  # leaving ~/.config/mise itself absent, same as ~/.config/tmux.
+  fake_bin="$BATS_TEST_TMPDIR/fakebin-mise-fresh"
+  mkdir -p "$fake_bin"
+  cat >"$fake_bin/mise" <<'EOF'
+#!/bin/sh
+exit 0
+EOF
+  chmod +x "$fake_bin/mise"
+  PATH="$fake_bin:$PATH"
+
+  [ ! -d "$XDG_CONFIG_HOME/tmux" ]
+  [ ! -d "$XDG_CONFIG_HOME/mise" ]
+  before="$(find "$HOME" | sort)"
+
+  run canopy install
+  [ "$status" -eq 0 ]
+  [ -d "$XDG_CONFIG_HOME/tmux" ]
+  [ -d "$XDG_CONFIG_HOME/mise/conf.d" ]
+
+  run canopy restore --all
+  [ "$status" -eq 0 ]
+
+  # find (not find -type f): the tree, directories included, must be
+  # byte-identical to before install ever ran.
+  after="$(find "$HOME" | sort)"
+  [ "$before" = "$after" ]
+}
+
+@test "restore removes only the mise conf.d it created, keeping a pre-existing mise dir" {
+  fake_bin="$BATS_TEST_TMPDIR/fakebin-mise-partial"
+  mkdir -p "$fake_bin"
+  cat >"$fake_bin/mise" <<'EOF'
+#!/bin/sh
+exit 0
+EOF
+  chmod +x "$fake_bin/mise"
+  PATH="$fake_bin:$PATH"
+
+  mkdir -p "$XDG_CONFIG_HOME/mise"
+  touch "$XDG_CONFIG_HOME/mise/config.toml"
+
+  run canopy install
+  [ "$status" -eq 0 ]
+  [ -d "$XDG_CONFIG_HOME/mise/conf.d" ]
+
+  run canopy restore --all
+  [ "$status" -eq 0 ]
+
+  [ ! -e "$XDG_CONFIG_HOME/mise/conf.d" ]
+  [ -d "$XDG_CONFIG_HOME/mise" ]
+  [ -f "$XDG_CONFIG_HOME/mise/config.toml" ]
+}
+
+@test "restore keeps a pre-existing mise dir even though removing conf.d leaves it empty" {
+  # Unlike the previous test, mise/ holds nothing else: a wrong
+  # implementation that tracked the pre-existing parent (not just the
+  # conf.d level it actually created) would still successfully rmdir it,
+  # since it really is empty by the time cleanup runs. Only "never record a
+  # directory that already existed" (not "rmdir happens to fail") can make
+  # this test pass.
+  fake_bin="$BATS_TEST_TMPDIR/fakebin-mise-empty"
+  mkdir -p "$fake_bin"
+  cat >"$fake_bin/mise" <<'EOF'
+#!/bin/sh
+exit 0
+EOF
+  chmod +x "$fake_bin/mise"
+  PATH="$fake_bin:$PATH"
+
+  mkdir -p "$XDG_CONFIG_HOME/mise"
+
+  run canopy install
+  [ "$status" -eq 0 ]
+  [ -d "$XDG_CONFIG_HOME/mise/conf.d" ]
+
+  run canopy restore --all
+  [ "$status" -eq 0 ]
+
+  [ ! -e "$XDG_CONFIG_HOME/mise/conf.d" ]
+  [ -d "$XDG_CONFIG_HOME/mise" ]
+}
+
 @test "install writes the mise fragment when mise conf.d already exists" {
   mkdir -p "$XDG_CONFIG_HOME/mise/conf.d"
   PATH="$(restricted_path)"
