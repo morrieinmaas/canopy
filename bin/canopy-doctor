@@ -114,7 +114,7 @@ fi
 # server. Output goes to a real file for the same reason: a still-running
 # descendant holding a pipe open can hang a reader waiting on EOF; a file
 # has no such hazard.
-mkdir -p "$CANOPY_RUNTIME"
+canopy_runtime_ensure
 validate_tmp="$CANOPY_RUNTIME/doctor-validate.$$"
 trap 'rm -f "$validate_tmp"' EXIT
 entry_point="$(canopy_entry_point)"

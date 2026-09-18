@@ -65,3 +65,93 @@ setup() { setup_canopy_env; . "$CANOPY_STORE/lib/env.sh"; }
   HOME="$BATS_TEST_TMPDIR/home" XDG_RUNTIME_DIR="$BATS_TEST_TMPDIR/run" canopy_paths
   [ "$CANOPY_RUNTIME" = "$BATS_TEST_TMPDIR/run/canopy" ]
 }
+
+@test "the runtime dir is created private to its owner" {
+  # The fallback path is /tmp/canopy-<uid>, inside a world-writable
+  # directory, so the mode it is created with is the only thing standing
+  # between canopy's scratch files and every other account on the machine.
+  CANOPY_RUNTIME="$BATS_TEST_TMPDIR/fresh-runtime/canopy"
+  [ ! -e "$CANOPY_RUNTIME" ]
+  canopy_runtime_ensure
+  [ -d "$CANOPY_RUNTIME" ]
+  [ "$(canopy_stat_field '%a' '%Lp' "$CANOPY_RUNTIME")" = "700" ]
+}
+
+@test "an existing private runtime dir is accepted and left alone" {
+  CANOPY_RUNTIME="$BATS_TEST_TMPDIR/existing-runtime"
+  mkdir -p "$CANOPY_RUNTIME"
+  chmod 700 "$CANOPY_RUNTIME"
+  run canopy_runtime_ensure
+  [ "$status" -eq 0 ]
+  [ "$(canopy_stat_field '%a' '%Lp' "$CANOPY_RUNTIME")" = "700" ]
+}
+
+@test "a world-writable runtime dir is refused, not adopted" {
+  # The attack the fallback path invites: another local account creates
+  # /tmp/canopy-<uid> first, with a mode that keeps it writable. mkdir -p
+  # is silent about a path that already exists, so without this check
+  # canopy simply writes its scratch files into someone else's directory.
+  CANOPY_RUNTIME="$BATS_TEST_TMPDIR/planted-runtime"
+  mkdir -p "$CANOPY_RUNTIME"
+  chmod 777 "$CANOPY_RUNTIME"
+  run canopy_runtime_ensure
+  [ "$status" -ne 0 ]
+  [[ "$output" == *"writable by group or other"* ]]
+  [[ "$output" == *"$CANOPY_RUNTIME"* ]]
+}
+
+@test "a group-writable runtime dir is refused too" {
+  CANOPY_RUNTIME="$BATS_TEST_TMPDIR/group-runtime"
+  mkdir -p "$CANOPY_RUNTIME"
+  chmod 770 "$CANOPY_RUNTIME"
+  run canopy_runtime_ensure
+  [ "$status" -ne 0 ]
+  [[ "$output" == *"writable by group or other"* ]]
+}
+
+@test "a runtime path that is a regular file is refused" {
+  CANOPY_RUNTIME="$BATS_TEST_TMPDIR/runtime-is-a-file"
+  printf 'not a directory\n' >"$CANOPY_RUNTIME"
+  run canopy_runtime_ensure
+  [ "$status" -ne 0 ]
+  [[ "$output" == *"not a directory"* ]]
+}
+
+@test "a runtime path that is a symlink is refused, however safe its target looks" {
+  # Following it would write canopy's scratch files wherever the link
+  # names, and the mode and owner checks below would then be answered by
+  # the target rather than by the path canopy was handed.
+  elsewhere="$BATS_TEST_TMPDIR/elsewhere"
+  mkdir -p "$elsewhere"
+  chmod 700 "$elsewhere"
+  CANOPY_RUNTIME="$BATS_TEST_TMPDIR/runtime-is-a-link"
+  ln -s "$elsewhere" "$CANOPY_RUNTIME"
+  run canopy_runtime_ensure
+  [ "$status" -ne 0 ]
+  [[ "$output" == *"symlink"* ]]
+}
+
+@test "a runtime dir owned by another user is refused even at a safe mode" {
+  # /usr is root-owned and mode 755 on every platform this project runs
+  # on: safe permissions, wrong owner. The mode check alone would wave it
+  # through.
+  if [ "$(id -u)" -eq 0 ]; then
+    skip "running as root, so no directory on this machine has the wrong owner"
+  fi
+  CANOPY_RUNTIME=/usr
+  run canopy_runtime_ensure
+  [ "$status" -ne 0 ]
+  [[ "$output" == *"owned by uid"* ]]
+}
+
+@test "canopy doctor refuses a runtime dir it does not exclusively own" {
+  # The refusal reaches a user through the command that actually writes
+  # there, not only through the library.
+  planted="$BATS_TEST_TMPDIR/planted-doctor-runtime"
+  mkdir -p "$planted"
+  chmod 777 "$planted"
+  setup_canopy_home
+  run env CANOPY_RUNTIME="$planted" canopy doctor
+  [ "$status" -ne 0 ]
+  [[ "$output" == *"writable by group or other"* ]]
+}
