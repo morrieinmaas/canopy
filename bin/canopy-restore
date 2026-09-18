@@ -50,15 +50,27 @@ nl='
 # are sitting in its files/ directory, which is precisely the state
 # rollback exists to undo. The per-row hash guard below is what protects
 # a file the user has since changed.
-# Only .failed is excluded: install already reverted those itself by
-# running $tx/restore.sh, so replaying them automatically would be noise.
-# They stay visible in --list and --to can still name one explicitly.
+# Two kinds are excluded, and both stay visible in --list and nameable by
+# --to:
+#   .failed  install already reverted those itself by running
+#            $tx/restore.sh, so replaying them automatically would be
+#            noise.
+#   .rollback  a restore's own transaction. Replaying one puts canopy's
+#            bytes back, which is the exact opposite of what the mode
+#            named --all promises, and it compounds: every run would
+#            record a fresh transaction over the previous run's, so the
+#            rows to replay double each time. Reverting a revert is a
+#            legitimate thing to want, which is why the restore point
+#            keeps full fidelity and `--to <restore-id>` still reaches
+#            it, but it is an explicit request, never part of "undo
+#            everything canopy did".
 canopy_restore_tx_list() {
   [ -d "$backups_dir" ] || return 0
   for d in "$backups_dir"/*/; do
     [ -d "$d" ] || continue
     d="${d%/}"
     [ -f "$d/.failed" ] && continue
+    [ -f "$d/.rollback" ] && continue
     printf '%s\n' "$d"
   done | sort
 }
@@ -220,6 +232,10 @@ restore_id=""
 if [ -s "$tmp_target" ]; then
   restore_tx="$(canopy_tx_begin restore)"
   restore_id="${restore_tx##*/}"
+  # Marked before a single row is touched, so an interrupted restore is
+  # excluded from automatic rollback too: its rows describe a revert that
+  # only half happened, and replaying them would undo the half that did.
+  touch "$restore_tx/.rollback"
   tab="$(printf '\t')"
   while IFS= read -r tx_dir; do
     [ -n "$tx_dir" ] || continue
@@ -242,7 +258,14 @@ if [ -s "$tmp_target" ]; then
       # reverted, which is exactly what install itself does with
       # $tx/restore.sh when its own validation fails. Every row of a
       # committed transaction is still hash-guarded.
-      if [ -n "$post" ] && [ "$current" != "$post" ] && [ "$force" -ne 1 ]; then
+      #
+      # The guard exists to protect bytes the user wrote after canopy did.
+      # A file already holding this row's own pre bytes is not that: it is
+      # a row that has already been reverted, and reverting it again is a
+      # no-op. Without that clause, a second `restore --all` read its own
+      # first run's work as an edit it must refuse to touch, and reported
+      # the user's original bytes as "changed since canopy wrote it".
+      if [ -n "$post" ] && [ "$current" != "$post" ] && [ "$current" != "$pre" ] && [ "$force" -ne 1 ]; then
         kept=$((kept + 1))
         printf '%s\n' "$path" >>"$kept_list"
         continue

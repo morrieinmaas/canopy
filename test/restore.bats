@@ -450,3 +450,29 @@ interrupt_install() {
   [ "$(canopy_sha256 "$a")" = "$orig_a" ]
   [ "$(canopy_sha256 "$b")" = "$orig_b" ]
 }
+
+@test "restore --all three times in a row keeps the machine at its original bytes and exits clean each time" {
+  # restore --all is the promise canopy is built on, and a promise that
+  # only holds the first time is not one. The second run must not read
+  # the first run's own work as an edit the user made.
+  owned="$BATS_TEST_TMPDIR/idem-own.conf"
+  dropped="$BATS_TEST_TMPDIR/idem-drop.conf"
+  printf 'original\n' > "$owned"; orig="$(canopy_sha256 "$owned")"
+
+  tx="$(canopy_tx_begin install)"; touch "$tx/.pinned"
+  canopy_tx_record "$tx" own "$owned"
+  canopy_tx_record "$tx" drop "$dropped"
+  printf 'canopy-owned\n' > "$owned"
+  printf 'canopy-generated\n' > "$dropped"
+  canopy_tx_commit "$tx"
+
+  for run_no in 1 2 3; do
+    run canopy restore --all
+    printf 'run %s: status=%s output=%s\n' "$run_no" "$status" "$output" >&2
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"0 kept"* ]]
+    [[ "$output" != *"kept (changed since canopy wrote it)"* ]]
+    [ "$(canopy_sha256 "$owned")" = "$orig" ]
+    [ ! -e "$dropped" ]
+  done
+}
