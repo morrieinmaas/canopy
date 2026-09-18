@@ -99,3 +99,43 @@ EOF
   [[ "$output" == *"count: 1"* ]]
   [[ "$output" == *"pinned pre-install point: yes"* ]]
 }
+
+@test "warns about an install interrupted before it committed, naming the recovery command" {
+  # Same simulated interruption as restore.bats: recorded rows and a byte
+  # copy of the original, but no .committed and no .pinned marker. This is
+  # the one situation doctor exists for, and it used to report OK.
+  . "$CANOPY_STORE/lib/manifest.sh"
+  target="$BATS_TEST_TMPDIR/target.conf"
+  printf 'original\n' >"$target"
+  tx="$(canopy_tx_begin install)"
+  canopy_tx_record "$tx" own "$target"
+  printf 'canopy-owned\n' >"$target"
+  tx_id="$(basename "$tx")"
+
+  run canopy-caps
+  [ "$status" -eq 0 ]
+  run canopy-index
+  [ "$status" -eq 0 ]
+  run canopy-doctor
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"INCOMPLETE"* ]]
+  [[ "$output" == *"$tx_id"* ]]
+  [[ "$output" == *"canopy restore --to $tx_id"* ]]
+}
+
+@test "does not warn about a transaction install already reverted itself" {
+  . "$CANOPY_STORE/lib/manifest.sh"
+  target="$BATS_TEST_TMPDIR/target.conf"
+  printf 'original\n' >"$target"
+  tx="$(canopy_tx_begin install)"
+  canopy_tx_record "$tx" own "$target"
+  touch "$tx/.failed"
+
+  run canopy-caps
+  [ "$status" -eq 0 ]
+  run canopy-index
+  [ "$status" -eq 0 ]
+  run canopy-doctor
+  [ "$status" -eq 0 ]
+  [[ "$output" != *"INCOMPLETE"* ]]
+}

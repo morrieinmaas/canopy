@@ -41,24 +41,30 @@ done
 backups_dir="$CANOPY_STATE/backups"
 
 # canopy_restore_tx_list
-# Every committed transaction directory, oldest first. Uncommitted
-# transactions (no .committed marker) are ignored: their manifest post
-# column may still be unfilled, so replaying them is not well-defined.
+# Every transaction directory automatic rollback may act on, oldest
+# first. A transaction with recorded rows but no .committed marker is
+# included, not skipped: it means canopy was interrupted partway through,
+# so partial changes are sitting on disk and the user's original bytes
+# are sitting in its files/ directory, which is precisely the state
+# rollback exists to undo. The per-row hash guard below is what protects
+# a file the user has since changed.
+# Only .failed is excluded: install already reverted those itself by
+# running $tx/restore.sh, so replaying them automatically would be noise.
+# They stay visible in --list and --to can still name one explicitly.
 canopy_restore_tx_list() {
   [ -d "$backups_dir" ] || return 0
   for d in "$backups_dir"/*/; do
     [ -d "$d" ] || continue
     d="${d%/}"
-    [ -f "$d/.committed" ] || continue
+    [ -f "$d/.failed" ] && continue
     printf '%s\n' "$d"
   done | sort
 }
 
 # canopy_restore_tx_list_all
 # Every transaction directory, oldest first, regardless of completion
-# state. Only --list uses this: it must be able to show a failed
-# transaction, marked FAILED, distinctly from a committed one, rather
-# than silently omitting it the way rollback's committed-only view does.
+# state. --list renders this, and --to resolves against it, so every id
+# --list displays is an id --to accepts.
 canopy_restore_tx_list_all() {
   [ -d "$backups_dir" ] || return 0
   for d in "$backups_dir"/*/; do
@@ -116,19 +122,23 @@ fi
 
 all_tx="$(canopy_restore_tx_list)"
 
-# Resolve which committed transactions this run should undo, oldest
-# first, before opening our own transaction below (which must not be
-# part of the set it is about to undo).
+# Resolve which transactions this run should undo, oldest first, before
+# opening our own transaction below (which must not be part of the set it
+# is about to undo).
 target_list=""
 case "$mode" in
   last)
     [ -n "$all_tx" ] && target_list="$(printf '%s\n' "$all_tx" | tail -n 1)"
     ;;
   to)
+    # Resolved against every transaction on disk, not just the ones
+    # automatic rollback would pick: --list and --to must agree on which
+    # ids exist, and one accepting what the other shows is a plain bug.
+    known_tx="$(canopy_restore_tx_list_all)"
     match_dir=""
-    if [ -n "$all_tx" ]; then
+    if [ -n "$known_tx" ]; then
       match_dir="$(
-        printf '%s\n' "$all_tx" | while IFS= read -r d; do
+        printf '%s\n' "$known_tx" | while IFS= read -r d; do
           if [ "${d##*/}" = "$to_id" ]; then
             printf '%s\n' "$d"
             break
@@ -137,26 +147,20 @@ case "$mode" in
       )"
     fi
     [ -n "$match_dir" ] || canopy_die "canopy-restore: no such transaction: $to_id"
-    target_list="$(printf '%s\n' "$all_tx" | awk -v want="$match_dir" 'BEGIN { f = 0 } $0 == want { f = 1 } f { print }')"
+    # The named transaction plus every newer one automatic rollback would
+    # act on. The named one is always in the set, even when it is .failed
+    # and therefore normally skipped: naming it is an explicit request,
+    # and re-reverting an already-reverted transaction is a no-op.
+    newer="$(printf '%s\n' "$all_tx" | awk -v want="$match_dir" 'NF && $0 >= want')"
+    target_list="$(printf '%s\n%s\n' "$match_dir" "$newer" | awk 'NF && !seen[$0]++')"
     ;;
   all)
-    pinned_dir=""
-    if [ -n "$all_tx" ]; then
-      pinned_dir="$(
-        printf '%s\n' "$all_tx" | while IFS= read -r d; do
-          if [ -f "$d/.pinned" ]; then
-            printf '%s\n' "$d"
-            break
-          fi
-        done
-      )"
-    fi
-    # No pinned pre-install point on record (e.g. nothing has ever been
-    # installed): there is nothing to roll back to, so --all is a no-op
-    # rather than an error.
-    if [ -n "$pinned_dir" ]; then
-      target_list="$(printf '%s\n' "$all_tx" | awk -v want="$pinned_dir" 'BEGIN { f = 0 } $0 == want { f = 1 } f { print }')"
-    fi
+    # Everything canopy recorded and has not already reverted itself.
+    # This used to anchor on the pinned pre-install point, but .pinned is
+    # written only after a successful commit, so anchoring on it made the
+    # one transaction a user most needs to reach (an install interrupted
+    # before it committed) invisible to the mode named --all.
+    target_list="$all_tx"
     ;;
   *) ;;
 esac
@@ -193,7 +197,13 @@ if [ -s "$tmp_target" ]; then
         current="absent"
       fi
 
-      if [ "$current" != "$post" ] && [ "$force" -ne 1 ]; then
+      # An empty post column means this transaction never committed, so
+      # canopy never got to record what it left on disk and there is
+      # nothing to compare the current bytes against. Such a row is
+      # reverted, which is exactly what install itself does with
+      # $tx/restore.sh when its own validation fails. Every row of a
+      # committed transaction is still hash-guarded.
+      if [ -n "$post" ] && [ "$current" != "$post" ] && [ "$force" -ne 1 ]; then
         kept=$((kept + 1))
         printf '%s\n' "$path" >>"$kept_list"
         continue

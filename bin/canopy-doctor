@@ -143,16 +143,38 @@ printf '\n'
 printf 'Restore points:\n'
 restore_count=0
 pinned_found=no
+incomplete_list=""
 if [ -d "$CANOPY_STATE/backups" ]; then
   for d in "$CANOPY_STATE"/backups/*/; do
     [ -d "$d" ] || continue
-    [ -f "${d}.committed" ] || continue
-    restore_count=$((restore_count + 1))
-    [ -f "${d}.pinned" ] && pinned_found=yes
+    d="${d%/}"
+    if [ -f "$d/.committed" ]; then
+      restore_count=$((restore_count + 1))
+      if [ -f "$d/.pinned" ]; then
+        pinned_found=yes
+      fi
+    elif [ ! -f "$d/.failed" ]; then
+      # Recorded rows, no .committed marker and no .failed marker: canopy
+      # was interrupted between migrating the user's files and committing
+      # the transaction. The user's original bytes are sitting in this
+      # directory's files/, and nothing else in canopy would say so. A
+      # recovery tool that stays silent here is worse than no tool.
+      incomplete_list="$incomplete_list$d
+"
+    fi
   done
 fi
 printf '  count: %s\n' "$restore_count"
 printf '  pinned pre-install point: %s\n' "$pinned_found"
+if [ -n "$incomplete_list" ]; then
+  printf '%s' "$incomplete_list" | while IFS= read -r d; do
+    [ -n "$d" ] || continue
+    printf '  INCOMPLETE transaction, interrupted before it committed: %s\n' "${d##*/}"
+    printf '    your original files are backed up under %s\n' "$d/files"
+    printf '    recover with: canopy restore --to %s\n' "${d##*/}"
+  done
+  warnings=$((warnings + 1))
+fi
 printf '\n'
 
 # --- Commands ------------------------------------------------------------

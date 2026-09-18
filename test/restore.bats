@@ -207,28 +207,75 @@ setup() {
   [[ "$third_line" == *"PINNED"* ]]
 }
 
-@test "a plain rollback still skips a non-committed transaction, even though --list can now see it" {
-  a="$BATS_TEST_TMPDIR/skip-a.conf"
-  b="$BATS_TEST_TMPDIR/skip-b.conf"
+# interrupt_install
+# Reproduces exactly the on-disk state canopy-install leaves behind when
+# it is killed between writing the entry point and reaching
+# canopy_tx_commit: the transaction has recorded rows and a byte copy of
+# the user's original config, but no .committed marker and no .pinned
+# marker. Built directly rather than by racing a real install so the
+# window is deterministic. Sets $entry, $orig_hash and $tx.
+interrupt_install() {
+  entry_dir="$XDG_CONFIG_HOME/tmux"
+  entry="$entry_dir/tmux.conf"
+  mkdir -p "$entry_dir"
+  printf 'set -g @preexisting yes\n' > "$entry"
+  orig_hash="$(canopy_sha256 "$entry")"
+  tx="$(canopy_tx_begin install)"
+  canopy_tx_record "$tx" own "$entry"
+  printf '# canopy:entry-point: managed by canopy, do not edit directly.\n' > "$entry"
+}
+
+@test "a bare restore reverts an install interrupted before it committed" {
+  interrupt_install
+  run canopy restore
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"1 reverted"* ]]
+  [ "$(canopy_sha256 "$entry")" = "$orig_hash" ]
+}
+
+@test "restore --all reverts an install interrupted before it committed" {
+  interrupt_install
+  run canopy restore --all
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"1 reverted"* ]]
+  [ "$(canopy_sha256 "$entry")" = "$orig_hash" ]
+}
+
+@test "restore --to accepts the id --list printed for an interrupted install, and reverts it" {
+  interrupt_install
+  tx_id="$(basename "$tx")"
+
+  run canopy restore --list
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"$tx_id"* ]]
+  [[ "$output" == *"INCOMPLETE"* ]]
+
+  run canopy restore --to "$tx_id"
+  [ "$status" -eq 0 ]
+  [[ "$output" != *"no such transaction"* ]]
+  [[ "$output" == *"1 reverted"* ]]
+  [ "$(canopy_sha256 "$entry")" = "$orig_hash" ]
+}
+
+@test "a failed transaction stays out of automatic rollback, but --to can still name it" {
+  a="$BATS_TEST_TMPDIR/failed-a.conf"
   printf 'orig-a\n' > "$a"
-  printf 'orig-b\n' > "$b"
-
-  tx1="$(canopy_tx_begin install)"; touch "$tx1/.pinned"
-  canopy_tx_record "$tx1" own "$a"
+  tx="$(canopy_tx_begin install)"
+  canopy_tx_record "$tx" own "$a"
   printf 'canopy-a\n' > "$a"
-  canopy_tx_commit "$tx1"
-
-  # Begun and recorded, but never committed, e.g. the process was
-  # interrupted mid-transaction: must never be replayed by rollback,
-  # even though --list can now show it (as INCOMPLETE).
-  tx2="$(canopy_tx_begin interrupted)"
-  canopy_tx_record "$tx2" own "$b"
-  printf 'canopy-b\n' > "$b"
+  # install's own failure path: it reverted the file itself with
+  # $tx/restore.sh, then marked the transaction failed.
+  "$tx/restore.sh" >/dev/null
+  touch "$tx/.failed"
 
   run canopy restore --all
   [ "$status" -eq 0 ]
+  [[ "$output" == *"0 reverted, 0 kept"* ]]
+
+  run canopy restore --to "$(basename "$tx")"
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"1 reverted"* ]]
   [ "$(cat "$a")" = "orig-a" ]
-  [ "$(cat "$b")" = "canopy-b" ]
 }
 
 @test "restore fails and surfaces tmux's own error when the restored config is broken" {
