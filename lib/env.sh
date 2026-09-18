@@ -42,6 +42,27 @@ canopy_sha256() {
   else canopy_die "no sha256 tool found (need sha256sum or shasum)"; fi
 }
 
+# canopy_file_state <path>
+# The state canopy records for a path, and compares a path against later:
+# the literal string "absent", "symlink:<target>", or the sha256 of the
+# file's contents.
+#
+# A symlink is never followed here. The artifact at a symlinked path is the
+# link itself, and the bytes at the other end belong to whoever put them
+# there, which is the whole reason chezmoi, stow and bare dotfiles repos
+# produce one. Hashing through the link recorded the target's bytes under
+# the link's path, so canopy could not tell a replaced link from a
+# rewritten target, and restore could not put the link back.
+canopy_file_state() {
+  if [ -L "$1" ]; then
+    printf 'symlink:%s' "$(readlink "$1")"
+  elif [ -e "$1" ]; then
+    canopy_sha256 "$1"
+  else
+    printf 'absent'
+  fi
+}
+
 # canopy_entry_point
 # The tmux entry point on this machine, by tmux's own precedence:
 # ~/.tmux.conf wins when it exists, else the XDG path. Prints nothing when

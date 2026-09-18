@@ -246,11 +246,7 @@ if [ -s "$tmp_target" ]; then
         *) ;;
       esac
 
-      if [ -e "$path" ]; then
-        current="$(canopy_sha256 "$path")"
-      else
-        current="absent"
-      fi
+      current="$(canopy_file_state "$path")"
 
       # An empty post column means this transaction never committed, so
       # canopy never got to record what it left on disk and there is
@@ -281,12 +277,23 @@ if [ -s "$tmp_target" ]; then
         printf '%s\n' "$path" >>"$unguarded_list"
       fi
 
+      # -e is false for a dangling symlink, so -L is asked too, both for
+      # what is on disk now and for the backup: a backed-up relative
+      # symlink almost never resolves from inside files/, and reading that
+      # as "no backup" would skip the revert silently.
       canopy_tx_record "$restore_tx" "$action" "$path"
       if [ "$pre" = "absent" ]; then
-        [ -e "$path" ] && rm -f "$path"
-      elif [ "$backup_rel" != "-" ] && [ -f "$tx_dir/$backup_rel" ]; then
+        if [ -e "$path" ] || [ -L "$path" ]; then
+          rm -f "$path"
+        fi
+      elif [ "$backup_rel" != "-" ] && { [ -e "$tx_dir/$backup_rel" ] || [ -L "$tx_dir/$backup_rel" ]; }; then
         mkdir -p "$(dirname "$path")"
-        cp -p "$tx_dir/$backup_rel" "$path"
+        # Removed first, then copied with -P: whatever sits at $path may be
+        # a symlink, and writing into it would write through to a file this
+        # manifest never recorded. A backed-up symlink goes back as the
+        # link it was, pointing where it pointed.
+        rm -f "$path"
+        cp -pP "$tx_dir/$backup_rel" "$path"
       fi
       reverted=$((reverted + 1))
     done <"$tx_dir/manifest.tsv"

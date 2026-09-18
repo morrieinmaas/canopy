@@ -214,9 +214,79 @@ if ! diff -u "$before2_hashes.filtered" "$after2_hashes.filtered"; then
   fail=1
 fi
 
+printf 'restore-proof: scenario 2 OK, nothing outside canopy own dirs survived under %s\n' "$home2"
+
+# --- Scenario 3: a symlinked tmux.conf, the dotfiles case ------------------
+# chezmoi, stow and a bare dotfiles repo all leave ~/.config/tmux/tmux.conf
+# as a symlink into a directory outside $HOME. Neither scenario above can
+# see install writing through such a link, because the file it damages is
+# not under $HOME and so appears in no listing either of them takes. The
+# link, its target, and the rest of the dotfiles directory are all checked
+# here.
+echo
+echo "restore-proof: scenario 3, a symlinked tmux.conf pointing outside \$HOME"
+
+home3="$scratch/home3"
+dotfiles="$scratch/dotfiles"
+mkdir -p "$home3/.config/tmux" "$dotfiles"
+printf 'set -g @restore_proof_symlink distinctive-dotfiles-%s\n' "$$" >"$dotfiles/tmux.conf"
+printf 'unrelated dotfiles content %s\n' "$$" >"$dotfiles/other.conf"
+ln -s "$dotfiles/tmux.conf" "$home3/.config/tmux/tmux.conf"
+
+export HOME="$home3"
+export XDG_CONFIG_HOME="$home3/.config"
+export CANOPY_CONFIG="$scratch/canopy-config3"
+export CANOPY_STATE="$scratch/canopy-state3"
+export CANOPY_RUNTIME="$scratch/canopy-run3"
+canopy_paths
+
+before3_list="$scratch/before3.list"
+before3_hashes="$scratch/before3.hashes"
+canopy_restore_proof_record "$dotfiles" "$before3_list" "$before3_hashes"
+before3_link="$(readlink "$home3/.config/tmux/tmux.conf")"
+
+echo "restore-proof: installing..."
+canopy install --yes
+
+# The moment of truth: install has taken ownership of the entry point, and
+# the dotfiles directory the link points into must not have moved a byte.
+installed3_hashes="$scratch/installed3.hashes"
+canopy_restore_proof_record "$dotfiles" "$scratch/installed3.list" "$installed3_hashes"
+if ! diff -u "$before3_hashes" "$installed3_hashes"; then
+  echo "restore-proof: FAILED, install wrote through the symlink into $dotfiles" >&2
+  fail=1
+fi
+if [ -L "$home3/.config/tmux/tmux.conf" ]; then
+  echo "restore-proof: FAILED, install left the entry point as a symlink" >&2
+  fail=1
+fi
+
+echo "restore-proof: restoring..."
+canopy restore --all
+
+after3_list="$scratch/after3.list"
+after3_hashes="$scratch/after3.hashes"
+canopy_restore_proof_record "$dotfiles" "$after3_list" "$after3_hashes"
+
+if ! diff -u "$before3_list" "$after3_list"; then
+  echo "restore-proof: FAILED, the listing under $dotfiles changed" >&2
+  fail=1
+fi
+if ! diff -u "$before3_hashes" "$after3_hashes"; then
+  echo "restore-proof: FAILED, a file under $dotfiles changed" >&2
+  fail=1
+fi
+if [ ! -L "$home3/.config/tmux/tmux.conf" ]; then
+  echo "restore-proof: FAILED, restore did not put the symlink back" >&2
+  fail=1
+elif [ "$(readlink "$home3/.config/tmux/tmux.conf")" != "$before3_link" ]; then
+  echo "restore-proof: FAILED, the restored symlink points somewhere else" >&2
+  fail=1
+fi
+
 if [ "$fail" -ne 0 ]; then
   exit 1
 fi
 
-printf 'restore-proof: scenario 2 OK, nothing outside canopy own dirs survived under %s\n' "$home2"
-printf 'restore-proof: OK, both scenarios passed\n'
+printf 'restore-proof: scenario 3 OK, the symlink and %s are exactly as they were\n' "$dotfiles"
+printf 'restore-proof: OK, all three scenarios passed\n'
