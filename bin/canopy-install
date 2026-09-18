@@ -46,6 +46,31 @@ source-file "$CANOPY_STORE/tmux/tmux.conf"
 EOF
 }
 
+# canopy_mkdir_tracked <dir>
+# mkdir -p <dir>, recording every path level this call actually creates in
+# $tx/dirs-created.txt, shallowest first (so a later cleanup that reads the
+# file in reverse can rmdir deepest first, letting each removal make its
+# parent empty in turn). Never records a level that already existed, and
+# never $CANOPY_CONFIG itself or anything found while still inside it — that
+# directory is never touched by restore (spec 5.5), so it isn't tracked for
+# removal in the first place. This is the single call site every
+# directory-creating line in this script goes through, on purpose: two
+# separate hand-rolled tracking sites already drifted once (the entry point
+# vs. the mise fragment) before this fix.
+canopy_mkdir_tracked() {
+  target="$1"
+  missing=""
+  d="$target"
+  while [ ! -d "$d" ] && [ "$d" != "$CANOPY_CONFIG" ]; do
+    missing="$d
+$missing"
+    d="$(dirname "$d")"
+  done
+  mkdir -p "$target"
+  [ -n "$missing" ] && printf '%s' "$missing" >>"$tx/dirs-created.txt"
+  return 0
+}
+
 user_entry=""
 if [ -f "$dot_tmux_conf" ]; then
   user_entry="$dot_tmux_conf"
@@ -125,43 +150,14 @@ else
   # "owns the entry point" (spec 5.2), so create one at the XDG path. It is
   # a brand-new file (action drop, pre-state absent), not a migration.
   entry_dir="$(dirname "$xdg_tmux_conf")"
-  entry_dir_created=0
-  [ -d "$entry_dir" ] || entry_dir_created=1
   canopy_tx_record "$tx" drop "$xdg_tmux_conf"
-  mkdir -p "$entry_dir"
+  canopy_mkdir_tracked "$entry_dir"
   write_entry_stub "$xdg_tmux_conf"
-  if [ "$entry_dir_created" -eq 1 ]; then
-    # The manifest format models files, not directories, so a directory
-    # canopy-install itself created (to hold the file above) is tracked in
-    # a sidecar next to restore.sh instead of as a manifest row. The
-    # cleanup snippet is spliced in before restore.sh's own final summary
-    # line (not appended after it), so the summary reflects a finished
-    # restore. It contains no interpolated path data — just a static loop
-    # over the sidecar file, mirroring how restore.sh already reads
-    # manifest.tsv line-by-line.
-    printf '%s\n' "$entry_dir" >>"$tx/dirs-created.txt"
-    final_line="$(tail -n 1 "$tx/restore.sh")"
-    sed '$d' "$tx/restore.sh" >"$tx/restore.sh.new"
-    cat >>"$tx/restore.sh.new" <<'RESTORE_DIRS_EOF'
-
-# Directories canopy-install created solely to hold a fresh entry point:
-# removed only if still empty, so pre-existing sibling content (e.g. an
-# unrelated plugins/ dir under the same path) is kept.
-if [ -f "$dir/dirs-created.txt" ]; then
-  while IFS= read -r d; do
-    rmdir "$d" 2>/dev/null || :
-  done <"$dir/dirs-created.txt"
-fi
-RESTORE_DIRS_EOF
-    printf '%s\n' "$final_line" >>"$tx/restore.sh.new"
-    mv "$tx/restore.sh.new" "$tx/restore.sh"
-    chmod +x "$tx/restore.sh"
-  fi
 fi
 
 if [ "$write_mise" -eq 1 ]; then
   canopy_tx_record "$tx" drop "$mise_frag"
-  mkdir -p "$mise_conf_dir"
+  canopy_mkdir_tracked "$mise_conf_dir"
   cat >"$mise_frag" <<'EOF'
 # Managed by canopy — do not edit; overwritten by `canopy install`.
 [tools]
@@ -169,6 +165,37 @@ fzf = "latest"
 gum = "latest"
 starship = "latest"
 EOF
+fi
+
+if [ -s "$tx/dirs-created.txt" ]; then
+  # The manifest format models files, not directories, so directories
+  # canopy-install itself created (and, per canopy_mkdir_tracked, only
+  # those it created) are tracked in a sidecar next to restore.sh instead
+  # of as manifest rows. The cleanup snippet is spliced in before
+  # restore.sh's own final summary line (not appended after it), so the
+  # summary reflects a finished restore, and it reads the sidecar back in
+  # reverse — deepest-created directory first — so each rmdir can make its
+  # parent empty in turn rather than only ever removing the leaf. It
+  # contains no interpolated path data, just a static loop over the
+  # sidecar file, mirroring how restore.sh already reads manifest.tsv.
+  final_line="$(tail -n 1 "$tx/restore.sh")"
+  sed '$d' "$tx/restore.sh" >"$tx/restore.sh.new"
+  cat >>"$tx/restore.sh.new" <<'RESTORE_DIRS_EOF'
+
+# Directories canopy-install created while installing (and only those it
+# created): removed deepest-first, only while still empty, so pre-existing
+# sibling or ancestor content (e.g. an unrelated plugins/ dir, or a mise/
+# directory that already existed) is kept.
+if [ -f "$dir/dirs-created.txt" ]; then
+  awk '{ lines[NR] = $0 } END { for (i = NR; i >= 1; i--) print lines[i] }' "$dir/dirs-created.txt" |
+    while IFS= read -r d; do
+      rmdir "$d" 2>/dev/null || :
+    done
+fi
+RESTORE_DIRS_EOF
+  printf '%s\n' "$final_line" >>"$tx/restore.sh.new"
+  mv "$tx/restore.sh.new" "$tx/restore.sh"
+  chmod +x "$tx/restore.sh"
 fi
 
 "$CANOPY_STORE/bin/canopy-caps"

@@ -184,12 +184,18 @@ if [ -s "$tmp_target" ]; then
     done <"$tx_dir/manifest.tsv"
 
     if [ -f "$tx_dir/dirs-created.txt" ]; then
-      while IFS= read -r d; do
-        [ -n "$d" ] || continue
-        # $CANOPY_CONFIG is never removed by restore, even indirectly.
-        [ "$d" = "$CANOPY_CONFIG" ] && continue
-        rmdir "$d" 2>/dev/null || :
-      done <"$tx_dir/dirs-created.txt"
+      # dirs-created.txt is written shallowest-created first (so a nested
+      # mkdir -p records every level, not just the leaf); read it back in
+      # reverse here so the deepest directory is rmdir'd first and each
+      # removal makes its parent empty in turn, instead of only ever
+      # removing the leaf.
+      awk '{ lines[NR] = $0 } END { for (i = NR; i >= 1; i--) print lines[i] }' "$tx_dir/dirs-created.txt" |
+        while IFS= read -r d; do
+          [ -n "$d" ] || continue
+          # $CANOPY_CONFIG is never removed by restore, even indirectly.
+          [ "$d" = "$CANOPY_CONFIG" ] && continue
+          rmdir "$d" 2>/dev/null || :
+        done
     fi
   done <"$tmp_target"
   canopy_tx_commit "$restore_tx"
