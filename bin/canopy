@@ -30,7 +30,7 @@ canopy_help() {
         END { printf "%s\t%s\t%s\n", group, name, summary }
       ' "$f"
     done
-  } | sort -t "$(printf '\t')" -k1,1 -k2,2 | awk -F'\t' '
+  } | LC_ALL=C sort -t "$(printf '\t')" -k1,1 -k2,2 | awk -F'\t' '
     $1 != prev { if (NR > 1) print ""; printf "%s:\n", $1; prev = $1 }
     { printf "  %-12s %s\n", $2, $3 }
   '
