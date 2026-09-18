@@ -46,3 +46,22 @@ setup() { setup_canopy_env; . "$CANOPY_STORE/lib/env.sh"; }
   run canopy_sha256 "$BATS_TEST_TMPDIR/g"
   [ "$output" != "fee5dfd46b125f371923dfd73b33fa40ecec5025f643991b6be24ad89546cab9" ]
 }
+
+@test "the runtime dir fallback is scoped to the user, because /tmp is not" {
+  # /tmp is shared by every account on the machine. A plain /tmp/canopy
+  # belonged to whichever user created it first, mode 755, and every
+  # other user's `canopy doctor` then could not write its scratch file
+  # there: it reported a healthy install as a load-bearing failure and
+  # exited 2. Found by the container harness, where more than one uid
+  # actually exists.
+  unset CANOPY_RUNTIME
+  HOME="$BATS_TEST_TMPDIR/home" XDG_RUNTIME_DIR="" canopy_paths
+  [ "$CANOPY_RUNTIME" = "/tmp/canopy-$(id -u)" ]
+}
+
+@test "the runtime dir uses XDG_RUNTIME_DIR verbatim when the spec gives one" {
+  # XDG_RUNTIME_DIR is per-user by spec, so no uid needs adding there.
+  unset CANOPY_RUNTIME
+  HOME="$BATS_TEST_TMPDIR/home" XDG_RUNTIME_DIR="$BATS_TEST_TMPDIR/run" canopy_paths
+  [ "$CANOPY_RUNTIME" = "$BATS_TEST_TMPDIR/run/canopy" ]
+}

@@ -24,7 +24,19 @@ canopy_paths() {
   : "${CANOPY_STORE:=$(cd "$(dirname "$0")/.." && pwd)}"
   : "${CANOPY_CONFIG:=${XDG_CONFIG_HOME:-$HOME/.config}/canopy}"
   : "${CANOPY_STATE:=${XDG_STATE_HOME:-$HOME/.local/state}/canopy}"
-  : "${CANOPY_RUNTIME:=${XDG_RUNTIME_DIR:-/tmp}/canopy}"
+  # XDG_RUNTIME_DIR is per-user by spec, so a directory under it can carry
+  # canopy's plain name. /tmp is not: it is shared by every account on the
+  # machine, and a plain /tmp/canopy belonged to whichever user created it
+  # first, mode 755. Every other user's `canopy doctor` then could not
+  # write its scratch file there, reported "entry point loads from a bare
+  # environment: FAILED" against a perfectly healthy install, and exited
+  # 2. The uid in the fallback path is what keeps one account's runtime
+  # directory out of another's way.
+  if [ -n "${XDG_RUNTIME_DIR-}" ]; then
+    : "${CANOPY_RUNTIME:=$XDG_RUNTIME_DIR/canopy}"
+  else
+    : "${CANOPY_RUNTIME:=/tmp/canopy-$(id -u)}"
+  fi
   canopy_require_absolute CANOPY_STORE "$CANOPY_STORE"
   canopy_require_absolute CANOPY_CONFIG "$CANOPY_CONFIG"
   canopy_require_absolute CANOPY_STATE "$CANOPY_STATE"
