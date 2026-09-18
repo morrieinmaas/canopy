@@ -13,6 +13,9 @@ set -eu
 # shellcheck source=../lib/manifest.sh
 # shellcheck disable=SC1091
 . "$CANOPY_STORE/lib/manifest.sh"
+# shellcheck source=../lib/tmux.sh
+# shellcheck disable=SC1091
+. "$CANOPY_STORE/lib/tmux.sh"
 canopy_paths
 
 mode=last
@@ -150,35 +153,30 @@ if [ -s "$tmp_target" ]; then
   while IFS= read -r tx_dir; do
     [ -n "$tx_dir" ] || continue
 
-    # canopy_tx_record (lib/manifest.sh) writes through un-scoped globals
-    # named tx/action/path/pre/backup_rel (POSIX sh has no `local`), so
-    # the row read below uses row_-prefixed names throughout — reusing
-    # its names here would have that call silently clobber the very
-    # values this loop reads them for.
-    while IFS="$tab" read -r row_action row_path row_pre row_backup_rel row_post; do
-      case "$row_action" in
+    while IFS="$tab" read -r action path pre backup_rel post; do
+      case "$action" in
         '#'* | '') continue ;;
         *) ;;
       esac
 
-      if [ -e "$row_path" ]; then
-        current="$(canopy_sha256 "$row_path")"
+      if [ -e "$path" ]; then
+        current="$(canopy_sha256 "$path")"
       else
         current="absent"
       fi
 
-      if [ "$current" != "$row_post" ] && [ "$force" -ne 1 ]; then
+      if [ "$current" != "$post" ] && [ "$force" -ne 1 ]; then
         kept=$((kept + 1))
-        printf 'kept (changed since canopy wrote it): %s\n' "$row_path"
+        printf 'kept (changed since canopy wrote it): %s\n' "$path"
         continue
       fi
 
-      canopy_tx_record "$restore_tx" "$row_action" "$row_path"
-      if [ "$row_pre" = "absent" ]; then
-        [ -e "$row_path" ] && rm -f "$row_path"
-      elif [ "$row_backup_rel" != "-" ] && [ -f "$tx_dir/$row_backup_rel" ]; then
-        mkdir -p "$(dirname "$row_path")"
-        cp -p "$tx_dir/$row_backup_rel" "$row_path"
+      canopy_tx_record "$restore_tx" "$action" "$path"
+      if [ "$pre" = "absent" ]; then
+        [ -e "$path" ] && rm -f "$path"
+      elif [ "$backup_rel" != "-" ] && [ -f "$tx_dir/$backup_rel" ]; then
+        mkdir -p "$(dirname "$path")"
+        cp -p "$tx_dir/$backup_rel" "$path"
       fi
       reverted=$((reverted + 1))
     done <"$tx_dir/manifest.tsv"
@@ -203,7 +201,26 @@ fi
 
 printf 'restore: %d reverted, %d kept\n' "$reverted" "$kept"
 
+exit_status=0
 if [ "$kept" -gt 0 ] && [ "$force" -ne 1 ]; then
-  exit 1
+  exit_status=1
 fi
-exit 0
+
+# Verify before declaring success, mirroring canopy-install's own
+# pre-success check: load whatever tmux config restore just left behind
+# on a throwaway socket. Only the entry-point path is checked (tmux's
+# own precedence: ~/.tmux.conf wins when present, else the XDG path) —
+# a machine restored to having no tmux config at all (both absent) has
+# nothing to validate and is not a failure. canopy_tmux_validate prints
+# tmux's own error text on failure; nothing generic is added here.
+entry=""
+if [ -f "$HOME/.tmux.conf" ]; then
+  entry="$HOME/.tmux.conf"
+elif [ -f "${XDG_CONFIG_HOME:-$HOME/.config}/tmux/tmux.conf" ]; then
+  entry="${XDG_CONFIG_HOME:-$HOME/.config}/tmux/tmux.conf"
+fi
+if [ -n "$entry" ] && ! canopy_tmux_validate "$entry"; then
+  exit_status=1
+fi
+
+exit "$exit_status"

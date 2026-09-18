@@ -101,6 +101,26 @@ setup() {
   [ "$before" = "$after" ]
 }
 
+@test "canopy_tx_record does not clobber a caller's own same-named variables" {
+  # canopy_tx_record used to write through unscoped globals named
+  # tx/action/path/pre/backup_rel; any caller using those same names for
+  # its own bookkeeping (e.g. a loop reading manifest rows) would have
+  # them silently overwritten mid-call. Regression test for the fix:
+  # every one of canopy_tx_record's internals is now `local`.
+  tx="sentinel-tx"
+  action="sentinel-action"
+  path="sentinel-path"
+  pre="sentinel-pre"
+  backup_rel="sentinel-backup-rel"
+  real_tx="$(canopy_tx_begin install)"
+  canopy_tx_record "$real_tx" own "$target"
+  [ "$tx" = "sentinel-tx" ]
+  [ "$action" = "sentinel-action" ]
+  [ "$path" = "sentinel-path" ]
+  [ "$pre" = "sentinel-pre" ]
+  [ "$backup_rel" = "sentinel-backup-rel" ]
+}
+
 @test "two transactions with the same label in the same second get distinct dirs" {
   tx1="$(canopy_tx_begin install)"
   tx2="$(canopy_tx_begin install)"
