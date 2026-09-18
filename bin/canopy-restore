@@ -236,8 +236,8 @@ fi
 # Verify before declaring success, mirroring canopy-install's own
 # pre-success check: load whatever tmux config restore just left behind
 # on a throwaway socket. Only the entry-point path is checked (tmux's
-# own precedence: ~/.tmux.conf wins when present, else the XDG path) —
-# a machine restored to having no tmux config at all (both absent) has
+# own precedence: ~/.tmux.conf wins when present, else the XDG path).
+# A machine restored to having no tmux config at all (both absent) has
 # nothing to validate and is not a failure. canopy_tmux_validate prints
 # tmux's own error text on failure; nothing generic is added here.
 entry=""

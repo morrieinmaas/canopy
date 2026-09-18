@@ -1,4 +1,4 @@
-# canopy — design
+# canopy design
 
 **Date:** 2026-09-17
 **Status:** approved in outline; implementation plan not yet written
@@ -12,13 +12,13 @@ canopy is an opinionated, agent-aware tmux experience: a preconfigured tmux setu
 a command namespace, themes, and an agent integration layer, distributed as a git
 clone that updates itself.
 
-**The wedge — sessions survive reboot with agent conversations intact.** Nobody
+**The wedge: sessions survive reboot with agent conversations intact.** Nobody
 ships this. fut, the closest comparable project, states outright that runtime state
 is not restored after its daemon exits or the machine restarts. tmux plus
 resurrect/continuum can do it, and this project makes it work for agent panes, not
 just shells.
 
-**Second pillar — agent state as first-class tmux state.** Five normalized states
+**Second pillar: agent state as first-class tmux state.** Five normalized states
 pushed from agent hooks into tmux options, rendered with zero I/O in the status line.
 
 **What canopy is not:**
@@ -94,9 +94,9 @@ and carry a fallback.
 
 **User-owned directories:**
 
-- `~/.config/canopy/` — `user.conf`, `starship.user.toml`, user themes. Survives uninstall.
-- `~/.local/state/canopy/` — caps cache, command index, backups, `current/theme` symlink.
-- `$XDG_RUNTIME_DIR/canopy/` — locks, transient.
+- `~/.config/canopy/`: `user.conf`, `starship.user.toml`, user themes. Survives uninstall.
+- `~/.local/state/canopy/`: caps cache, command index, backups, `current/theme` symlink.
+- `$XDG_RUNTIME_DIR/canopy/`: locks, transient.
 
 Agent state lives in tmux options, not on disk: no cleanup, no reboot story of its own.
 
@@ -105,13 +105,13 @@ Agent state lives in tmux options, not on disk: no cleanup, no reboot story of i
 | File | Owns |
 |---|---|
 | `00-core` | prefix, indexes, mouse, escape-time, history, terminal-features |
-| `05-caps` | **generated** — capability flags as tmux options |
+| `05-caps` | **generated**: capability flags as tmux options |
 | `10-keys` | **generated** from the key table (4.4) |
 | `20-status` | status line: pure `#{@…}` tokens, at most one aggregator `#()` |
 | `30-plugins` | vendored plugin loads, incl. resurrect/continuum |
-| `40-agents` | optional — hooks, pane-border and status formats |
-| `50-worktree` | optional — wt-aware session naming, picker binds |
-| `60-theme` | generated — sources the active theme's tmux fragment |
+| `40-agents` | optional: hooks, pane-border and status formats |
+| `50-worktree` | optional: wt-aware session naming, picker binds |
+| `60-theme` | generated: sources the active theme's tmux fragment |
 | `90-user` | symlink → `~/.config/canopy/user.conf`; loaded last |
 
 ### 4.3 Capability model
@@ -122,7 +122,7 @@ subprocess, so sourcing the config tree forks nothing.
 
 Each layer is independently switchable (`@canopy_layer_agents off`) and
 independently dead-able (missing capability). A disabled layer leaves zero bindings
-and zero formats behind — no half-states. `doctor` reports which layers are dormant
+and zero formats behind: no half-states. `doctor` reports which layers are dormant
 **and why** ("worktree: wt not found").
 
 ### 4.4 Keys are data
@@ -160,8 +160,8 @@ badly; it is the last resort, marker-delimited, and rewritten only between marke
 | ghostty | drops a **new** theme file into `~/.config/ghostty/themes/` (collision-checked); optionally one marker-wrapped `theme =` line | untouched, or one line |
 | starship | sets `STARSHIP_CONFIG` (via the mise `conf.d` fragment) to a **generated** file in canopy state, merged from our base + `~/.config/canopy/starship.user.toml` | **never touched** |
 
-Third-party (non-tmux) integration is **opt-in per app** — `canopy theme install ghostty`
-— never performed by `install`. Blast radius stays where we can test it.
+Third-party (non-tmux) integration is **opt-in per app** (`canopy theme install ghostty`),
+never performed by `install`. Blast radius stays where we can test it.
 
 For tmux specifically this is a **migration, not a merge**, and first run says so
 explicitly rather than pretending to be additive.
@@ -172,18 +172,18 @@ A small set of settings cannot be left to user override without silently breakin
 product. `doctor` asserts them and names the escape hatch:
 
 - `status-right` retains continuum's hook (verified failure mode: a theme overwriting
-  `status-right` stops autosave silently — you find out after a reboot)
+  `status-right` stops autosave silently; you find out after a reboot)
 - `status-interval` stays above zero (same reason)
 - `@resurrect-processes` covers every installed adapter's command
 - `@continuum-restore` is on
 
 ### 5.4 Two rollback classes, one guarantee
 
-**Class A — config mutations.** Everything a fresh install does on a machine that
+**Class A: config mutations.** Everything a fresh install does on a machine that
 already has configs. Byte-captured before the change, **completely reversible,
 forever**.
 
-**Class B — canopy-owned state.** Caps cache, theme pointer, adopt records. Did not
+**Class B: canopy-owned state.** Caps cache, theme pointer, adopt records. Did not
 exist before canopy. Migrations here are forward-only, which is harmless because they
 cannot touch anything that predates canopy.
 
@@ -319,14 +319,14 @@ agents they opted into.**
 
 ### 7.1 Flow
 
-1. **Launch** — adapter reports `idle` + session id → `@canopy_agent_session`.
-2. **Save** — continuum triggers resurrect's save; canopy's vendored **save-command
+1. **Launch:** adapter reports `idle` + session id → `@canopy_agent_session`.
+2. **Save:** continuum triggers resurrect's save; canopy's vendored **save-command
    strategy** maps `PANE_PID → pane_id`, reads the pane's session option and the
    adapter's resume template, and writes the pane's saved command as
    `<resume template>`. Uniform for tiers 1 and 2. Launch-time pinning remains as a
    second channel, not the only one.
-3. **Reboot** — tmux dies; agent state dies with it (derived, repopulated on restart).
-4. **Boot** — continuum restores; panes come back running their resume commands;
+3. **Reboot:** tmux dies; agent state dies with it (derived, repopulated on restart).
+4. **Boot:** continuum restores; panes come back running their resume commands;
    adapters repopulate state.
 
 ### 7.2 `canopy reboot-check`
@@ -407,7 +407,7 @@ themes/<name>/
   and reloads tmux.
 - Per-app theming is opt-in (§5.2) and additive.
 - **Scope limit:** tmux, ghostty, starship. Nothing that requires writing executable
-  config for another program (e.g. neovim lua) in v1 — that is where config distros
+  config for another program (e.g. neovim lua) in v1. That is where config distros
   historically sink.
 
 ---

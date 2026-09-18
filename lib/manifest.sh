@@ -5,11 +5,11 @@
 # Manifest format (tab-separated), five columns, defined once here:
 #   action<TAB>path<TAB>pre(absent|sha256)<TAB>backup_rel(-|path)<TAB>post(sha256|absent)
 # action is one of: own|splice|drop|generate|env
-# Paths must not contain tab or newline characters — the manifest format
+# Paths must not contain tab or newline characters; the manifest format
 # cannot represent them (a tab or newline in a path corrupts the row into
 # extra fields). canopy_tx_record enforces this at record time: it fails
 # loudly via canopy_die instead of writing a row that cannot round-trip,
-# which restore.sh would otherwise silently skip during recovery — far
+# which restore.sh would otherwise silently skip during recovery, far
 # from the cause, and precisely when someone is relying on the tool.
 
 # Path mangling for backup filenames: percent-encode "%" as "%25" and
@@ -19,7 +19,7 @@
 # escape (e.g. "%"->"%%", "/"->"%") can: a path containing "/%" and one
 # containing "%/" mangle to different strings, because the two escaped
 # characters always occupy a fixed 3-byte slot and can never be mistaken
-# for each other regardless of ordering. Only "%" and "/" are encoded —
+# for each other regardless of ordering. Only "%" and "/" are encoded;
 # this is a backup filename, not a URL, so nothing else needs escaping,
 # and encoding more would only make backups harder to read by hand.
 canopy_tx_mangle() {
@@ -115,7 +115,7 @@ canopy_tx_commit() {
 # canopy_tx_write_restore <path>
 # Writes a genuinely self-contained restore.sh to <path>. It reads only
 # manifest.tsv and files/ relative to its own location, and never sources
-# or calls anything from the canopy store — it is the escape hatch for
+# or calls anything from the canopy store; it is the escape hatch for
 # when canopy itself is what broke.
 canopy_tx_write_restore() {
   cat >"$1" <<'RESTORE_EOF'
