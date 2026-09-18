@@ -2,3 +2,4 @@
 bats = "latest"
 shellcheck = "latest"
 shfmt = "latest"
+tmux = "latest"
