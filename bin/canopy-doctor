@@ -159,9 +159,43 @@ esac
 printf '\n'
 
 # --- Restore points ----------------------------------------------------
+
+# canopy_doctor_tx_reverted <txdir>
+# True when every path <txdir> recorded currently holds the exact state it
+# held before that transaction touched it, i.e. the transaction's effect is
+# no longer on the machine.
+#
+# Doctor asks this of the machine rather than of the ledger on purpose. A
+# "recovered" marker could only ever be written by canopy-restore, and the
+# recovery route canopy documents for the case where canopy itself is
+# broken is the transaction's own self-contained restore.sh, which knows
+# nothing about canopy and can write no marker. So can a user putting the
+# file back by hand. All three leave the same machine behind, and the
+# machine is what doctor exists to report on.
+#
+# A transaction that recorded nothing is vacuously reverted: it changed
+# nothing, so there is nothing to put back.
+canopy_doctor_tx_reverted() {
+  canopy_doctor_tab="$(printf '\t')"
+  canopy_doctor_verdict=0
+  while IFS="$canopy_doctor_tab" read -r row_action row_path row_pre row_backup row_post; do
+    case "$row_action" in
+      '#'* | '') continue ;;
+      *) ;;
+    esac
+    : "$row_backup" "$row_post"
+    if [ "$(canopy_file_state "$row_path")" != "$row_pre" ]; then
+      canopy_doctor_verdict=1
+      break
+    fi
+  done <"$1/manifest.tsv"
+  return "$canopy_doctor_verdict"
+}
+
 printf 'Restore points:\n'
 restore_count=0
 pinned_found=no
+recovered_count=0
 incomplete_list=""
 if [ -d "$CANOPY_STATE/backups" ]; then
   for d in "$CANOPY_STATE"/backups/*/; do
@@ -178,13 +212,26 @@ if [ -d "$CANOPY_STATE/backups" ]; then
       # the transaction. The user's original bytes are sitting in this
       # directory's files/, and nothing else in canopy would say so. A
       # recovery tool that stays silent here is worse than no tool.
-      incomplete_list="$incomplete_list$d
+      #
+      # Unless the user has already acted on that advice. Warning about a
+      # transaction whose effect is no longer on disk tells someone who
+      # did exactly what doctor asked that their machine still needs
+      # attention, which is how a diagnostic stops being believed.
+      # shellcheck disable=SC2310  # a state question, so its non-zero return is the answer, not a failure to abort on
+      if canopy_doctor_tx_reverted "$d"; then
+        recovered_count=$((recovered_count + 1))
+      else
+        incomplete_list="$incomplete_list$d
 "
+      fi
     fi
   done
 fi
 printf '  count: %s\n' "$restore_count"
 printf '  pinned pre-install point: %s\n' "$pinned_found"
+if [ "$recovered_count" -gt 0 ]; then
+  printf '  %s interrupted transaction(s) already reverted, nothing to do\n' "$recovered_count"
+fi
 if [ -n "$incomplete_list" ]; then
   printf '%s' "$incomplete_list" | while IFS= read -r d; do
     [ -n "$d" ] || continue
