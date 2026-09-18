@@ -61,6 +61,28 @@ setup() {
   [ "$(cat "$tx/$backup_b")" = "from-b" ]
 }
 
+@test "mangling does not collide a path containing /% with one containing %/" {
+  # /a/% vs /a%/ both mangle to the same name under escape-%-then-map-/
+  # (round 2): each has one literal "/" and one literal "%", merely in
+  # opposite order, and that ordering info is lost once "/" is folded
+  # into the same "%" used to escape "%". A trailing "/" can't itself
+  # name a regular file, so both examples get a common leaf appended
+  # ("x") to stay filesystem-realizable while preserving the collision.
+  a="$BATS_TEST_TMPDIR/a/%x"
+  b="$BATS_TEST_TMPDIR/a%/x"
+  mkdir -p "$BATS_TEST_TMPDIR/a" "$BATS_TEST_TMPDIR/a%"
+  printf 'from-a\n' > "$a"
+  printf 'from-b\n' > "$b"
+  tx="$(canopy_tx_begin install)"
+  canopy_tx_record "$tx" own "$a"
+  canopy_tx_record "$tx" own "$b"
+  backup_a="$(awk -F'\t' -v p="$a" '$2==p {print $4}' "$tx/manifest.tsv")"
+  backup_b="$(awk -F'\t' -v p="$b" '$2==p {print $4}' "$tx/manifest.tsv")"
+  [ "$backup_a" != "$backup_b" ]
+  [ "$(cat "$tx/$backup_a")" = "from-a" ]
+  [ "$(cat "$tx/$backup_b")" = "from-b" ]
+}
+
 @test "canopy_tx_record rejects an unknown action" {
   tx="$(canopy_tx_begin install)"
   run canopy_tx_record "$tx" bogus "$target"
