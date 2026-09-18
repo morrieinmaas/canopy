@@ -15,21 +15,33 @@ out="$CANOPY_STATE/commands.tsv"
 tmp="$out.tmp.$$"
 
 mkdir -p "$CANOPY_STATE"
+trap 'rm -f "$tmp"' EXIT
 : >"$tmp"
 
 for f in "$bin_dir"/canopy-*; do
   [ -f "$f" ] || continue
   name=${f##*/canopy-}
-  awk -v name="$name" '
-    BEGIN { group = ""; summary = ""; args = ""; examples = "" }
+  awk -v name="$name" -v file="$f" '
+    function reject(key, val) {
+      if (index(val, "\t") > 0 || index(val, "\r") > 0) {
+        printf "canopy-index: %s: canopy:%s= contains a tab or newline\n", file, key > "/dev/stderr"
+        exit 1
+      }
+    }
+    BEGIN { group = "misc"; summary = ""; args = ""; examples = "" }
     NR > 40 { exit }
     /^# canopy:group=/    { group    = substr($0, index($0, "=") + 1) }
     /^# canopy:summary=/  { summary  = substr($0, index($0, "=") + 1) }
     /^# canopy:args=/     { args     = substr($0, index($0, "=") + 1) }
     /^# canopy:examples=/ { examples = substr($0, index($0, "=") + 1) }
-    END { printf "%s\t%s\t%s\t%s\t%s\n", name, group, summary, args, examples }
+    END {
+      reject("group", group)
+      reject("summary", summary)
+      reject("args", args)
+      reject("examples", examples)
+      printf "%s\t%s\t%s\t%s\t%s\n", name, group, summary, args, examples
+    }
   ' "$f" >>"$tmp"
 done
 
-sort -t "$(printf '\t')" -k2,2 -k1,1 "$tmp" >"$out"
-rm -f "$tmp"
+LC_ALL=C sort -t "$(printf '\t')" -k2,2 -k1,1 "$tmp" >"$out"
