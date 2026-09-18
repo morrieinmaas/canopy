@@ -1,5 +1,6 @@
 # shellcheck shell=sh
 # shellcheck disable=SC2154  # CANOPY_STATE is exported by lib/env.sh's canopy_paths
+# shellcheck disable=SC3043  # `local` is explicitly permitted (plan's Global Constraints): universally supported by dash/ash/bash, used here so callers never see this file's internals
 
 # Manifest format (tab-separated), five columns, defined once here:
 #   action<TAB>path<TAB>pre(absent|sha256)<TAB>backup_rel(-|path)<TAB>post(sha256|absent)
@@ -32,6 +33,7 @@ canopy_tx_mangle() {
 # enforced atomically via mkdir itself (it succeeds exactly once for a
 # given path), appending a numeric suffix on collision.
 canopy_tx_begin() {
+  local label epoch base tx attempt max_attempts
   label="$1"
   epoch="$(date +%s)"
   mkdir -p "$CANOPY_STATE/backups"
@@ -58,6 +60,7 @@ canopy_tx_begin() {
 # <txdir>/files/<mangled> and records its sha256; otherwise records absent.
 # The post column is filled in later by canopy_tx_commit.
 canopy_tx_record() {
+  local tx action path nl tab mangled pre backup_rel
   tx="$1"
   action="$2"
   path="$3"
@@ -90,6 +93,7 @@ canopy_tx_record() {
 # Records each recorded path's post-state sha256 (or absent) and marks
 # the transaction complete.
 canopy_tx_commit() {
+  local tx manifest path post tmp
   tx="$1"
   manifest="$tx/manifest.tsv"
   awk -F'\t' 'NR > 1 { print $2 }' "$manifest" | sort -u | while IFS= read -r path; do

@@ -4,8 +4,17 @@ setup() {
   setup_canopy_env
   . "$CANOPY_STORE/lib/env.sh"
   . "$CANOPY_STORE/lib/manifest.sh"
+  . "$CANOPY_STORE/lib/tmux.sh"
   canopy_paths
   target="$BATS_TEST_TMPDIR/target.conf"
+  # Safety: restore's post-restore tmux validation resolves against
+  # HOME/XDG_CONFIG_HOME — every test gets its own fake ones under
+  # BATS_TEST_TMPDIR, never the real $HOME.
+  home="$BATS_TEST_TMPDIR/home"
+  mkdir -p "$home"
+  HOME="$home"
+  XDG_CONFIG_HOME="$home/.config"
+  export HOME XDG_CONFIG_HOME
 }
 
 @test "restore --all returns a pre-existing file to its exact original bytes" {
@@ -105,4 +114,20 @@ setup() {
   [ ! -e "$entry" ]
   [ -d "$entry_dir" ]
   [ -f "$entry_dir/plugins.keep" ]
+}
+
+@test "restore fails and surfaces tmux's own error when the restored config is broken" {
+  entry_dir="$XDG_CONFIG_HOME/tmux"
+  entry="$entry_dir/tmux.conf"
+  mkdir -p "$entry_dir"
+  printf 'totally-not-a-real-tmux-command\n' > "$entry"
+  tx="$(canopy_tx_begin install)"; touch "$tx/.pinned"
+  canopy_tx_record "$tx" own "$entry"
+  printf 'set -g @preexisting yes\n' > "$entry"
+  canopy_tx_commit "$tx"
+
+  run canopy restore --all
+  [ "$status" -ne 0 ]
+  [ "$(cat "$entry")" = "totally-not-a-real-tmux-command" ]
+  [[ "$output" == *"totally-not-a-real-tmux-command"* ]]
 }
