@@ -116,6 +116,65 @@ setup() {
   [ -f "$entry_dir/plugins.keep" ]
 }
 
+@test "--to reverts the named transaction and every newer one, leaving older ones byte-identical" {
+  a="$BATS_TEST_TMPDIR/a.conf"
+  b="$BATS_TEST_TMPDIR/b.conf"
+  c="$BATS_TEST_TMPDIR/c.conf"
+  printf 'orig-a\n' > "$a"
+  printf 'orig-b\n' > "$b"; orig_b="$(canopy_sha256 "$b")"
+  printf 'orig-c\n' > "$c"; orig_c="$(canopy_sha256 "$c")"
+
+  # Labels sort alphabetically after "install", so ordering stays correct
+  # even if two of these land in the same wall-clock second (the id's
+  # tie-break is lexicographic on the whole "<epoch>-<label>" string).
+  tx1="$(canopy_tx_begin install)"; touch "$tx1/.pinned"
+  canopy_tx_record "$tx1" own "$a"
+  printf 'canopy-a\n' > "$a"
+  canopy_tx_commit "$tx1"
+
+  tx2="$(canopy_tx_begin step2)"
+  canopy_tx_record "$tx2" own "$b"
+  printf 'canopy-b\n' > "$b"
+  canopy_tx_commit "$tx2"
+
+  tx3="$(canopy_tx_begin step3)"
+  canopy_tx_record "$tx3" own "$c"
+  printf 'canopy-c\n' > "$c"
+  canopy_tx_commit "$tx3"
+
+  tx2_id="$(basename "$tx2")"
+  run canopy restore --to "$tx2_id"
+  [ "$status" -eq 0 ]
+  # tx1 (older than the named id) is untouched: still canopy-owned bytes.
+  [ "$(cat "$a")" = "canopy-a" ]
+  # tx2 (the named id) is reverted.
+  [ "$(canopy_sha256 "$b")" = "$orig_b" ]
+  # tx3 (newer than the named id) is reverted too.
+  [ "$(canopy_sha256 "$c")" = "$orig_c" ]
+}
+
+@test "--list shows newest first, marks the pinned install, and distinguishes a failed transaction from a committed one" {
+  tx1="$(canopy_tx_begin install)"; touch "$tx1/.pinned"
+  canopy_tx_record "$tx1" own "$target"
+  canopy_tx_commit "$tx1"
+
+  # "zfailed" sorts after "install" alphabetically, so this stays the
+  # newest entry even if both land in the same wall-clock second.
+  tx2="$(canopy_tx_begin zfailed)"
+  canopy_tx_record "$tx2" own "$target"
+  touch "$tx2/.failed"
+
+  run canopy restore --list
+  [ "$status" -eq 0 ]
+  first_line="$(printf '%s\n' "$output" | sed -n '1p')"
+  second_line="$(printf '%s\n' "$output" | sed -n '2p')"
+  [[ "$first_line" == *"zfailed"* ]]
+  [[ "$first_line" == *"FAILED"* ]]
+  [[ "$second_line" == *"install"* ]]
+  [[ "$second_line" == *"PINNED"* ]]
+  [[ "$second_line" != *"FAILED"* ]]
+}
+
 @test "restore fails and surfaces tmux's own error when the restored config is broken" {
   entry_dir="$XDG_CONFIG_HOME/tmux"
   entry="$entry_dir/tmux.conf"

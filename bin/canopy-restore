@@ -54,6 +54,20 @@ canopy_restore_tx_list() {
   done | sort
 }
 
+# canopy_restore_tx_list_all
+# Every transaction directory, oldest first, regardless of completion
+# state. Only --list uses this: it must be able to show a failed
+# transaction, marked FAILED, distinctly from a committed one, rather
+# than silently omitting it the way rollback's committed-only view does.
+canopy_restore_tx_list_all() {
+  [ -d "$backups_dir" ] || return 0
+  for d in "$backups_dir"/*/; do
+    [ -d "$d" ] || continue
+    d="${d%/}"
+    printf '%s\n' "$d"
+  done | sort
+}
+
 # canopy_restore_timestamp <epoch>
 # Best-effort human-readable rendering of an epoch second. Tries BSD
 # date's "-r <epoch>" first, then GNU date's "-d @<epoch>", falling back
@@ -70,7 +84,7 @@ canopy_restore_timestamp() {
 }
 
 if [ "$mode" = "list" ]; then
-  all_tx="$(canopy_restore_tx_list)"
+  all_tx="$(canopy_restore_tx_list_all)"
   if [ -z "$all_tx" ]; then
     printf 'no restore points\n'
     exit 0
@@ -81,8 +95,14 @@ if [ "$mode" = "list" ]; then
     epoch="${id%%-*}"
     ts="$(canopy_restore_timestamp "$epoch")"
     count="$(grep -vc '^#' "$d/manifest.tsv")"
-    marker=""
-    [ -f "$d/.pinned" ] && marker="  PINNED"
+    if [ -f "$d/.failed" ]; then
+      marker="  FAILED"
+    elif [ -f "$d/.committed" ]; then
+      marker=""
+      [ -f "$d/.pinned" ] && marker="  PINNED"
+    else
+      marker="  INCOMPLETE"
+    fi
     printf '%s  %s  %s  %s file(s)%s\n' "$id" "$label" "$ts" "$count" "$marker"
   done
   exit 0
@@ -137,7 +157,9 @@ esac
 
 mkdir -p "$CANOPY_STATE"
 tmp_target="$CANOPY_STATE/.restore-target.tmp.$$"
-trap 'rm -f "$tmp_target"' EXIT
+kept_list="$CANOPY_STATE/.restore-kept.tmp.$$"
+trap 'rm -f "$tmp_target" "$kept_list"' EXIT
+: >"$kept_list"
 if [ -n "$target_list" ]; then
   printf '%s\n' "$target_list" | sort -r >"$tmp_target"
 else
@@ -167,7 +189,7 @@ if [ -s "$tmp_target" ]; then
 
       if [ "$current" != "$post" ] && [ "$force" -ne 1 ]; then
         kept=$((kept + 1))
-        printf 'kept (changed since canopy wrote it): %s\n' "$path"
+        printf '%s\n' "$path" >>"$kept_list"
         continue
       fi
 
@@ -200,6 +222,11 @@ if [ -s "$tmp_target" ]; then
 fi
 
 printf 'restore: %d reverted, %d kept\n' "$reverted" "$kept"
+if [ -s "$kept_list" ]; then
+  while IFS= read -r kept_path; do
+    printf 'kept (changed since canopy wrote it): %s\n' "$kept_path"
+  done <"$kept_list"
+fi
 
 exit_status=0
 if [ "$kept" -gt 0 ] && [ "$force" -ne 1 ]; then
