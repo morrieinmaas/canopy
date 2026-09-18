@@ -83,6 +83,33 @@ setup() {
   [ "$(cat "$tx/$backup_b")" = "from-b" ]
 }
 
+@test "mangling does not collide a path holding the literal text %2F with a real separator" {
+  # The genuine collision the %-escaping in canopy_tx_mangle exists to
+  # prevent: without `sed 's/%/%25/g'`, /a%2Fb and /a/b both mangle to
+  # %2Fa%2Fb. The two pairs tested above stay distinct even unescaped, so
+  # neither of them ever exercised the escaping.
+  #
+  # Asserted against canopy_tx_mangle directly, not only end to end:
+  # backup filenames now carry a per-row ordinal, so no two rows can share
+  # a file whatever the mangling does, and the mangle function itself is
+  # the only place the injectivity property is still observable.
+  [ "$(canopy_tx_mangle /a%2Fb)" != "$(canopy_tx_mangle /a/b)" ]
+
+  a="$BATS_TEST_TMPDIR/a%2Fb"
+  b="$BATS_TEST_TMPDIR/a/b"
+  mkdir -p "$BATS_TEST_TMPDIR/a"
+  printf 'from-a\n' > "$a"
+  printf 'from-b\n' > "$b"
+  tx="$(canopy_tx_begin install)"
+  canopy_tx_record "$tx" own "$a"
+  canopy_tx_record "$tx" own "$b"
+  backup_a="$(awk -F'\t' -v p="$a" '$2==p {print $4}' "$tx/manifest.tsv")"
+  backup_b="$(awk -F'\t' -v p="$b" '$2==p {print $4}' "$tx/manifest.tsv")"
+  [ "$backup_a" != "$backup_b" ]
+  [ "$(cat "$tx/$backup_a")" = "from-a" ]
+  [ "$(cat "$tx/$backup_b")" = "from-b" ]
+}
+
 @test "recording the same path twice gives each row its own backup and its own hashes" {
   # The backup filename used to come from the path alone, so the second
   # cp -p of a path clobbered the first and left the first row's pre hash
