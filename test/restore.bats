@@ -398,3 +398,55 @@ interrupt_install() {
   [ "$(canopy_sha256 "$a")" = "$orig_a" ]
   [ "$(canopy_sha256 "$b")" = "$orig_b" ]
 }
+
+@test "--to selects by position in the sorted list, not by string collation" {
+  # --list and --to must agree on which transactions are newer than a
+  # given one. --list renders the list the same sort built; --to used to
+  # re-derive "newer" by comparing id strings in awk, which only agrees
+  # with that sort while awk's collation matches the locale's.
+  if ! locale -a 2>/dev/null | grep -qi '^en_US\.utf-*8$'; then
+    skip "en_US.UTF-8 is not available on this machine"
+  fi
+  a="$BATS_TEST_TMPDIR/coll-a.conf"
+  b="$BATS_TEST_TMPDIR/coll-b.conf"
+  printf 'orig-a\n' > "$a"; orig_a="$(canopy_sha256 "$a")"
+  printf 'orig-b\n' > "$b"; orig_b="$(canopy_sha256 "$b")"
+
+  # Labels whose byte order ("Bravo" before "alpha") is the reverse of
+  # what a non-C locale collates ("alpha" before "Bravo"), in one epoch
+  # second so the label alone decides the order. The epoch is normalised
+  # by hand rather than raced: canopy_tx_begin stamps wall-clock seconds,
+  # and a test that only usually lands both in the same second only
+  # usually covers the collation it exists to cover. A transaction
+  # directory holds no absolute reference to itself (manifest.tsv names
+  # target paths, backups are relative to the directory), so renaming one
+  # is safe.
+  tx_a="$(canopy_tx_begin alpha)"
+  mv "$tx_a" "$CANOPY_STATE/backups/1700000000-alpha"
+  tx_a="$CANOPY_STATE/backups/1700000000-alpha"
+  canopy_tx_record "$tx_a" own "$a"
+  printf 'canopy-a\n' > "$a"
+  canopy_tx_commit "$tx_a"
+
+  tx_b="$(canopy_tx_begin Bravo)"
+  mv "$tx_b" "$CANOPY_STATE/backups/1700000000-Bravo"
+  tx_b="$CANOPY_STATE/backups/1700000000-Bravo"
+  canopy_tx_record "$tx_b" own "$b"
+  printf 'canopy-b\n' > "$b"
+  canopy_tx_commit "$tx_b"
+
+  run env LC_ALL=en_US.UTF-8 canopy restore --list
+  [ "$status" -eq 0 ]
+  first_line="$(printf '%s\n' "$output" | sed -n '1p')"
+  if [[ "$first_line" != *"Bravo"* ]]; then
+    skip "this machine's en_US.UTF-8 collation does not reorder these ids"
+  fi
+
+  # --list just showed Bravo as the newest, so naming alpha must select
+  # both, in this locale, whatever awk would have said about the strings.
+  run env LC_ALL=en_US.UTF-8 canopy restore --to 1700000000-alpha
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"2 reverted, 0 kept"* ]]
+  [ "$(canopy_sha256 "$a")" = "$orig_a" ]
+  [ "$(canopy_sha256 "$b")" = "$orig_b" ]
+}

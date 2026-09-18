@@ -39,6 +39,8 @@ while [ $# -gt 0 ]; do
 done
 
 backups_dir="$CANOPY_STATE/backups"
+nl='
+'
 
 # canopy_restore_tx_list
 # Every transaction directory automatic rollback may act on, oldest
@@ -72,6 +74,19 @@ canopy_restore_tx_list_all() {
     d="${d%/}"
     printf '%s\n' "$d"
   done | sort
+}
+
+# canopy_restore_is_eligible <txdir>
+# True if <txdir> is one of the transactions automatic rollback may act
+# on, i.e. a line of $all_tx. A function rather than the case statement
+# written inline at its one call site: that call site is inside a command
+# substitution, and bash 3.2 (still /bin/sh on macOS) cannot parse a case
+# statement nested in one, failing at parse time with a syntax error.
+canopy_restore_is_eligible() {
+  case "$nl$all_tx$nl" in
+    *"$nl$1$nl"*) return 0 ;;
+    *) return 1 ;;
+  esac
 }
 
 # canopy_restore_timestamp <epoch>
@@ -148,10 +163,30 @@ case "$mode" in
     fi
     [ -n "$match_dir" ] || canopy_die "canopy-restore: no such transaction: $to_id"
     # The named transaction plus every newer one automatic rollback would
-    # act on. The named one is always in the set, even when it is .failed
-    # and therefore normally skipped: naming it is an explicit request,
-    # and re-reverting an already-reverted transaction is a no-op.
-    newer="$(printf '%s\n' "$all_tx" | awk -v want="$match_dir" 'NF && $0 >= want')"
+    # act on. "Newer" is a position in the already sorted list, not a
+    # string comparison against the named id: comparing ids (as an
+    # `awk '$0 >= want'` here used to) only agrees with the sort that
+    # built the list while awk's collation matches the locale's, and it
+    # need not. Under en_US.UTF-8, sort puts ".../<epoch>-alpha" before
+    # ".../<epoch>-Bravo" while a byte-wise awk comparison puts it after,
+    # so --to would silently drop a transaction --list had just shown as
+    # newer. Walking the list and taking everything after the match uses
+    # only string equality, which no collation can disagree about.
+    # The named transaction is always in the set, even when automatic
+    # rollback would skip it: naming it is an explicit request, and
+    # re-reverting an already-reverted transaction is a no-op.
+    reached=0
+    newer="$(
+      printf '%s\n' "$known_tx" | while IFS= read -r d; do
+        # shellcheck disable=SC2310  # a membership test, so its non-zero return is the answer, not a failure to abort on
+        if [ "$reached" -eq 1 ] && canopy_restore_is_eligible "$d"; then
+          printf '%s\n' "$d"
+        fi
+        if [ "$d" = "$match_dir" ]; then
+          reached=1
+        fi
+      done
+    )"
     target_list="$(printf '%s\n%s\n' "$match_dir" "$newer" | awk 'NF && !seen[$0]++')"
     ;;
   all)
