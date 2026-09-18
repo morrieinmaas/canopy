@@ -56,9 +56,10 @@ canopy_tx_begin() {
 }
 
 # canopy_tx_record <txdir> <action> <path>
-# Captures pre-state for path: if it exists, copies it into
-# <txdir>/files/<mangled> and records its sha256; otherwise records absent.
-# The post column is filled in later by canopy_tx_commit.
+# Captures pre-state for path: if anything is there, copies it into
+# <txdir>/files/<mangled> and records its state per canopy_file_state;
+# otherwise records absent. The post column is filled in later by
+# canopy_tx_commit.
 canopy_tx_record() {
   local tx action path nl tab ordinal mangled pre backup_rel
   tx="$1"
@@ -71,9 +72,13 @@ canopy_tx_record() {
   nl='
 '
   tab="$(printf '\t')"
-  case "$path" in
+  pre="$(canopy_file_state "$path")"
+  # Both the path and, for a symlink, the recorded target go into the row,
+  # so both have to round-trip through a tab-separated line. Failing here
+  # is loud; writing a row restore.sh would silently misparse is not.
+  case "$path$pre" in
     *"$tab"* | *"$nl"*)
-      canopy_die "canopy_tx_record: path contains a tab or newline, which the manifest format cannot represent: $path"
+      canopy_die "canopy_tx_record: path or symlink target contains a tab or newline, which the manifest format cannot represent: $path"
       ;;
     *) ;;
   esac
@@ -81,21 +86,24 @@ canopy_tx_record() {
   # line plus one line per row already recorded, so the first data row is
   # ordinal 1.
   ordinal="$(awk 'END { print NR }' "$tx/manifest.tsv")"
-  if [ -e "$path" ]; then
+  if [ "$pre" = "absent" ]; then
+    backup_rel="-"
+  else
     # Backup filenames are unique per row, not per path. Deriving the name
     # from the path alone meant recording the same path twice in one
-    # transaction made the second cp -p clobber the first, leaving the
+    # transaction made the second cp clobber the first, leaving the
     # first row's pre hash describing bytes that were no longer on disk.
     # The percent-encoded path stays for readability and the row ordinal
     # is appended: two rows can never collide, because the name ends in
     # ".<ordinal>" and no two rows share an ordinal.
+    #
+    # -P: a symlink is backed up as the link it is, never as a copy of
+    # whatever it points at. The link is the artifact canopy is taking
+    # ownership of; its target is a file canopy never recorded and must
+    # not touch.
     mangled="$(canopy_tx_mangle "$path").$ordinal"
-    cp -p "$path" "$tx/files/$mangled"
-    pre="$(canopy_sha256 "$path")"
+    cp -pP "$path" "$tx/files/$mangled"
     backup_rel="files/$mangled"
-  else
-    pre="absent"
-    backup_rel="-"
   fi
   printf '%s\t%s\t%s\t%s\t%s\n' "$action" "$path" "$pre" "$backup_rel" "" >>"$tx/manifest.tsv"
 }
@@ -122,11 +130,7 @@ canopy_tx_commit() {
       '') continue ;;
       *) ;;
     esac
-    if [ -e "$path" ]; then
-      post="$(canopy_sha256 "$path")"
-    else
-      post="absent"
-    fi
+    post="$(canopy_file_state "$path")"
     printf '%s\t%s\t%s\t%s\t%s\n' "$action" "$path" "$pre" "$backup_rel" "$post" >>"$tmp"
   done <"$manifest"
   mv "$tmp" "$manifest"
@@ -163,14 +167,23 @@ while IFS="$tab" read -r action path pre backup_rel post; do
   '#'* | '') continue ;;
   esac
   : "$post"
+  # -e is false for a dangling symlink, so -L is asked too, both for what
+  # is on disk now and for the backup: a backed-up relative symlink almost
+  # never resolves from inside files/, and treating that as "no backup"
+  # skipped the restore silently.
   if [ "$pre" = "absent" ]; then
-    if [ -e "$path" ]; then
+    if [ -e "$path" ] || [ -L "$path" ]; then
       rm -f "$path"
       removed=$((removed + 1))
     fi
-  elif [ "$backup_rel" != "-" ] && [ -f "$dir/$backup_rel" ]; then
+  elif [ "$backup_rel" != "-" ] && { [ -e "$dir/$backup_rel" ] || [ -L "$dir/$backup_rel" ]; }; then
     mkdir -p "$(dirname "$path")"
-    cp -p "$dir/$backup_rel" "$path"
+    # Removed first, then copied with -P: whatever is at $path may itself
+    # be a symlink, and writing into it would write through to a file this
+    # manifest never recorded. A backed-up symlink is put back as the link
+    # it was, pointing where it pointed.
+    rm -f "$path"
+    cp -pP "$dir/$backup_rel" "$path"
     restored=$((restored + 1))
   fi
 done <"$manifest"

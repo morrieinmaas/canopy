@@ -75,6 +75,27 @@ write_entry_stub() {
   } >"$1"
 }
 
+# canopy_materialise_symlink <path>
+# Replaces a symlink at <path> with a regular file holding the bytes it
+# pointed at. A path that is not a symlink is left alone.
+#
+# The counterpart to write_entry_stub's rm: canopy appends to user.conf
+# rather than overwriting it, so it cannot simply remove the link first.
+# Taking ownership of a path must never mean writing through a link to a
+# target canopy did not record and cannot promise to restore. The link is
+# recorded before this runs, so restore puts it back exactly as it was.
+canopy_materialise_symlink() {
+  [ -L "$1" ] || return 0
+  materialise_tmp="$1.canopy-materialise.$$"
+  if [ -f "$1" ]; then
+    cp "$1" "$materialise_tmp"
+  else
+    : >"$materialise_tmp"
+  fi
+  rm -f "$1"
+  mv "$materialise_tmp" "$1"
+}
+
 # canopy_mkdir_tracked <dir>
 # mkdir -p <dir>, recording every path level this call actually creates in
 # $tx/dirs-created.txt, shallowest first (so a later cleanup that reads the
@@ -171,8 +192,12 @@ tx="$(canopy_tx_begin install)"
 canopy_mkdir_tracked "$CANOPY_CONFIG"
 if [ -f "$CANOPY_CONFIG/user.conf" ]; then
   canopy_tx_record "$tx" own "$CANOPY_CONFIG/user.conf"
+  canopy_materialise_symlink "$CANOPY_CONFIG/user.conf"
 else
   canopy_tx_record "$tx" drop "$CANOPY_CONFIG/user.conf"
+  # rm, not truncate: a dangling symlink here is still a symlink, and
+  # writing into it would create the file it points at.
+  rm -f "$CANOPY_CONFIG/user.conf"
   printf '# canopy user config: sourced last, wins over every shipped default.\n' >"$CANOPY_CONFIG/user.conf"
 fi
 
@@ -198,6 +223,7 @@ fi
 if [ "$write_mise" -eq 1 ]; then
   canopy_tx_record "$tx" drop "$mise_frag"
   canopy_mkdir_tracked "$mise_conf_dir"
+  rm -f "$mise_frag"
   cat >"$mise_frag" <<'EOF'
 # Managed by canopy: do not edit; overwritten by `canopy install`.
 [tools]
