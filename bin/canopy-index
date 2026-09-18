@@ -10,6 +10,10 @@ set -eu
 . "$CANOPY_STORE/lib/env.sh"
 canopy_paths
 
+if [ $# -gt 0 ]; then
+  canopy_die "canopy-index: unknown argument: $1"
+fi
+
 bin_dir="$CANOPY_STORE/bin"
 out="$CANOPY_STATE/commands.tsv"
 tmp="$out.tmp.$$"
