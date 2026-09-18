@@ -100,29 +100,26 @@ canopy_materialise_symlink() {
 # mkdir -p <dir>, recording every path level this call actually creates in
 # $tx/dirs-created.txt, shallowest first (so a later cleanup that reads the
 # file in reverse can rmdir deepest first, letting each removal make its
-# parent empty in turn). Never records a level that already existed, and
-# never $CANOPY_CONFIG itself or anything found while still inside it; that
-# directory is never touched by restore (spec 5.5), so it isn't tracked for
-# removal in the first place. This is the single call site every
-# directory-creating line in this script goes through, on purpose: two
-# separate hand-rolled tracking sites already drifted once (the entry point
-# vs. the mise fragment) before this fix.
+# parent empty in turn). A level that already existed is never recorded,
+# which is what keeps restore from removing a directory that predates
+# canopy. This is the single call site every directory-creating line in
+# this script goes through, on purpose: two separate hand-rolled tracking
+# sites already drifted once (the entry point vs. the mise fragment)
+# before this fix.
+#
+# $CANOPY_CONFIG is recorded like any other level canopy creates. Skipping
+# it, as this used to, left ~/.config/canopy and then ~/.config itself
+# standing on a machine that had neither before install, so a virgin box
+# did not come back virgin. Restore removes these with rmdir, which fails
+# on a directory that still holds anything, so a $CANOPY_CONFIG carrying
+# user overrides survives on its own merits rather than by exemption.
 canopy_mkdir_tracked() {
   target="$1"
   missing=""
   d="$target"
   while [ ! -d "$d" ]; do
-    # $CANOPY_CONFIG and anything under it is skipped, not recorded, but
-    # the walk carries on past it: the levels ABOVE $CANOPY_CONFIG are
-    # ordinary directories like ~/.config, and stopping the walk at
-    # $CANOPY_CONFIG (as this loop used to) silently left them untracked.
-    case "$d" in
-      "$CANOPY_CONFIG" | "$CANOPY_CONFIG"/*) ;;
-      *)
-        missing="$d
+    missing="$d
 $missing"
-        ;;
-    esac
     d="$(dirname "$d")"
   done
   mkdir -p "$target"
