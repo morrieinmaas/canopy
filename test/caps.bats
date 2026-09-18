@@ -81,11 +81,15 @@ EOF
 }
 
 @test "the generated file loads under the tmux loader" {
-  . "$CANOPY_STORE/lib/env.sh"
-  . "$CANOPY_STORE/lib/tmux.sh"
-  canopy_paths
   run canopy-caps
   [ "$status" -eq 0 ]
-  run canopy_tmux_validate "$CANOPY_STORE/tmux/tmux.conf"
+  # The loader is sourced with this harness's CANOPY_* in the server
+  # environment, standing in for the installed entry point's
+  # set-environment lines. Whether the shipped entry point really provides
+  # them is test/installed_entry.bats' job, from a bare environment.
+  sock="canopy-test-capsload-$$"
+  tmux -L "$sock" -f /dev/null new-session -d
+  run tmux -L "$sock" source-file "$CANOPY_STORE/tmux/tmux.conf"
+  kill_tmux_server "$sock"
   [ "$status" -eq 0 ]
 }

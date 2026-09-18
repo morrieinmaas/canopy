@@ -33,16 +33,52 @@ canopy_tmux_version_ok() {
 # function relies on instead. The throwaway server is started with
 # `-f /dev/null` so it never consults a real default config file
 # (~/.tmux.conf or $XDG_CONFIG_HOME/tmux/tmux.conf).
+# canopy_tmux_bare <tmux-binary> [arg...]
+# Runs tmux holding nothing this process holds: env -i, $HOME, a PATH
+# minimal enough to still resolve tmux itself, and a named TMUX_TMPDIR.
+#
+# The environment is the point. tmux expands a variable reference in a
+# source-file path from the tmux SERVER's environment, which on a user's
+# machine contains no CANOPY_* at all, so a config chain that resolves
+# only because the caller exported CANOPY_STORE is a config chain that
+# loads nothing for the person who installed it. That is not a
+# hypothetical: it shipped, green, past 93 tests.
+#
+# TMUX_TMPDIR is named rather than inherited so the socket file's path is
+# known and can be removed afterwards.
+canopy_tmux_bare() {
+  canopy_tmux_bin="$1"
+  shift
+  env -i \
+    HOME="$HOME" \
+    PATH="${canopy_tmux_bin%/*}:/usr/bin:/bin" \
+    TMUX_TMPDIR=/tmp \
+    "$canopy_tmux_bin" "$@"
+}
+
+# canopy_tmux_validate <conf>
+# True when tmux loads <conf> cleanly on a throwaway server started from a
+# bare environment. -f /dev/null plus an explicit source-file, rather than
+# -f <conf>: a config loaded at server start reports its errors to the
+# client and still leaves new-session exiting 0, while source-file as a
+# command returns tmux's own verdict.
 canopy_tmux_validate() {
   conf="$1"
   if [ ! -f "$conf" ]; then
     printf 'canopy_tmux_validate: no such file: %s\n' "$conf" >&2
     return 1
   fi
+  if ! tmux_bin="$(command -v tmux)"; then
+    printf 'canopy_tmux_validate: tmux not found on PATH\n' >&2
+    return 1
+  fi
   sock="canopy-verify-$$"
-  err="$(tmux -L "$sock" -f /dev/null new-session -d \; source-file "$conf" 2>&1)"
+  err="$(canopy_tmux_bare "$tmux_bin" -L "$sock" -f /dev/null new-session -d \; source-file "$conf" 2>&1)"
   rc=$?
-  tmux -L "$sock" kill-server >/dev/null 2>&1
+  canopy_tmux_bare "$tmux_bin" -L "$sock" kill-server >/dev/null 2>&1
+  # kill-server stops the server and leaves its socket file behind, one per
+  # call; that is how roughly 900 of them piled up under /tmp/tmux-<uid>/.
+  rm -f "/tmp/tmux-$(id -u)/$sock"
   if [ "$rc" -ne 0 ]; then
     printf '%s\n' "$err" >&2
     return 1

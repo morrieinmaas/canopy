@@ -3,7 +3,7 @@
 # canopy:group=core
 # canopy:args=[--yes] [--dry-run]
 # canopy:examples=canopy install --yes
-# shellcheck disable=SC2154  # CANOPY_CONFIG/CANOPY_STATE are exported by lib/env.sh's canopy_paths
+# shellcheck disable=SC2154,SC2153  # CANOPY_CONFIG/CANOPY_STATE are exported by lib/env.sh's canopy_paths
 set -eu
 
 : "${CANOPY_STORE:=$(cd "$(dirname "$0")/.." && pwd)}"
@@ -38,12 +38,41 @@ dot_tmux_conf="$HOME/.tmux.conf"
 # and how a re-run recognises its own file instead of migrating it.
 entry_marker='# canopy:entry-point'
 
+# write_entry_stub <path>
+# The entry point canopy installs: self-locating, and dependent on nothing
+# in the environment.
+#
+# Every path in it is an absolute literal resolved now, at install time,
+# not a variable reference. tmux expands a variable reference in a
+# source-file path from the tmux SERVER's environment, and nothing puts
+# CANOPY_* there, so the stub this used to write loaded nothing at all on
+# a real machine while every test passed, because the test harness
+# exported those variables before invoking anything.
+#
+# The set-environment lines are not a second copy of the same idea. The
+# literal is what makes this file load; set-environment is what makes
+# everything the server starts later inherit the same three paths:
+# run-shell, display-popup, and the agent hooks M3 adds. The store's own
+# tmux.conf reads CANOPY_STATE and CANOPY_CONFIG from exactly there.
+#
+# The file is removed before it is written, never truncated in place. When
+# the path is a symlink, which is what chezmoi, stow and bare dotfiles
+# repos all leave behind, truncating it writes through to the link's
+# target: a file canopy never recorded and cannot promise to restore.
 write_entry_stub() {
-  printf '%s: managed by canopy, do not edit directly.\n' "$entry_marker" >"$1"
-  cat >>"$1" <<'EOF'
-# Any original content was migrated to $CANOPY_CONFIG/user.conf.
-source-file "$CANOPY_STORE/tmux/tmux.conf"
-EOF
+  rm -f "$1"
+  {
+    printf '%s: managed by canopy, do not edit directly.\n' "$entry_marker"
+    printf '# Any original content was migrated to %s/user.conf.\n' "$CANOPY_CONFIG"
+    printf '#\n'
+    printf '# The paths below are absolute literals written at install time. tmux\n'
+    printf '# expands a variable reference in a source-file path from the tmux\n'
+    printf '# server environment, which nothing outside tmux ever sets.\n'
+    printf 'set-environment -g CANOPY_STORE "%s"\n' "$CANOPY_STORE"
+    printf 'set-environment -g CANOPY_STATE "%s"\n' "$CANOPY_STATE"
+    printf 'set-environment -g CANOPY_CONFIG "%s"\n' "$CANOPY_CONFIG"
+    printf 'source-file "%s/tmux/tmux.conf"\n' "$CANOPY_STORE"
+  } >"$1"
 }
 
 # canopy_mkdir_tracked <dir>
@@ -148,6 +177,7 @@ else
 fi
 
 if [ -n "$user_entry" ]; then
+  entry_point="$user_entry"
   canopy_tx_record "$tx" own "$user_entry"
   {
     printf '\n# canopy: migrated from %s on %s\n' "$user_entry" "$(date +%Y-%m-%d)"
@@ -158,6 +188,7 @@ else
   # No pre-existing config anywhere canopy or tmux would look: canopy still
   # "owns the entry point" (spec 5.2), so create one at the XDG path. It is
   # a brand-new file (action drop, pre-state absent), not a migration.
+  entry_point="$xdg_tmux_conf"
   entry_dir="$(dirname "$xdg_tmux_conf")"
   canopy_tx_record "$tx" drop "$xdg_tmux_conf"
   canopy_mkdir_tracked "$entry_dir"
@@ -210,7 +241,12 @@ fi
 "$CANOPY_STORE/bin/canopy-caps"
 "$CANOPY_STORE/bin/canopy-index"
 
-if canopy_tmux_validate "$CANOPY_STORE/tmux/tmux.conf"; then
+# Validated through the entry point just written, not through the store's
+# own copy with this process's environment helpfully filled in: install
+# has to fail when the artifact it installed is the thing that will not
+# load. canopy_tmux_validate starts tmux from a bare environment, so this
+# is the same load a user's tmux performs.
+if canopy_tmux_validate "$entry_point"; then
   canopy_tx_commit "$tx"
   touch "$tx/.pinned"
   printf 'canopy installed.\n'

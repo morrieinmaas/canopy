@@ -42,6 +42,20 @@ canopy_sha256() {
   else canopy_die "no sha256 tool found (need sha256sum or shasum)"; fi
 }
 
+# canopy_entry_point
+# The tmux entry point on this machine, by tmux's own precedence:
+# ~/.tmux.conf wins when it exists, else the XDG path. Prints nothing when
+# neither exists, which is what "canopy is not installed" looks like.
+# Every check of a shipped artifact goes through this path, because it is
+# the one a user's tmux goes through.
+canopy_entry_point() {
+  if [ -f "$HOME/.tmux.conf" ]; then
+    printf '%s\n' "$HOME/.tmux.conf"
+  elif [ -f "${XDG_CONFIG_HOME:-$HOME/.config}/tmux/tmux.conf" ]; then
+    printf '%s\n' "${XDG_CONFIG_HOME:-$HOME/.config}/tmux/tmux.conf"
+  fi
+}
+
 canopy_die() {
   printf 'canopy: %s\n' "$1" >&2
   exit 1

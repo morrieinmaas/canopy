@@ -30,8 +30,8 @@ setup() {
   [ "$status" -eq 0 ]
   grep -q '@preexisting' "$CANOPY_CONFIG/user.conf"
   grep -q 'canopy' "$XDG_CONFIG_HOME/tmux/tmux.conf"
-  grep -q 'source-file "\$CANOPY_STORE/tmux/tmux.conf"' "$XDG_CONFIG_HOME/tmux/tmux.conf"
-  run canopy_tmux_validate "$CANOPY_STORE/tmux/tmux.conf"
+  grep -q "source-file \"$CANOPY_STORE/tmux/tmux.conf\"" "$XDG_CONFIG_HOME/tmux/tmux.conf"
+  run canopy_tmux_validate "$XDG_CONFIG_HOME/tmux/tmux.conf"
   [ "$status" -eq 0 ]
 }
 
@@ -71,8 +71,8 @@ setup() {
   [ -f "$CANOPY_CONFIG/user.conf" ]
   [ ! -s "$CANOPY_CONFIG/user.conf" ] || grep -q '^#' "$CANOPY_CONFIG/user.conf"
   [ -f "$XDG_CONFIG_HOME/tmux/tmux.conf" ]
-  grep -q 'source-file "\$CANOPY_STORE/tmux/tmux.conf"' "$XDG_CONFIG_HOME/tmux/tmux.conf"
-  run canopy_tmux_validate "$CANOPY_STORE/tmux/tmux.conf"
+  grep -q "source-file \"$CANOPY_STORE/tmux/tmux.conf\"" "$XDG_CONFIG_HOME/tmux/tmux.conf"
+  run canopy_tmux_validate "$XDG_CONFIG_HOME/tmux/tmux.conf"
   [ "$status" -eq 0 ]
 }
 
@@ -287,7 +287,7 @@ EOF
 
   tx_count_after="$(find "$CANOPY_STATE/backups" -mindepth 1 -maxdepth 1 -type d | wc -l)"
   [ "$tx_count_before" = "$tx_count_after" ]
-  run canopy_tmux_validate "$CANOPY_STORE/tmux/tmux.conf"
+  run canopy_tmux_validate "$XDG_CONFIG_HOME/tmux/tmux.conf"
   [ "$status" -eq 0 ]
 }
 
@@ -304,6 +304,6 @@ EOF
   [[ "$output" == *"already"* ]]
   [ "$(canopy_sha256 "$CANOPY_CONFIG/user.conf")" = "$user_conf_hash_before" ]
   [ "$(canopy_sha256 "$XDG_CONFIG_HOME/tmux/tmux.conf")" = "$entry_hash_before" ]
-  run canopy_tmux_validate "$CANOPY_STORE/tmux/tmux.conf"
+  run canopy_tmux_validate "$XDG_CONFIG_HOME/tmux/tmux.conf"
   [ "$status" -eq 0 ]
 }
