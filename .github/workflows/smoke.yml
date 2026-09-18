@@ -1,0 +1,23 @@
+name: Smoke
+
+on:
+  push:
+  pull_request:
+
+# Deliberately its own workflow rather than a step in CI: a smoke failure
+# means the shipped artifact does not work on a real machine, which is a
+# different thing from a lint or unit failure and should be readable as
+# such from the checks list without opening a log.
+jobs:
+  smoke:
+    # Linux only. The scenarios run inside Linux containers, and the
+    # hosted macOS runners have no container daemon.
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      # No mise, and nothing from this repo's mise.toml. The point of this
+      # job is that canopy works for someone who has only what the base
+      # image ships.
+      - name: container acceptance scenarios
+        run: sh test/smoke/run.sh
