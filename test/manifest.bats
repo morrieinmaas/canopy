@@ -89,6 +89,18 @@ setup() {
   [ "$status" -ne 0 ]
 }
 
+@test "canopy_tx_record refuses a path with a literal tab and writes no partial row" {
+  tab="$(printf '\t')"
+  bad="$BATS_TEST_TMPDIR/bad${tab}path"
+  tx="$(canopy_tx_begin install)"
+  before="$(cat "$tx/manifest.tsv")"
+  run canopy_tx_record "$tx" own "$bad"
+  [ "$status" -ne 0 ]
+  printf '%s' "$output" | grep -qF "$bad"
+  after="$(cat "$tx/manifest.tsv")"
+  [ "$before" = "$after" ]
+}
+
 @test "two transactions with the same label in the same second get distinct dirs" {
   tx1="$(canopy_tx_begin install)"
   tx2="$(canopy_tx_begin install)"
