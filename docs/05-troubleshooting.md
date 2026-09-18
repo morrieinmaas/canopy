@@ -58,9 +58,12 @@ Two other causes of "nothing loaded":
 `~/.tmux.conf` over the XDG path. `canopy doctor` prints which file it validated; if
 that is not the one tmux loads on your machine, they have diverged.
 
-**You symlinked `bin/canopy` into `/usr/local/bin`.** canopy resolves its store from
-the path of the running script, so a symlinked entry resolves the store to
-`/usr/local` and sources nothing. Put the real clone directory on your `PATH` instead.
+**You symlinked one of the `bin/canopy-*` files rather than `bin/canopy`.** The
+dispatcher follows the symlink chain of its own path before deriving the store, so a
+symlink to `bin/canopy` is fine. The subcommand files do not: each derives its store
+from `$(dirname "$0")/..`, so a symlink to `bin/canopy-doctor` resolves the store to
+the link's parent's parent and fails to find `lib/env.sh`. Symlink the dispatcher, or
+put the clone's `bin/` on your `PATH`.
 
 ---
 

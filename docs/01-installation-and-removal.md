@@ -12,10 +12,19 @@ canopy install
 
 Add the `PATH` line to your shell rc so it survives a new shell.
 
-The clone can live anywhere. canopy resolves its own store from the directory of the
-running script (`$(dirname "$0")/..`), so put the actual directory on `PATH`. A
-symlink from `/usr/local/bin/canopy` into the clone would make canopy resolve its
-store to `/usr/local`, and nothing would load.
+The clone can live anywhere. `bin/canopy` resolves its own store from the **real** path
+of the running script: it follows the symlink chain of its own path first, then takes
+the parent of the directory it lands in. So a symlink from a directory already on your
+`PATH` works, and is the shorter route if you would rather not add one:
+
+```sh
+ln -s ~/.local/share/canopy/bin/canopy ~/.local/bin/canopy
+```
+
+The dispatcher is the entry point to symlink. It exports `CANOPY_STORE` before handing
+off, so every `canopy <subcommand>` it dispatches inherits the store it resolved. The
+`bin/canopy-*` files still derive their own store from `$(dirname "$0")/..`, so
+symlinking one of them individually, rather than the dispatcher, does not work.
 
 Requirements are tmux 3.4 or newer and a POSIX shell. Check yours first:
 
