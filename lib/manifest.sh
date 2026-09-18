@@ -60,7 +60,7 @@ canopy_tx_begin() {
 # <txdir>/files/<mangled> and records its sha256; otherwise records absent.
 # The post column is filled in later by canopy_tx_commit.
 canopy_tx_record() {
-  local tx action path nl tab mangled pre backup_rel
+  local tx action path nl tab ordinal mangled pre backup_rel
   tx="$1"
   action="$2"
   path="$3"
@@ -77,8 +77,19 @@ canopy_tx_record() {
       ;;
     *) ;;
   esac
+  # The ordinal this row is about to get: the manifest holds one header
+  # line plus one line per row already recorded, so the first data row is
+  # ordinal 1.
+  ordinal="$(awk 'END { print NR }' "$tx/manifest.tsv")"
   if [ -e "$path" ]; then
-    mangled="$(canopy_tx_mangle "$path")"
+    # Backup filenames are unique per row, not per path. Deriving the name
+    # from the path alone meant recording the same path twice in one
+    # transaction made the second cp -p clobber the first, leaving the
+    # first row's pre hash describing bytes that were no longer on disk.
+    # The percent-encoded path stays for readability and the row ordinal
+    # is appended: two rows can never collide, because the name ends in
+    # ".<ordinal>" and no two rows share an ordinal.
+    mangled="$(canopy_tx_mangle "$path").$ordinal"
     cp -p "$path" "$tx/files/$mangled"
     pre="$(canopy_sha256 "$path")"
     backup_rel="files/$mangled"
@@ -92,23 +103,36 @@ canopy_tx_record() {
 # canopy_tx_commit <txdir>
 # Records each recorded path's post-state sha256 (or absent) and marks
 # the transaction complete.
+# canopy_tx_commit <tx>
+# Stamps each row's post-state and marks the transaction committed.
+# Post-stamping is per row, not per path: rows are the unit of this
+# manifest (a path may legitimately appear on more than one of them), and
+# a single pass that rewrites each row in place cannot leave one row's
+# columns describing another row's file.
 canopy_tx_commit() {
-  local tx manifest path post tmp
+  local tx manifest tmp tab action path pre backup_rel post
   tx="$1"
   manifest="$tx/manifest.tsv"
-  awk -F'\t' 'NR > 1 { print $2 }' "$manifest" | sort -u | while IFS= read -r path; do
+  tmp="$manifest.tmp"
+  tab="$(printf '\t')"
+  : >"$tmp"
+  while IFS="$tab" read -r action path pre backup_rel post; do
+    case "$action" in
+      '#'*)
+        printf '%s\t%s\t%s\t%s\t%s\n' "$action" "$path" "$pre" "$backup_rel" "$post" >>"$tmp"
+        continue
+        ;;
+      '') continue ;;
+      *) ;;
+    esac
     if [ -e "$path" ]; then
       post="$(canopy_sha256 "$path")"
     else
       post="absent"
     fi
-    tmp="$manifest.tmp"
-    awk -F'\t' -v OFS='\t' -v p="$path" -v post="$post" '
-      NR == 1 { print; next }
-      $2 == p { $5 = post }
-      { print }
-    ' "$manifest" >"$tmp" && mv "$tmp" "$manifest"
-  done
+    printf '%s\t%s\t%s\t%s\t%s\n' "$action" "$path" "$pre" "$backup_rel" "$post" >>"$tmp"
+  done <"$manifest"
+  mv "$tmp" "$manifest"
   touch "$tx/.committed"
 }
 
