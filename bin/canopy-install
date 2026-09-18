@@ -1,0 +1,117 @@
+#!/bin/sh
+# canopy:summary=Install canopy, migrating any existing tmux config
+# canopy:group=core
+# canopy:args=[--yes] [--dry-run]
+# canopy:examples=canopy install --yes
+# shellcheck disable=SC2154  # CANOPY_CONFIG/CANOPY_STATE are exported by lib/env.sh's canopy_paths
+set -eu
+
+: "${CANOPY_STORE:=$(cd "$(dirname "$0")/.." && pwd)}"
+# shellcheck source=../lib/env.sh
+# shellcheck disable=SC1091
+. "$CANOPY_STORE/lib/env.sh"
+# shellcheck source=../lib/manifest.sh
+# shellcheck disable=SC1091
+. "$CANOPY_STORE/lib/manifest.sh"
+# shellcheck source=../lib/tmux.sh
+# shellcheck disable=SC1091
+. "$CANOPY_STORE/lib/tmux.sh"
+canopy_paths
+
+yes=0
+dry_run=0
+for arg in "$@"; do
+  case "$arg" in
+    --yes) yes=1 ;;
+    --dry-run) dry_run=1 ;;
+    *) canopy_die "canopy-install: unknown argument: $arg" ;;
+  esac
+done
+
+# tmux's own precedence: ~/.tmux.conf wins when present, else the XDG path.
+xdg_conf_home="${XDG_CONFIG_HOME:-$HOME/.config}"
+xdg_tmux_conf="$xdg_conf_home/tmux/tmux.conf"
+dot_tmux_conf="$HOME/.tmux.conf"
+
+user_entry=""
+if [ -f "$dot_tmux_conf" ]; then
+  user_entry="$dot_tmux_conf"
+elif [ -f "$xdg_tmux_conf" ]; then
+  user_entry="$xdg_tmux_conf"
+fi
+
+mise_conf_dir="$xdg_conf_home/mise/conf.d"
+mise_frag="$mise_conf_dir/canopy.toml"
+write_mise=0
+if [ -d "$mise_conf_dir" ] || canopy_have mise; then
+  write_mise=1
+fi
+
+print_plan() {
+  if [ -n "$user_entry" ]; then
+    printf 'own %s (backed up) and migrate it into %s\n' "$user_entry" "$CANOPY_CONFIG/user.conf"
+  elif [ ! -f "$CANOPY_CONFIG/user.conf" ]; then
+    printf 'create empty %s\n' "$CANOPY_CONFIG/user.conf"
+  fi
+  if [ "$write_mise" -eq 1 ]; then
+    printf 'write %s\n' "$mise_frag"
+  fi
+  printf 'run canopy-caps\n'
+  printf 'run canopy-index\n'
+  printf 'validate the resulting tmux config\n'
+}
+
+if [ "$dry_run" -eq 1 ]; then
+  print_plan
+  exit 0
+fi
+
+if [ -n "$user_entry" ] && [ "$yes" -ne 1 ]; then
+  printf 'canopy install found an existing tmux config and would migrate it:\n'
+  print_plan
+  canopy_die "owning $user_entry is a migration, not a merge — re-run with --yes to proceed"
+fi
+
+tx="$(canopy_tx_begin install)"
+touch "$tx/.pinned"
+
+mkdir -p "$CANOPY_CONFIG"
+
+if [ -n "$user_entry" ]; then
+  canopy_tx_record "$tx" own "$user_entry"
+  {
+    printf '\n# canopy: migrated from %s on %s\n' "$user_entry" "$(date +%Y-%m-%d)"
+    cat "$user_entry"
+  } >>"$CANOPY_CONFIG/user.conf"
+  cat >"$user_entry" <<'EOF'
+# Managed by canopy. Your previous config was migrated to
+# $CANOPY_CONFIG/user.conf — edit that file instead.
+source-file "$CANOPY_STORE/tmux/tmux.conf"
+EOF
+elif [ ! -f "$CANOPY_CONFIG/user.conf" ]; then
+  printf '# canopy user config — sourced last, wins over every shipped default.\n' >"$CANOPY_CONFIG/user.conf"
+fi
+
+if [ "$write_mise" -eq 1 ]; then
+  canopy_tx_record "$tx" drop "$mise_frag"
+  mkdir -p "$mise_conf_dir"
+  cat >"$mise_frag" <<'EOF'
+# Managed by canopy — do not edit; overwritten by `canopy install`.
+[tools]
+fzf = "latest"
+gum = "latest"
+starship = "latest"
+EOF
+fi
+
+"$CANOPY_STORE/bin/canopy-caps"
+"$CANOPY_STORE/bin/canopy-index"
+
+canopy_tx_commit "$tx"
+
+if canopy_tmux_validate "$CANOPY_STORE/tmux/tmux.conf"; then
+  printf 'canopy installed.\n'
+else
+  "$tx/restore.sh"
+  canopy_die "the resulting tmux config failed validation — installation rolled back"
+fi
