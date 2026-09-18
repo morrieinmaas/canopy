@@ -116,3 +116,59 @@ EOF
   group_field="$(awk -F'\t' '$1 == "nogroup" {print $2}' "$CANOPY_STATE/commands.tsv")"
   [ "$group_field" = "misc" ]
 }
+
+@test "reached through a symlink, canopy resolves the real store and every subcommand dispatches" {
+  # The documented way onto a PATH is a symlink from a directory like
+  # ~/.local/bin into the clone. Deriving the store from $0 resolved it to
+  # the link's parent's parent, so lib/env.sh was looked for beside the
+  # link and nothing dispatched at all.
+  setup_canopy_home
+  real_store="$CANOPY_STORE"
+  link_dir="$BATS_TEST_TMPDIR/localbin"
+  mkdir -p "$link_dir"
+  ln -s "$real_store/bin/canopy" "$link_dir/canopy"
+  unset CANOPY_STORE
+
+  run "$link_dir/canopy" version
+  [ "$status" -eq 0 ]
+  [ "$output" = "$(cat "$real_store/VERSION")" ]
+
+  run "$link_dir/canopy" help
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"install"* ]]
+
+  run "$link_dir/canopy" caps --print
+  [ "$status" -eq 0 ]
+  [ -f "$CANOPY_STATE/05-caps.conf" ]
+
+  run "$link_dir/canopy" index
+  [ "$status" -eq 0 ]
+  [ -f "$CANOPY_STATE/commands.tsv" ]
+
+  run "$link_dir/canopy" install --dry-run
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"create entry point"* ]]
+
+  run "$link_dir/canopy" restore --list
+  [ "$status" -eq 0 ]
+
+  # doctor names the store it resolved, which is the clone and not the
+  # directory the link happens to sit in.
+  run "$link_dir/canopy" doctor
+  [ "$status" -le 1 ]
+  [[ "$output" == *"store: $real_store"* ]]
+  [[ "$output" != *"store: $BATS_TEST_TMPDIR"* ]]
+}
+
+@test "a chain of relative symlinks to bin/canopy resolves too" {
+  real_store="$CANOPY_STORE"
+  link_dir="$BATS_TEST_TMPDIR/chain"
+  mkdir -p "$link_dir/a" "$link_dir/b"
+  ln -s "$real_store/bin/canopy" "$link_dir/a/canopy"
+  ln -s "../a/canopy" "$link_dir/b/canopy"
+  unset CANOPY_STORE
+
+  run "$link_dir/b/canopy" version
+  [ "$status" -eq 0 ]
+  [ "$output" = "$(cat "$real_store/VERSION")" ]
+}
