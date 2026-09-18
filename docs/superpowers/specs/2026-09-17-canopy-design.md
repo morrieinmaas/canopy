@@ -425,23 +425,39 @@ themes/<name>/
 
 ---
 
-## 11. Milestones
+## 11. Milestones and how they are verified
 
-Each milestone is independently dogfoodable; each ends in a state where canopy is
-usable on a real machine.
+Each milestone ends in a capability a person can exercise on a machine that has
+never seen canopy. The acceptance gate is a container run from a bare
+environment, not a passing unit suite.
 
-| M | Content | Done means |
+This rule exists because it was learned the hard way. Milestone 1 reached 93
+green tests, a passing restore proof and a clean lint while its installed
+configuration loaded nothing at all on a real machine: the entry point expanded
+`$CANOPY_STORE` from the tmux server's environment, which nothing set, and every
+test exported that variable before invoking anything. The verification ran in a
+richer environment than any user will ever have.
+
+**The rule: every verification runs the shipped artifact through the same entry
+path a user does, from a bare environment.** Unit tests may use conveniences for
+speed. The acceptance scenario may not: no `CANOPY_*` exported, no helper
+sourced, no store path assumed.
+
+| M | Capability delivered | Acceptance scenario, in a container, bare environment |
 |---|---|---|
-| **M1** | store skeleton, dispatcher + metadata headers, `lib/env.sh`, conf.d loader, caps model, `doctor`, transactions + `restore` + CI restore proof | install onto a machine with existing configs, then `restore --all` returns it byte-identical |
-| **M2** | vendored resurrect/continuum, save-command strategy, Claude Code adapter, `reboot-check`, `adopt` with guards, stagger | a real reboot returns every claude pane to its own conversation, verified end to end |
-| **M3** | agent layer proper: report CLI, rollups, render tokens, seen/unseen, `agent next`; opencode + pi + codex adapters with tiers recorded | four agents report; status and borders reflect state with zero forks per redraw |
-| **M4** | palette, which-key, key search, generated index, manual generation | every command reachable by key, CLI, and palette from one definition |
-| **M5** | theme system + tmux/ghostty/starship theming, opt-in per app | `theme set` repaints tmux and (opted-in) ghostty/starship; restore still passes CI |
-| **M6** | worktree layer, session naming and picker grouping, autostart layer | worktrees navigable as peers; optional login autostart brings agents back before first attach |
+| **M1** | A machine can adopt canopy and shed it again without a trace | Virgin box: install, start tmux with no `CANOPY_*` set, canopy's config is loaded, `doctor` exits 0, `restore --all` returns `find $HOME` to its original listing. Box with pre-existing tmux, ghostty and a **symlinked** `tmux.conf`: same, and afterwards the symlink and its target are byte-identical |
+| **M2** | A reboot returns every agent pane to its own conversation | Container with agent panes, kill the server to simulate the reboot, restart, each pane resumes its own session id, and `reboot-check` said so beforehand |
+| **M3** | Agent state is visible across four agents without polling | Drive the report CLI as each adapter does, pane and window state reflect it, and the status line performs no subprocess per redraw |
+| **M4** | Every command is reachable by key, CLI and palette from one definition | Open the palette and the which-key menu inside a container tmux, the generated index matches `list-keys` exactly |
+| **M5** | A theme repaints tmux and, where opted in, ghostty and starship | `theme set` changes all opted-in surfaces, and the M1 scenario still passes afterwards |
+| **M6** | Worktrees are navigable as peers, and agents can return before first attach | Worktree sessions group by project, optional autostart brings panes back with no terminal opened |
 
-Ordering rationale: M1 makes everything else safe to install; M2 is the wedge and the
-only part that is urgent; M3 makes M2's `adopt` trivial by supplying session ids as a
-byproduct; M4–M6 are experience layers that assume the skeleton.
+Ordering rationale: M1 makes everything else safe to install; M2 is the wedge and
+the only urgent part; M3 makes M2's `adopt` trivial by supplying session ids as a
+byproduct; M4 to M6 are experience layers that assume the skeleton.
+
+A milestone is not complete when its code exists and its unit tests pass. It is
+complete when its container scenario passes.
 
 ---
 

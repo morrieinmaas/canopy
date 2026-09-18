@@ -8,8 +8,17 @@ setup() {
   canopy_paths
 }
 
-@test "the shipped config loads on a scratch socket" {
-  run canopy_tmux_validate "$CANOPY_STORE/tmux/tmux.conf"
+# This file exercises the store's own tmux.conf, which reads its three
+# paths from the tmux server's environment and so only loads when something
+# has put them there. That something is the installed entry point, and
+# whether it does is a question about the shipped artifact, not about this
+# loader: test/installed_entry.bats answers it from a bare environment.
+# Here the harness stands in for the stub, which is the repo checkout case.
+@test "the shipped config loads on a scratch socket when the paths are set" {
+  sock="canopy-test-shipped-$$"
+  tmux -L "$sock" -f /dev/null new-session -d
+  run tmux -L "$sock" source-file "$CANOPY_STORE/tmux/tmux.conf"
+  kill_tmux_server "$sock"
   [ "$status" -eq 0 ]
 }
 
@@ -19,7 +28,7 @@ setup() {
   sock="canopy-test-$$"
   tmux -L "$sock" -f "$CANOPY_STORE/tmux/tmux.conf" new-session -d
   run tmux -L "$sock" show -gv @canopy_test_marker
-  tmux -L "$sock" kill-server
+  kill_tmux_server "$sock"
   [ "$output" = "user-wins" ]
 }
 
@@ -73,7 +82,7 @@ EOF
   sock="canopy-test-caps-$$"
   tmux -L "$sock" -f "$CANOPY_STORE/tmux/tmux.conf" new-session -d
   run tmux -L "$sock" show -gv @canopy_caps_marker
-  tmux -L "$sock" kill-server
+  kill_tmux_server "$sock"
   [ "$output" = "present" ]
 }
 
@@ -90,6 +99,6 @@ EOF
   sock="canopy-test-sourceonce-$$"
   CANOPY_STORE="$store_copy" tmux -L "$sock" -f "$store_copy/tmux/tmux.conf" new-session -d
   run tmux -L "$sock" show -gv @canopy_test_counter
-  tmux -L "$sock" kill-server
+  kill_tmux_server "$sock"
   [ "$output" = "x" ]
 }

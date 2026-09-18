@@ -98,6 +98,13 @@ else
   load_bearing_failed=1
 fi
 
+# What gets validated is the entry point tmux actually loads on this
+# machine, from the bare environment canopy_tmux_validate imposes. Doctor
+# used to validate the store's own tmux.conf while this process had
+# CANOPY_* exported, and so reported OK on a machine whose installed
+# config loaded nothing whatsoever. A check that runs the artifact through
+# a richer environment than the user has is not a check.
+#
 # canopy_tmux_validate is called directly as the if-condition, not wrapped
 # in a nested command substitution: under `set -e`, canopy_tmux_validate's
 # own internal `err="$(tmux ... )"` assignment is only exempt from -e when
@@ -110,14 +117,26 @@ fi
 mkdir -p "$CANOPY_RUNTIME"
 validate_tmp="$CANOPY_RUNTIME/doctor-validate.$$"
 trap 'rm -f "$validate_tmp"' EXIT
-if canopy_tmux_validate "$CANOPY_STORE/tmux/tmux.conf" >"$validate_tmp" 2>&1; then
-  printf '  config validates on a scratch socket: ok\n'
+entry_point="$(canopy_entry_point)"
+if [ -z "$entry_point" ]; then
+  # No entry point means canopy is not installed, so there is no shipped
+  # artifact to run through a user's entry path, and nothing doctor could
+  # honestly validate in its place. Reported as a warning rather than
+  # silence: "canopy doctor: OK" on a machine with no canopy on it is the
+  # same lie in a smaller costume.
+  printf '  installed entry point: none, canopy is not installed (run: canopy install)\n'
+  warnings=$((warnings + 1))
 else
-  printf '  config validates on a scratch socket: FAILED\n'
-  while IFS= read -r line; do
-    printf '    %s\n' "$line"
-  done <"$validate_tmp"
-  load_bearing_failed=1
+  printf '  installed entry point: %s\n' "$entry_point"
+  if canopy_tmux_validate "$entry_point" >"$validate_tmp" 2>&1; then
+    printf '  entry point loads from a bare environment: ok\n'
+  else
+    printf '  entry point loads from a bare environment: FAILED\n'
+    while IFS= read -r line; do
+      printf '    %s\n' "$line"
+    done <"$validate_tmp"
+    load_bearing_failed=1
+  fi
 fi
 rm -f "$validate_tmp"
 
