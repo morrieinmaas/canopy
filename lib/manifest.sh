@@ -1,9 +1,20 @@
 # shellcheck shell=sh
 # shellcheck disable=SC2154  # CANOPY_STATE is exported by lib/env.sh's canopy_paths
 
-# Path mangling for backup filenames: replace "/" with "%".
+# Manifest format (tab-separated), five columns, defined once here:
+#   action<TAB>path<TAB>pre(absent|sha256)<TAB>backup_rel(-|path)<TAB>post(sha256|absent)
+# action is one of: own|splice|drop|generate|env
+# Assumption: paths must not contain tab or newline characters. A path
+# that does would produce a malformed row (extra fields), and restore.sh
+# silently skips rows it can't parse cleanly.
+
+# Path mangling for backup filenames: escape a literal "%" as "%%" first,
+# then replace "/" with "%". Escaping first is required so a path
+# containing a literal "%" can never collide with a different path whose
+# "/" happened to land in the same position (e.g. /etc/foo/bar vs
+# /etc/foo%bar would otherwise both mangle to the same filename).
 canopy_tx_mangle() {
-  printf '%s' "$1" | tr '/' '%'
+  printf '%s' "$1" | sed 's/%/%%/g' | tr '/' '%'
 }
 
 # canopy_tx_begin <label>
@@ -42,6 +53,10 @@ canopy_tx_record() {
   tx="$1"
   action="$2"
   path="$3"
+  case "$action" in
+    own | splice | drop | generate | env) ;;
+    *) canopy_die "canopy_tx_record: invalid action '$action' (expected own|splice|drop|generate|env)" ;;
+  esac
   if [ -e "$path" ]; then
     mangled="$(canopy_tx_mangle "$path")"
     cp -p "$path" "$tx/files/$mangled"
