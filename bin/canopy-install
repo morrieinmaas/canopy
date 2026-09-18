@@ -48,10 +48,13 @@ if [ -d "$mise_conf_dir" ] || canopy_have mise; then
 fi
 
 print_plan() {
+  if [ ! -f "$CANOPY_CONFIG/user.conf" ]; then
+    printf 'create empty %s\n' "$CANOPY_CONFIG/user.conf"
+  fi
   if [ -n "$user_entry" ]; then
     printf 'own %s (backed up) and migrate it into %s\n' "$user_entry" "$CANOPY_CONFIG/user.conf"
-  elif [ ! -f "$CANOPY_CONFIG/user.conf" ]; then
-    printf 'create empty %s\n' "$CANOPY_CONFIG/user.conf"
+  else
+    printf 'create entry point %s, sourcing the store tmux.conf\n' "$xdg_tmux_conf"
   fi
   if [ "$write_mise" -eq 1 ]; then
     printf 'write %s\n' "$mise_frag"
@@ -76,6 +79,9 @@ tx="$(canopy_tx_begin install)"
 touch "$tx/.pinned"
 
 mkdir -p "$CANOPY_CONFIG"
+if [ ! -f "$CANOPY_CONFIG/user.conf" ]; then
+  printf '# canopy user config — sourced last, wins over every shipped default.\n' >"$CANOPY_CONFIG/user.conf"
+fi
 
 if [ -n "$user_entry" ]; then
   canopy_tx_record "$tx" own "$user_entry"
@@ -88,8 +94,39 @@ if [ -n "$user_entry" ]; then
 # $CANOPY_CONFIG/user.conf — edit that file instead.
 source-file "$CANOPY_STORE/tmux/tmux.conf"
 EOF
-elif [ ! -f "$CANOPY_CONFIG/user.conf" ]; then
-  printf '# canopy user config — sourced last, wins over every shipped default.\n' >"$CANOPY_CONFIG/user.conf"
+else
+  # No pre-existing config anywhere canopy or tmux would look: canopy still
+  # "owns the entry point" (spec 5.2), so create one at the XDG path. It is
+  # a brand-new file (action drop, pre-state absent), not a migration.
+  entry_dir="$(dirname "$xdg_tmux_conf")"
+  entry_dir_created=0
+  [ -d "$entry_dir" ] || entry_dir_created=1
+  canopy_tx_record "$tx" drop "$xdg_tmux_conf"
+  mkdir -p "$entry_dir"
+  cat >"$xdg_tmux_conf" <<'EOF'
+# Managed by canopy — do not edit.
+source-file "$CANOPY_STORE/tmux/tmux.conf"
+EOF
+  if [ "$entry_dir_created" -eq 1 ]; then
+    # The manifest format models files, not directories, so a directory
+    # canopy-install itself created (to hold the file above) is tracked in
+    # a sidecar next to restore.sh instead of as a manifest row. The
+    # cleanup snippet is appended verbatim (no data interpolated into
+    # generated code) and only ever reads that sidecar back by line,
+    # mirroring how restore.sh already reads manifest.tsv.
+    printf '%s\n' "$entry_dir" >>"$tx/dirs-created.txt"
+    cat >>"$tx/restore.sh" <<'RESTORE_DIRS_EOF'
+
+# Directories canopy-install created solely to hold a fresh entry point:
+# removed on restore only if still empty, so pre-existing sibling content
+# (e.g. an unrelated plugins/ dir under the same path) is kept.
+if [ -f "$dir/dirs-created.txt" ]; then
+  while IFS= read -r d; do
+    rmdir "$d" 2>/dev/null || :
+  done <"$dir/dirs-created.txt"
+fi
+RESTORE_DIRS_EOF
+  fi
 fi
 
 if [ "$write_mise" -eq 1 ]; then
