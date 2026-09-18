@@ -31,3 +31,17 @@ setup() {
   [ -x "$tx/restore.sh" ]
   grep -qv 'canopy_' "$tx/restore.sh"   # must not call into the store
 }
+
+@test "two transactions with the same label in the same second get distinct dirs" {
+  tx1="$(canopy_tx_begin install)"
+  tx2="$(canopy_tx_begin install)"
+  [ "$tx1" != "$tx2" ]
+  [ -d "$tx1" ]
+  [ -d "$tx2" ]
+  canopy_tx_record "$tx1" own "$target"
+  canopy_tx_record "$tx2" drop "$target"
+  grep -q "own	$target	" "$tx1/manifest.tsv"
+  grep -q "drop	$target	" "$tx2/manifest.tsv"
+  ! grep -q "drop" "$tx1/manifest.tsv"
+  ! grep -q "own" "$tx2/manifest.tsv"
+}
