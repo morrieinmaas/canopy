@@ -61,9 +61,18 @@ canopy_mkdir_tracked() {
   target="$1"
   missing=""
   d="$target"
-  while [ ! -d "$d" ] && [ "$d" != "$CANOPY_CONFIG" ]; do
-    missing="$d
+  while [ ! -d "$d" ]; do
+    # $CANOPY_CONFIG and anything under it is skipped, not recorded, but
+    # the walk carries on past it: the levels ABOVE $CANOPY_CONFIG are
+    # ordinary directories like ~/.config, and stopping the walk at
+    # $CANOPY_CONFIG (as this loop used to) silently left them untracked.
+    case "$d" in
+      "$CANOPY_CONFIG" | "$CANOPY_CONFIG"/*) ;;
+      *)
+        missing="$d
 $missing"
+        ;;
+    esac
     d="$(dirname "$d")"
   done
   mkdir -p "$target"
@@ -130,7 +139,7 @@ fi
 
 tx="$(canopy_tx_begin install)"
 
-mkdir -p "$CANOPY_CONFIG"
+canopy_mkdir_tracked "$CANOPY_CONFIG"
 if [ -f "$CANOPY_CONFIG/user.conf" ]; then
   canopy_tx_record "$tx" own "$CANOPY_CONFIG/user.conf"
 else
