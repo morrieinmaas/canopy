@@ -83,6 +83,46 @@ setup() {
   [ "$(cat "$tx/$backup_b")" = "from-b" ]
 }
 
+@test "recording the same path twice gives each row its own backup and its own hashes" {
+  # The backup filename used to come from the path alone, so the second
+  # cp -p of a path clobbered the first and left the first row's pre hash
+  # describing bytes that were no longer on disk.
+  printf 'first\n' > "$target"
+  first_hash="$(canopy_sha256 "$target")"
+  tx="$(canopy_tx_begin install)"
+  canopy_tx_record "$tx" own "$target"
+  printf 'second\n' > "$target"
+  second_hash="$(canopy_sha256 "$target")"
+  canopy_tx_record "$tx" splice "$target"
+  printf 'final\n' > "$target"
+  canopy_tx_commit "$tx"
+
+  [ "$first_hash" != "$second_hash" ]
+
+  row1="$(awk -F'\t' 'NR==2' "$tx/manifest.tsv")"
+  row2="$(awk -F'\t' 'NR==3' "$tx/manifest.tsv")"
+
+  backup1="$(printf '%s' "$row1" | awk -F'\t' '{print $4}')"
+  backup2="$(printf '%s' "$row2" | awk -F'\t' '{print $4}')"
+  [ "$backup1" != "$backup2" ]
+
+  # each row's backup holds that row's own bytes
+  [ "$(cat "$tx/$backup1")" = "first" ]
+  [ "$(cat "$tx/$backup2")" = "second" ]
+
+  # each row's pre hash names the bytes its own backup holds
+  [ "$(printf '%s' "$row1" | awk -F'\t' '{print $3}')" = "$first_hash" ]
+  [ "$(printf '%s' "$row2" | awk -F'\t' '{print $3}')" = "$second_hash" ]
+  [ "$(canopy_sha256 "$tx/$backup1")" = "$first_hash" ]
+  [ "$(canopy_sha256 "$tx/$backup2")" = "$second_hash" ]
+
+  # and both rows carry a post hash, describing the one state the path is
+  # actually in at commit time
+  final_hash="$(canopy_sha256 "$target")"
+  [ "$(printf '%s' "$row1" | awk -F'\t' '{print $5}')" = "$final_hash" ]
+  [ "$(printf '%s' "$row2" | awk -F'\t' '{print $5}')" = "$final_hash" ]
+}
+
 @test "canopy_tx_record rejects an unknown action" {
   tx="$(canopy_tx_begin install)"
   run canopy_tx_record "$tx" bogus "$target"
