@@ -46,6 +46,75 @@ canopy_paths() {
 
 canopy_have() { command -v "$1" >/dev/null 2>&1; }
 
+# canopy_stat_field <gnu-format> <bsd-format> <path>
+# One stat field for <path>, printed without a trailing newline, without
+# following a symlink (neither stat dereferences by default). GNU and
+# BusyBox stat take -c and reject -f with a format operand; BSD stat is the
+# other way round, so the two are tried in that order and the first one
+# that both succeeds and prints something wins. Returns non-zero when
+# neither does, which every caller treats as "refuse", never as "fine".
+canopy_stat_field() {
+  if canopy_stat_out="$(stat -c "$1" "$3" 2>/dev/null)" && [ -n "$canopy_stat_out" ]; then
+    printf '%s' "$canopy_stat_out"
+    return 0
+  fi
+  if canopy_stat_out="$(stat -f "$2" "$3" 2>/dev/null)" && [ -n "$canopy_stat_out" ]; then
+    printf '%s' "$canopy_stat_out"
+    return 0
+  fi
+  return 1
+}
+
+# canopy_runtime_ensure
+# Makes $CANOPY_RUNTIME usable, or refuses to use it at all.
+#
+# The fallback runtime path is /tmp/canopy-<uid>, and /tmp is shared and
+# world-writable: any local account can work out that path and create it
+# first. Whoever creates a directory owns it and sets its mode, so an
+# attacker who wins the race owns the directory canopy then writes its
+# scratch files into, and can read them, replace them, or point their
+# contents somewhere else through a symlink planted inside.
+#
+# Two halves, and both are needed. Creating it with mode 0700 closes the
+# window when canopy gets there first. Refusing a directory that is not
+# ours, or that anyone else can write to, closes the window when it does
+# not: mkdir -p is silent about a path that already exists, so without the
+# check canopy would simply adopt whatever it found.
+#
+# Called at the point of use rather than from canopy_paths: resolving a
+# path should not create a directory, and a command that never writes a
+# runtime file should not make one appear.
+canopy_runtime_ensure() {
+  if [ ! -e "$CANOPY_RUNTIME" ] && [ ! -L "$CANOPY_RUNTIME" ]; then
+    (
+      umask 077
+      mkdir -p "$CANOPY_RUNTIME"
+    ) || canopy_die "could not create the runtime directory $CANOPY_RUNTIME"
+  fi
+
+  # Checked after the mkdir, never instead of it: mkdir -p succeeds
+  # silently on a path that appeared between the test above and the call.
+  if [ -L "$CANOPY_RUNTIME" ]; then
+    canopy_die "runtime directory $CANOPY_RUNTIME is a symlink, refusing to use it"
+  fi
+  if [ ! -d "$CANOPY_RUNTIME" ]; then
+    canopy_die "runtime directory $CANOPY_RUNTIME exists and is not a directory, refusing to use it"
+  fi
+
+  canopy_runtime_uid="$(canopy_stat_field '%u' '%u' "$CANOPY_RUNTIME")" ||
+    canopy_die "cannot read the owner of the runtime directory $CANOPY_RUNTIME, refusing to use it"
+  if [ "$canopy_runtime_uid" != "$(id -u)" ]; then
+    canopy_die "runtime directory $CANOPY_RUNTIME is owned by uid $canopy_runtime_uid, not by you (uid $(id -u)); refusing to use it"
+  fi
+
+  canopy_runtime_mode="$(canopy_stat_field '%a' '%Lp' "$CANOPY_RUNTIME")" ||
+    canopy_die "cannot read the permissions of the runtime directory $CANOPY_RUNTIME, refusing to use it"
+  # A leading 0 makes the shell read the value as the octal it already is.
+  if [ $((0$canopy_runtime_mode & 022)) -ne 0 ]; then
+    canopy_die "runtime directory $CANOPY_RUNTIME is writable by group or other (mode $canopy_runtime_mode), refusing to use it"
+  fi
+}
+
 canopy_sha256() {
   if canopy_have sha256sum; then
     sha256sum "$1" | cut -d' ' -f1

@@ -4,7 +4,12 @@ setup_canopy_env() {
   CANOPY_STATE="$BATS_TEST_TMPDIR/state"
   CANOPY_RUNTIME="$BATS_TEST_TMPDIR/run"
   export CANOPY_STORE CANOPY_CONFIG CANOPY_STATE CANOPY_RUNTIME
-  mkdir -p "$CANOPY_CONFIG" "$CANOPY_STATE" "$CANOPY_RUNTIME"
+  mkdir -p "$CANOPY_CONFIG" "$CANOPY_STATE"
+  # 0700, the mode canopy_runtime_ensure creates this directory with and
+  # the only mode it will accept. A bare mkdir here would take the mode
+  # from the harness's umask, so a machine running with a group-writable
+  # umask would see canopy refuse its own test fixture.
+  (umask 077 && mkdir -p "$CANOPY_RUNTIME")
   PATH="$CANOPY_STORE/bin:$PATH"; export PATH
 }
 
