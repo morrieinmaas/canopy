@@ -9,10 +9,24 @@ canopy_tx_mangle() {
 # canopy_tx_begin <label>
 # Creates $CANOPY_STATE/backups/<epoch>-<label>/, prints its path, and
 # seeds it with a manifest.tsv header and a self-contained restore.sh.
+# Two transactions can begin within the same epoch second; uniqueness is
+# enforced atomically via mkdir itself (it succeeds exactly once for a
+# given path), appending a numeric suffix on collision.
 canopy_tx_begin() {
   label="$1"
   epoch="$(date +%s)"
-  tx="$CANOPY_STATE/backups/${epoch}-${label}"
+  mkdir -p "$CANOPY_STATE/backups"
+  base="$CANOPY_STATE/backups/${epoch}-${label}"
+  tx="$base"
+  attempt=1
+  max_attempts=1000
+  while ! mkdir "$tx" 2>/dev/null; do
+    attempt=$((attempt + 1))
+    if [ "$attempt" -gt "$max_attempts" ]; then
+      canopy_die "canopy_tx_begin: could not allocate a unique transaction dir for $base"
+    fi
+    tx="${base}.${attempt}"
+  done
   mkdir -p "$tx/files"
   printf '# action\tpath\tpre\tbackup_rel\tpost\n' >"$tx/manifest.tsv"
   canopy_tx_write_restore "$tx/restore.sh"
