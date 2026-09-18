@@ -286,6 +286,52 @@ interrupt_install() {
   [ "$(canopy_sha256 "$entry")" = "$orig_hash" ]
 }
 
+@test "reverting an uncommitted transaction announces every unguarded path and where the overwritten bytes went" {
+  # The reported scenario, reproduced: an install interrupted before it
+  # committed, then the user edits both files it had already touched.
+  # Those rows carry an empty post column, so there is nothing to compare
+  # the current bytes against and restore reverts them unguarded. The
+  # revert is right, doing it without saying so is not: the user loses
+  # two edits and is told only "2 reverted, 0 kept".
+  entry_dir="$XDG_CONFIG_HOME/tmux"
+  entry="$entry_dir/tmux.conf"
+  user_conf="$CANOPY_CONFIG/user.conf"
+  mkdir -p "$entry_dir"
+  printf 'set -g @preexisting yes\n' > "$entry"
+  printf '# canopy user config\n' > "$user_conf"
+
+  tx="$(canopy_tx_begin install)"
+  canopy_tx_record "$tx" own "$entry"
+  canopy_tx_record "$tx" own "$user_conf"
+  printf '# canopy:entry-point: managed by canopy, do not edit directly.\n' > "$entry"
+  printf '# canopy user config: sourced last.\n' > "$user_conf"
+  # Interrupted here: no canopy_tx_commit, so no post hashes and no
+  # .committed marker.
+
+  printf 'set -g @mine yes\n' > "$entry"
+  printf 'set -g @appended yes\n' >> "$user_conf"
+  edited_entry="$(canopy_sha256 "$entry")"
+  edited_user="$(canopy_sha256 "$user_conf")"
+
+  run canopy restore
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"2 reverted, 0 kept"* ]]
+  [[ "$output" == *"$entry"* ]]
+  [[ "$output" == *"$user_conf"* ]]
+  [[ "$output" == *"never committed"* ]]
+
+  restore_id=""
+  for d in "$CANOPY_STATE"/backups/*-restore; do restore_id="$(basename "$d")"; done
+  [ -n "$restore_id" ]
+  [[ "$output" == *"canopy restore --to $restore_id"* ]]
+
+  # The recovery command it printed really does bring both edits back.
+  run canopy restore --to "$restore_id"
+  [ "$status" -eq 0 ]
+  [ "$(canopy_sha256 "$entry")" = "$edited_entry" ]
+  [ "$(canopy_sha256 "$user_conf")" = "$edited_user" ]
+}
+
 @test "a failed transaction stays out of automatic rollback, but --to can still name it" {
   a="$BATS_TEST_TMPDIR/failed-a.conf"
   printf 'orig-a\n' > "$a"

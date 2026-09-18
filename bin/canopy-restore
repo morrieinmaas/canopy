@@ -168,8 +168,10 @@ esac
 mkdir -p "$CANOPY_STATE"
 tmp_target="$CANOPY_STATE/.restore-target.tmp.$$"
 kept_list="$CANOPY_STATE/.restore-kept.tmp.$$"
-trap 'rm -f "$tmp_target" "$kept_list"' EXIT
+unguarded_list="$CANOPY_STATE/.restore-unguarded.tmp.$$"
+trap 'rm -f "$tmp_target" "$kept_list" "$unguarded_list"' EXIT
 : >"$kept_list"
+: >"$unguarded_list"
 if [ -n "$target_list" ]; then
   printf '%s\n' "$target_list" | sort -r >"$tmp_target"
 else
@@ -178,9 +180,11 @@ fi
 
 reverted=0
 kept=0
+restore_id=""
 
 if [ -s "$tmp_target" ]; then
   restore_tx="$(canopy_tx_begin restore)"
+  restore_id="${restore_tx##*/}"
   tab="$(printf '\t')"
   while IFS= read -r tx_dir; do
     [ -n "$tx_dir" ] || continue
@@ -207,6 +211,16 @@ if [ -s "$tmp_target" ]; then
         kept=$((kept + 1))
         printf '%s\n' "$path" >>"$kept_list"
         continue
+      fi
+
+      # An unguarded revert overwrites whatever the file holds now,
+      # including edits made after canopy was interrupted, so it is named
+      # in the closing summary rather than done silently. The bytes it
+      # overwrites are not lost: canopy_tx_record below copies them into
+      # this restore transaction first, and the summary says how to get
+      # them back.
+      if [ -z "$post" ]; then
+        printf '%s\n' "$path" >>"$unguarded_list"
       fi
 
       canopy_tx_record "$restore_tx" "$action" "$path"
@@ -242,6 +256,12 @@ if [ -s "$kept_list" ]; then
   while IFS= read -r kept_path; do
     printf 'kept (changed since canopy wrote it): %s\n' "$kept_path"
   done <"$kept_list"
+fi
+if [ -s "$unguarded_list" ]; then
+  while IFS= read -r unguarded_path; do
+    printf 'reverted without a hash guard, that transaction never committed so canopy never recorded what it left on disk: %s\n' "$unguarded_path"
+  done <"$unguarded_list"
+  printf 'the bytes overwritten above were backed up first; recover them with: canopy restore --to %s\n' "$restore_id"
 fi
 
 exit_status=0
