@@ -1,0 +1,35 @@
+#!/bin/sh
+# canopy:summary=Generate the command index from metadata headers
+# canopy:group=core
+# shellcheck disable=SC2154,SC2153  # CANOPY_STATE is exported by lib/env.sh's canopy_paths
+set -eu
+
+: "${CANOPY_STORE:=$(cd "$(dirname "$0")/.." && pwd)}"
+# shellcheck source=../lib/env.sh
+# shellcheck disable=SC1091
+. "$CANOPY_STORE/lib/env.sh"
+canopy_paths
+
+bin_dir="$CANOPY_STORE/bin"
+out="$CANOPY_STATE/commands.tsv"
+tmp="$out.tmp.$$"
+
+mkdir -p "$CANOPY_STATE"
+: >"$tmp"
+
+for f in "$bin_dir"/canopy-*; do
+  [ -f "$f" ] || continue
+  name=${f##*/canopy-}
+  awk -v name="$name" '
+    BEGIN { group = ""; summary = ""; args = ""; examples = "" }
+    NR > 40 { exit }
+    /^# canopy:group=/    { group    = substr($0, index($0, "=") + 1) }
+    /^# canopy:summary=/  { summary  = substr($0, index($0, "=") + 1) }
+    /^# canopy:args=/     { args     = substr($0, index($0, "=") + 1) }
+    /^# canopy:examples=/ { examples = substr($0, index($0, "=") + 1) }
+    END { printf "%s\t%s\t%s\t%s\t%s\n", name, group, summary, args, examples }
+  ' "$f" >>"$tmp"
+done
+
+sort -t "$(printf '\t')" -k2,2 -k1,1 "$tmp" >"$out"
+rm -f "$tmp"
