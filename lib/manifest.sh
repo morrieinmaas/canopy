@@ -8,13 +8,18 @@
 # that does would produce a malformed row (extra fields), and restore.sh
 # silently skips rows it can't parse cleanly.
 
-# Path mangling for backup filenames: escape a literal "%" as "%%" first,
-# then replace "/" with "%". Escaping first is required so a path
-# containing a literal "%" can never collide with a different path whose
-# "/" happened to land in the same position (e.g. /etc/foo/bar vs
-# /etc/foo%bar would otherwise both mangle to the same filename).
+# Path mangling for backup filenames: percent-encode "%" as "%25" and
+# "/" as "%2F", leaving every other character as-is. This is fixed-width
+# encoding for the one character ("%") that could otherwise be confused
+# with an encoded sequence, so it cannot collide the way a variable-width
+# escape (e.g. "%"->"%%", "/"->"%") can: a path containing "/%" and one
+# containing "%/" mangle to different strings, because the two escaped
+# characters always occupy a fixed 3-byte slot and can never be mistaken
+# for each other regardless of ordering. Only "%" and "/" are encoded —
+# this is a backup filename, not a URL, so nothing else needs escaping,
+# and encoding more would only make backups harder to read by hand.
 canopy_tx_mangle() {
-  printf '%s' "$1" | sed 's/%/%%/g' | tr '/' '%'
+  printf '%s' "$1" | sed 's/%/%25/g' | sed 's#/#%2F#g'
 }
 
 # canopy_tx_begin <label>
