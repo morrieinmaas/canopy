@@ -26,7 +26,7 @@ canopy_tmux_version_ok() {
 # tmux only surfaces config parse/execution errors to a client that
 # attaches: a detached `tmux -f <conf> new-session -d` exits 0 and prints
 # nothing even when <conf> contains an unknown command or a broken
-# source-file path (verified empirically — such errors are queued and
+# source-file path (verified empirically: such errors are queued and
 # shown only once a client attaches). Running `source-file <conf>` as an
 # ordinary command against an already-started server executes the same
 # directives but reports failure synchronously, so that is what this

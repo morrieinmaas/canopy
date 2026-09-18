@@ -33,13 +33,13 @@ xdg_conf_home="${XDG_CONFIG_HOME:-$HOME/.config}"
 xdg_tmux_conf="$xdg_conf_home/tmux/tmux.conf"
 dot_tmux_conf="$HOME/.tmux.conf"
 
-# Written into every entry point canopy-install ever creates or replaces —
-# both branches below call write_entry_stub so the text can never diverge —
+# Written into every entry point canopy-install ever creates or replaces
+# (both branches below call write_entry_stub so the text can never diverge)
 # and how a re-run recognises its own file instead of migrating it.
 entry_marker='# canopy:entry-point'
 
 write_entry_stub() {
-  printf '%s — managed by canopy, do not edit directly.\n' "$entry_marker" >"$1"
+  printf '%s: managed by canopy, do not edit directly.\n' "$entry_marker" >"$1"
   cat >>"$1" <<'EOF'
 # Any original content was migrated to $CANOPY_CONFIG/user.conf.
 source-file "$CANOPY_STORE/tmux/tmux.conf"
@@ -51,7 +51,7 @@ EOF
 # $tx/dirs-created.txt, shallowest first (so a later cleanup that reads the
 # file in reverse can rmdir deepest first, letting each removal make its
 # parent empty in turn). Never records a level that already existed, and
-# never $CANOPY_CONFIG itself or anything found while still inside it — that
+# never $CANOPY_CONFIG itself or anything found while still inside it; that
 # directory is never touched by restore (spec 5.5), so it isn't tracked for
 # removal in the first place. This is the single call site every
 # directory-creating line in this script goes through, on purpose: two
@@ -85,10 +85,10 @@ fi
 
 if [ "$already_installed" -eq 1 ]; then
   if [ "$dry_run" -eq 1 ]; then
-    printf 'canopy is already installed: %s already sources canopy — nothing to do\n' "$user_entry"
+    printf 'canopy is already installed: %s already sources canopy; nothing to do\n' "$user_entry"
     exit 0
   fi
-  canopy_die "canopy is already installed: $user_entry already sources canopy's tmux.conf — nothing to migrate"
+  canopy_die "canopy is already installed: $user_entry already sources canopy's tmux.conf; nothing to migrate"
 fi
 
 mise_conf_dir="$xdg_conf_home/mise/conf.d"
@@ -125,7 +125,7 @@ fi
 if [ -n "$user_entry" ] && [ "$yes" -ne 1 ]; then
   printf 'canopy install found an existing tmux config and would migrate it:\n'
   print_plan
-  canopy_die "owning $user_entry is a migration, not a merge — re-run with --yes to proceed"
+  canopy_die "owning $user_entry is a migration, not a merge; re-run with --yes to proceed"
 fi
 
 tx="$(canopy_tx_begin install)"
@@ -135,7 +135,7 @@ if [ -f "$CANOPY_CONFIG/user.conf" ]; then
   canopy_tx_record "$tx" own "$CANOPY_CONFIG/user.conf"
 else
   canopy_tx_record "$tx" drop "$CANOPY_CONFIG/user.conf"
-  printf '# canopy user config — sourced last, wins over every shipped default.\n' >"$CANOPY_CONFIG/user.conf"
+  printf '# canopy user config: sourced last, wins over every shipped default.\n' >"$CANOPY_CONFIG/user.conf"
 fi
 
 if [ -n "$user_entry" ]; then
@@ -159,7 +159,7 @@ if [ "$write_mise" -eq 1 ]; then
   canopy_tx_record "$tx" drop "$mise_frag"
   canopy_mkdir_tracked "$mise_conf_dir"
   cat >"$mise_frag" <<'EOF'
-# Managed by canopy — do not edit; overwritten by `canopy install`.
+# Managed by canopy: do not edit; overwritten by `canopy install`.
 [tools]
 fzf = "latest"
 gum = "latest"
@@ -174,7 +174,7 @@ if [ -s "$tx/dirs-created.txt" ]; then
   # of as manifest rows. The cleanup snippet is spliced in before
   # restore.sh's own final summary line (not appended after it), so the
   # summary reflects a finished restore, and it reads the sidecar back in
-  # reverse — deepest-created directory first — so each rmdir can make its
+  # reverse (deepest-created directory first) so each rmdir can make its
   # parent empty in turn rather than only ever removing the leaf. It
   # contains no interpolated path data, just a static loop over the
   # sidecar file, mirroring how restore.sh already reads manifest.tsv.
@@ -208,5 +208,5 @@ if canopy_tmux_validate "$CANOPY_STORE/tmux/tmux.conf"; then
 else
   "$tx/restore.sh"
   touch "$tx/.failed"
-  canopy_die "the resulting tmux config failed validation — installation rolled back"
+  canopy_die "the resulting tmux config failed validation; installation rolled back"
 fi

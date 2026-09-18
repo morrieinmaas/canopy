@@ -8,7 +8,7 @@ setup() {
   canopy_paths
   target="$BATS_TEST_TMPDIR/target.conf"
   # Safety: restore's post-restore tmux validation resolves against
-  # HOME/XDG_CONFIG_HOME — every test gets its own fake ones under
+  # HOME/XDG_CONFIG_HOME; every test gets its own fake ones under
   # BATS_TEST_TMPDIR, never the real $HOME.
   home="$BATS_TEST_TMPDIR/home"
   mkdir -p "$home"
