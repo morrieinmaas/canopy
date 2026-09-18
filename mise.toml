@@ -1,0 +1,4 @@
+[tools]
+bats = "latest"
+shellcheck = "latest"
+shfmt = "latest"
