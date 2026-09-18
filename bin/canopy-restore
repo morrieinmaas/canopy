@@ -1,0 +1,203 @@
+#!/bin/sh
+# canopy:summary=Roll back transactions canopy recorded
+# canopy:group=core
+# canopy:args=[--list] [--to <id>] [--all] [--force]
+# canopy:examples=canopy restore --all
+# shellcheck disable=SC2154,SC2153  # CANOPY_STATE/CANOPY_CONFIG are exported by lib/env.sh's canopy_paths
+set -eu
+
+: "${CANOPY_STORE:=$(cd "$(dirname "$0")/.." && pwd)}"
+# shellcheck source=../lib/env.sh
+# shellcheck disable=SC1091
+. "$CANOPY_STORE/lib/env.sh"
+# shellcheck source=../lib/manifest.sh
+# shellcheck disable=SC1091
+. "$CANOPY_STORE/lib/manifest.sh"
+canopy_paths
+
+mode=last
+to_id=""
+force=0
+
+while [ $# -gt 0 ]; do
+  case "$1" in
+    --list) mode=list ;;
+    --to)
+      shift
+      [ $# -gt 0 ] || canopy_die "canopy-restore: --to requires a transaction id"
+      mode=to
+      to_id="$1"
+      ;;
+    --all) mode=all ;;
+    --force) force=1 ;;
+    *) canopy_die "canopy-restore: unknown argument: $1" ;;
+  esac
+  shift
+done
+
+backups_dir="$CANOPY_STATE/backups"
+
+# canopy_restore_tx_list
+# Every committed transaction directory, oldest first. Uncommitted
+# transactions (no .committed marker) are ignored: their manifest post
+# column may still be unfilled, so replaying them is not well-defined.
+canopy_restore_tx_list() {
+  [ -d "$backups_dir" ] || return 0
+  for d in "$backups_dir"/*/; do
+    [ -d "$d" ] || continue
+    d="${d%/}"
+    [ -f "$d/.committed" ] || continue
+    printf '%s\n' "$d"
+  done | sort
+}
+
+# canopy_restore_timestamp <epoch>
+# Best-effort human-readable rendering of an epoch second. Tries BSD
+# date's "-r <epoch>" first, then GNU date's "-d @<epoch>", falling back
+# to the raw epoch if neither is available.
+canopy_restore_timestamp() {
+  epoch="$1"
+  if out=$(date -r "$epoch" '+%Y-%m-%d %H:%M:%S' 2>/dev/null); then
+    printf '%s' "$out"
+  elif out=$(date -d "@$epoch" '+%Y-%m-%d %H:%M:%S' 2>/dev/null); then
+    printf '%s' "$out"
+  else
+    printf '%s' "$epoch"
+  fi
+}
+
+if [ "$mode" = "list" ]; then
+  all_tx="$(canopy_restore_tx_list)"
+  if [ -z "$all_tx" ]; then
+    printf 'no restore points\n'
+    exit 0
+  fi
+  printf '%s\n' "$all_tx" | sort -r | while IFS= read -r d; do
+    id="${d##*/}"
+    label="${id#*-}"
+    epoch="${id%%-*}"
+    ts="$(canopy_restore_timestamp "$epoch")"
+    count="$(grep -vc '^#' "$d/manifest.tsv")"
+    marker=""
+    [ -f "$d/.pinned" ] && marker="  PINNED"
+    printf '%s  %s  %s  %s file(s)%s\n' "$id" "$label" "$ts" "$count" "$marker"
+  done
+  exit 0
+fi
+
+all_tx="$(canopy_restore_tx_list)"
+
+# Resolve which committed transactions this run should undo, oldest
+# first, before opening our own transaction below (which must not be
+# part of the set it is about to undo).
+target_list=""
+case "$mode" in
+  last)
+    [ -n "$all_tx" ] && target_list="$(printf '%s\n' "$all_tx" | tail -n 1)"
+    ;;
+  to)
+    match_dir=""
+    if [ -n "$all_tx" ]; then
+      match_dir="$(
+        printf '%s\n' "$all_tx" | while IFS= read -r d; do
+          if [ "${d##*/}" = "$to_id" ]; then
+            printf '%s\n' "$d"
+            break
+          fi
+        done
+      )"
+    fi
+    [ -n "$match_dir" ] || canopy_die "canopy-restore: no such transaction: $to_id"
+    target_list="$(printf '%s\n' "$all_tx" | awk -v want="$match_dir" 'BEGIN { f = 0 } $0 == want { f = 1 } f { print }')"
+    ;;
+  all)
+    pinned_dir=""
+    if [ -n "$all_tx" ]; then
+      pinned_dir="$(
+        printf '%s\n' "$all_tx" | while IFS= read -r d; do
+          if [ -f "$d/.pinned" ]; then
+            printf '%s\n' "$d"
+            break
+          fi
+        done
+      )"
+    fi
+    # No pinned pre-install point on record (e.g. nothing has ever been
+    # installed): there is nothing to roll back to, so --all is a no-op
+    # rather than an error.
+    if [ -n "$pinned_dir" ]; then
+      target_list="$(printf '%s\n' "$all_tx" | awk -v want="$pinned_dir" 'BEGIN { f = 0 } $0 == want { f = 1 } f { print }')"
+    fi
+    ;;
+  *) ;;
+esac
+
+mkdir -p "$CANOPY_STATE"
+tmp_target="$CANOPY_STATE/.restore-target.tmp.$$"
+trap 'rm -f "$tmp_target"' EXIT
+if [ -n "$target_list" ]; then
+  printf '%s\n' "$target_list" | sort -r >"$tmp_target"
+else
+  : >"$tmp_target"
+fi
+
+reverted=0
+kept=0
+
+if [ -s "$tmp_target" ]; then
+  restore_tx="$(canopy_tx_begin restore)"
+  tab="$(printf '\t')"
+  while IFS= read -r tx_dir; do
+    [ -n "$tx_dir" ] || continue
+
+    # canopy_tx_record (lib/manifest.sh) writes through un-scoped globals
+    # named tx/action/path/pre/backup_rel (POSIX sh has no `local`), so
+    # the row read below uses row_-prefixed names throughout — reusing
+    # its names here would have that call silently clobber the very
+    # values this loop reads them for.
+    while IFS="$tab" read -r row_action row_path row_pre row_backup_rel row_post; do
+      case "$row_action" in
+        '#'* | '') continue ;;
+        *) ;;
+      esac
+
+      if [ -e "$row_path" ]; then
+        current="$(canopy_sha256 "$row_path")"
+      else
+        current="absent"
+      fi
+
+      if [ "$current" != "$row_post" ] && [ "$force" -ne 1 ]; then
+        kept=$((kept + 1))
+        printf 'kept (changed since canopy wrote it): %s\n' "$row_path"
+        continue
+      fi
+
+      canopy_tx_record "$restore_tx" "$row_action" "$row_path"
+      if [ "$row_pre" = "absent" ]; then
+        [ -e "$row_path" ] && rm -f "$row_path"
+      elif [ "$row_backup_rel" != "-" ] && [ -f "$tx_dir/$row_backup_rel" ]; then
+        mkdir -p "$(dirname "$row_path")"
+        cp -p "$tx_dir/$row_backup_rel" "$row_path"
+      fi
+      reverted=$((reverted + 1))
+    done <"$tx_dir/manifest.tsv"
+
+    if [ -f "$tx_dir/dirs-created.txt" ]; then
+      while IFS= read -r d; do
+        [ -n "$d" ] || continue
+        # $CANOPY_CONFIG is never removed by restore, even indirectly.
+        [ "$d" = "$CANOPY_CONFIG" ] && continue
+        rmdir "$d" 2>/dev/null || :
+      done <"$tx_dir/dirs-created.txt"
+    fi
+  done <"$tmp_target"
+  canopy_tx_commit "$restore_tx"
+fi
+
+printf 'restore: %d reverted, %d kept\n' "$reverted" "$kept"
+
+if [ "$kept" -gt 0 ] && [ "$force" -ne 1 ]; then
+  exit 1
+fi
+exit 0
