@@ -615,7 +615,7 @@ layer as dormant when it is not.
   the fourth level already, and `wt` (worktrunk) owns it. fut needs a workspace tier
   because nothing else tells it what a checkout is; canopy does not.
 - **Context is a name prefix, not a container.** Sessions named
-  `work/erasmusai@feat-netbird` let the picker group by context and by project without
+  `work/acme-api@feat-login` let the picker group by context and by project without
   inventing a hierarchy. This preserves cockpit-style life-area contexts without
   conflicting with project/worktree identity.
 - The layer activates only when `wt` is present; otherwise dormant, reported by doctor.
