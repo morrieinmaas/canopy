@@ -216,7 +216,8 @@ mkdir -p "$CANOPY_STATE"
 tmp_target="$CANOPY_STATE/.restore-target.tmp.$$"
 kept_list="$CANOPY_STATE/.restore-kept.tmp.$$"
 unguarded_list="$CANOPY_STATE/.restore-unguarded.tmp.$$"
-trap 'rm -f "$tmp_target" "$kept_list" "$unguarded_list"' EXIT
+validate_out="$CANOPY_STATE/.restore-validate.tmp.$$"
+trap 'rm -f "$tmp_target" "$kept_list" "$unguarded_list" "$validate_out"' EXIT
 : >"$kept_list"
 : >"$unguarded_list"
 if [ -n "$target_list" ]; then
@@ -307,8 +308,11 @@ if [ -s "$tmp_target" ]; then
       awk '{ lines[NR] = $0 } END { for (i = NR; i >= 1; i--) print lines[i] }' "$tx_dir/dirs-created.txt" |
         while IFS= read -r d; do
           [ -n "$d" ] || continue
-          # $CANOPY_CONFIG is never removed by restore, even indirectly.
-          [ "$d" = "$CANOPY_CONFIG" ] && continue
+          # rmdir, never rm -r: a directory that still holds anything at
+          # all is kept, which is the whole guard. That includes
+          # $CANOPY_CONFIG, which is listed here only when install created
+          # it: empty, it is an artifact of canopy and goes; holding user
+          # overrides, it stays.
           rmdir "$d" 2>/dev/null || :
         done
     fi
@@ -334,21 +338,27 @@ if [ "$kept" -gt 0 ] && [ "$force" -ne 1 ]; then
   exit_status=1
 fi
 
-# Verify before declaring success, mirroring canopy-install's own
-# pre-success check: load whatever tmux config restore just left behind
-# on a throwaway socket. Only the entry-point path is checked (tmux's
-# own precedence: ~/.tmux.conf wins when present, else the XDG path).
-# A machine restored to having no tmux config at all (both absent) has
-# nothing to validate and is not a failure. canopy_tmux_validate prints
-# tmux's own error text on failure; nothing generic is added here.
-entry=""
-if [ -f "$HOME/.tmux.conf" ]; then
-  entry="$HOME/.tmux.conf"
-elif [ -f "${XDG_CONFIG_HOME:-$HOME/.config}/tmux/tmux.conf" ]; then
-  entry="${XDG_CONFIG_HOME:-$HOME/.config}/tmux/tmux.conf"
-fi
-if [ -n "$entry" ] && ! canopy_tmux_validate "$entry"; then
-  exit_status=1
+# Load whatever tmux config restore just left behind, on a throwaway
+# socket and from a bare environment, and report what tmux says about it.
+# A machine restored to having no tmux config at all has nothing to load
+# and is not a failure.
+#
+# This is a warning, not a failure. What restore promises is the user's
+# original bytes back, and once they are back the config being loadable is
+# the user's business: plugin-dependent and version-dependent configs
+# routinely carry lines a bare tmux rejects. Exiting non-zero here told
+# people a byte-perfect restore had failed, next to a summary reading
+# "0 reverted, 0 kept". Non-zero is reserved for a restore that did not
+# restore.
+entry="$(canopy_entry_point)"
+if [ -n "$entry" ]; then
+  if ! canopy_tmux_validate "$entry" >"$validate_out" 2>&1; then
+    printf 'warning: %s holds your original bytes again, but tmux does not load it cleanly:\n' "$entry"
+    while IFS= read -r line; do
+      printf '  %s\n' "$line"
+    done <"$validate_out"
+  fi
+  rm -f "$validate_out"
 fi
 
 exit "$exit_status"

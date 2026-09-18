@@ -193,7 +193,7 @@ EOF
   [ -d "$XDG_CONFIG_HOME/mise" ]
 }
 
-@test "install tracks the directory it creates for its own config dir, but never that dir itself" {
+@test "install tracks every directory it creates, its own config dir included" {
   # The real default layout, which the rest of this file deliberately
   # avoids by pointing CANOPY_CONFIG outside $HOME: canopy's own config
   # lives inside $XDG_CONFIG_HOME. install used to create $CANOPY_CONFIG
@@ -208,10 +208,41 @@ EOF
 
   for tx in "$CANOPY_STATE"/backups/*/; do tx_dir="$tx"; done
   grep -qx "$XDG_CONFIG_HOME" "${tx_dir}dirs-created.txt"
-  # $CANOPY_CONFIG is never touched by restore (spec 5.5), so it must not
-  # be tracked for removal in the first place, and neither must anything
-  # under it.
-  ! grep -qx "$CANOPY_CONFIG" "${tx_dir}dirs-created.txt"
+  grep -qx "$CANOPY_CONFIG" "${tx_dir}dirs-created.txt"
+}
+
+@test "restore returns a virgin home to virgin, canopy's own config dir included" {
+  # The default layout again, and the case both CI proof scenarios were
+  # blind to: install creates ~/.config and ~/.config/canopy from nothing,
+  # and restore used to leave both of them standing.
+  CANOPY_CONFIG="$XDG_CONFIG_HOME/canopy"
+  export CANOPY_CONFIG
+  [ ! -d "$XDG_CONFIG_HOME" ]
+  before="$(find "$HOME" | sort)"
+
+  run canopy install
+  [ "$status" -eq 0 ]
+  [ -d "$CANOPY_CONFIG" ]
+
+  run canopy restore --all
+  [ "$status" -eq 0 ]
+  [ ! -d "$CANOPY_CONFIG" ]
+  [ ! -d "$XDG_CONFIG_HOME" ]
+  [ "$(find "$HOME" | sort)" = "$before" ]
+}
+
+@test "restore keeps canopy's config dir when the user left something in it" {
+  CANOPY_CONFIG="$XDG_CONFIG_HOME/canopy"
+  export CANOPY_CONFIG
+
+  run canopy install
+  [ "$status" -eq 0 ]
+  printf 'set -g @mine 1\n' >"$CANOPY_CONFIG/keep-me.conf"
+
+  run canopy restore --all
+  [ "$status" -eq 0 ]
+  [ -d "$CANOPY_CONFIG" ]
+  [ -f "$CANOPY_CONFIG/keep-me.conf" ]
 }
 
 @test "install writes the mise fragment when mise conf.d already exists" {

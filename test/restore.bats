@@ -75,10 +75,11 @@ setup() {
   [[ "$output" == *"dropped-edited.conf"* ]]
 }
 
-@test "restore never removes the user config dir" {
+@test "restore never removes a user config dir that still holds something" {
   echo x > "$CANOPY_CONFIG/user.conf"
   canopy restore --all
   [ -f "$CANOPY_CONFIG/user.conf" ]
+  [ -d "$CANOPY_CONFIG" ]
 }
 
 @test "restore removes a directory canopy created, once it is empty" {
@@ -353,7 +354,12 @@ interrupt_install() {
   [ "$(cat "$a")" = "orig-a" ]
 }
 
-@test "restore fails and surfaces tmux's own error when the restored config is broken" {
+@test "restore warns, and still succeeds, when tmux dislikes the config it restored" {
+  # The user's own config is back byte for byte, and tmux rejects a line in
+  # it. That is a successful restore of an imperfect config, not a failed
+  # restore: plugin-dependent and version-dependent configs routinely carry
+  # lines a bare tmux rejects, and exiting 1 here reported a byte-perfect
+  # restore as a failure, right below "0 reverted, 0 kept".
   entry_dir="$XDG_CONFIG_HOME/tmux"
   entry="$entry_dir/tmux.conf"
   mkdir -p "$entry_dir"
@@ -364,8 +370,9 @@ interrupt_install() {
   canopy_tx_commit "$tx"
 
   run canopy restore --all
-  [ "$status" -ne 0 ]
+  [ "$status" -eq 0 ]
   [ "$(cat "$entry")" = "totally-not-a-real-tmux-command" ]
+  [[ "$output" == *"warning"* ]]
   [[ "$output" == *"totally-not-a-real-tmux-command"* ]]
 }
 

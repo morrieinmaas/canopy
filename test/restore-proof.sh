@@ -5,12 +5,16 @@
 # $HOME: everything canopy would read or write is pointed at a scratch tree
 # for the duration of this script.
 #
-# Two scenarios, because they cover different leak classes:
+# Three scenarios, because they cover different leak classes:
 #   1. a home that already has configs, with canopy's own config and state
 #      outside it, so "no canopy artifact under $HOME" is a meaningful check;
 #   2. a genuinely empty home with canopy's own config and state INSIDE it,
 #      which is the real default layout and the only way to exercise the
-#      directories install has to create from nothing (~/.config and below).
+#      directories install has to create from nothing (~/.config and below);
+#   3. a symlinked tmux.conf whose target lives outside $HOME, which is what
+#      chezmoi, stow and a bare dotfiles repo all produce, and which neither
+#      scenario above can see damage because the damaged file is not in any
+#      listing they take.
 set -eu
 
 store="$(cd "$(dirname "$0")/.." && pwd)"
@@ -39,17 +43,23 @@ canopy_restore_proof_record() {
   done
 }
 
-# canopy_restore_proof_outside_canopy <path|hash>
-# Filter: drops canopy's own config and state trees from a listing on
-# stdin, along with the ancestor directories that exist only to hold them.
-# Spec 5.5 exempts ~/.config/canopy from restore, and $CANOPY_STATE holds
-# the restore points themselves, which must survive for the guarantee to
-# be forever; no directory containing either of them can be removed. Every
-# other path under $HOME is fair game, and that is what scenario 2 checks.
+# canopy_restore_proof_outside_state <path|hash>
+# Filter: drops canopy's state tree from a listing on stdin, along with the
+# ancestor directories that exist only to hold it. $CANOPY_STATE holds the
+# restore points themselves, and the guarantee is that they are reachable
+# forever, so nothing that contains them can be removed.
+#
+# $CANOPY_CONFIG used to be filtered out here too, and that is exactly what
+# hid a restore leaving ~/.config/canopy and ~/.config standing on a
+# machine that had neither before install. An empty canopy config
+# directory that install created is an artifact like any other and must
+# go; one holding user overrides survives on its own, because restore uses
+# rmdir. Either way the proof now watches it.
+#
 # "path" reads the whole line as a path, "hash" reads it as the hash
 # listing's "<sha256><2 spaces><path>".
-canopy_restore_proof_outside_canopy() {
-  awk -v c="$CANOPY_CONFIG" -v s="$CANOPY_STATE" -v mode="$1" '
+canopy_restore_proof_outside_state() {
+  awk -v s="$CANOPY_STATE" -v mode="$1" '
     function related(p, base) {
       if (p == base) return 1
       if (substr(p, 1, length(base) + 1) == base "/") return 1
@@ -59,7 +69,7 @@ canopy_restore_proof_outside_canopy() {
     {
       p = $0
       if (mode == "hash") p = substr($0, index($0, "  ") + 2)
-      if (!related(p, c) && !related(p, s)) print
+      if (!related(p, s)) print
     }
   '
 }
@@ -85,12 +95,12 @@ printf 'distinctive ghostty config %s\n' "$$" >"$home/.config/ghostty/config"
 printf 'distinctive ghostty theme %s\n' "$$" >"$home/.config/ghostty/themes/mytheme"
 printf 'distinctive starship config %s\n' "$$" >"$home/.config/starship.toml"
 
-# canopy's own state/config are deliberately pointed OUTSIDE $home: per spec
-# 5.5, ~/.config/canopy/ is never touched by restore, so if it lived under
-# $home it would legitimately survive restore and make the "no new canopy
-# artifact under $HOME" check below meaningless. This scenario is about the
-# pre-existing app configs restore promises to return untouched, not about
-# canopy's own persistent state. Scenario 2 covers the other layout.
+# canopy's own state/config are deliberately pointed OUTSIDE $home: the
+# restore points under $CANOPY_STATE must survive for the guarantee to be
+# forever, so keeping them out of $home is what makes "no new canopy
+# artifact under $HOME" a meaningful check here. This scenario is about the
+# pre-existing app configs restore promises to return untouched. Scenario 2
+# covers the default layout, where both live inside $HOME.
 export HOME="$home"
 export XDG_CONFIG_HOME="$home/.config"
 export CANOPY_CONFIG="$scratch/canopy-config"
@@ -184,11 +194,11 @@ installed2_hashes="$scratch/installed2.hashes"
 canopy_restore_proof_record "$home2" "$installed2_list" "$installed2_hashes"
 
 # Guard against a vacuous pass: install must actually have created
-# something under $HOME outside canopy's own trees for the comparison
+# something under $HOME outside canopy's state tree for the comparison
 # below to mean anything.
-installed2_outside="$(canopy_restore_proof_outside_canopy path <"$installed2_list")"
+installed2_outside="$(canopy_restore_proof_outside_state path <"$installed2_list")"
 if [ -z "$installed2_outside" ]; then
-  echo "restore-proof: FAILED, install created nothing under \$HOME outside canopy's own dirs" >&2
+  echo "restore-proof: FAILED, install created nothing under \$HOME outside canopy's state tree" >&2
   fail=1
 fi
 
@@ -199,13 +209,13 @@ after2_list="$scratch/after2.list"
 after2_hashes="$scratch/after2.hashes"
 canopy_restore_proof_record "$home2" "$after2_list" "$after2_hashes"
 
-canopy_restore_proof_outside_canopy path <"$before2_list" >"$before2_list.filtered"
-canopy_restore_proof_outside_canopy path <"$after2_list" >"$after2_list.filtered"
-canopy_restore_proof_outside_canopy hash <"$before2_hashes" >"$before2_hashes.filtered"
-canopy_restore_proof_outside_canopy hash <"$after2_hashes" >"$after2_hashes.filtered"
+canopy_restore_proof_outside_state path <"$before2_list" >"$before2_list.filtered"
+canopy_restore_proof_outside_state path <"$after2_list" >"$after2_list.filtered"
+canopy_restore_proof_outside_state hash <"$before2_hashes" >"$before2_hashes.filtered"
+canopy_restore_proof_outside_state hash <"$after2_hashes" >"$after2_hashes.filtered"
 
 if ! diff -u "$before2_list.filtered" "$after2_list.filtered"; then
-  echo "restore-proof: FAILED, a directory or file outside canopy's own dirs survived restore" >&2
+  echo "restore-proof: FAILED, a directory or file outside canopy's state tree survived restore" >&2
   fail=1
 fi
 
@@ -214,7 +224,9 @@ if ! diff -u "$before2_hashes.filtered" "$after2_hashes.filtered"; then
   fail=1
 fi
 
-printf 'restore-proof: scenario 2 OK, nothing outside canopy own dirs survived under %s\n' "$home2"
+if [ "$fail" -eq 0 ]; then
+  printf 'restore-proof: scenario 2 OK, nothing outside the canopy state tree survived under %s\n' "$home2"
+fi
 
 # --- Scenario 3: a symlinked tmux.conf, the dotfiles case ------------------
 # chezmoi, stow and a bare dotfiles repo all leave ~/.config/tmux/tmux.conf
