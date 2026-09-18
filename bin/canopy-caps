@@ -1,0 +1,60 @@
+#!/bin/sh
+# canopy:summary=Probe optional tool capabilities and write 05-caps.conf
+# canopy:group=core
+# canopy:args=[--print]
+# canopy:examples=canopy caps --print
+# shellcheck disable=SC2154,SC2153  # CANOPY_STATE is exported by lib/env.sh's canopy_paths
+set -eu
+
+: "${CANOPY_STORE:=$(cd "$(dirname "$0")/.." && pwd)}"
+# shellcheck source=../lib/env.sh
+# shellcheck disable=SC1091
+. "$CANOPY_STORE/lib/env.sh"
+canopy_paths
+
+print_summary=0
+for arg in "$@"; do
+  case "$arg" in
+    --print) print_summary=1 ;;
+    *) canopy_die "canopy-caps: unknown argument: $arg" ;;
+  esac
+done
+
+# The tool set and its order are fixed here (not discovered or sorted at
+# run time), which is what keeps the generated file's option ordering
+# deterministic across machines and locales.
+tools="wt fzf gum ghostty starship mise"
+
+out="$CANOPY_STATE/05-caps.conf"
+tmp="$out.tmp.$$"
+mkdir -p "$CANOPY_STATE"
+trap 'rm -f "$tmp"' EXIT
+
+: >"$tmp"
+for tool in $tools; do
+  if canopy_have "$tool"; then
+    printf 'set -g @canopy_has_%s 1\n' "$tool" >>"$tmp"
+  else
+    printf 'set -g @canopy_has_%s 0\n' "$tool" >>"$tmp"
+  fi
+done
+
+tmux_version=unknown
+if raw="$(tmux -V 2>/dev/null)"; then
+  candidate=${raw#tmux }
+  [ -n "$candidate" ] && tmux_version="$candidate"
+fi
+printf 'set -g @canopy_tmux_version %s\n' "$tmux_version" >>"$tmp"
+
+mv "$tmp" "$out"
+
+if [ "$print_summary" -eq 1 ]; then
+  printf 'tmux: %s\n' "$tmux_version"
+  for tool in $tools; do
+    if canopy_have "$tool"; then
+      printf '%s: yes\n' "$tool"
+    else
+      printf '%s: no\n' "$tool"
+    fi
+  done
+fi
