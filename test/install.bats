@@ -65,11 +65,47 @@ setup() {
   ls "$CANOPY_STATE"/backups/*/.pinned
 }
 
-@test "install with no pre-existing config proceeds without --yes and creates an empty user.conf" {
+@test "install with no pre-existing config proceeds without --yes, creates an entry point and an empty user.conf" {
   run canopy install
   [ "$status" -eq 0 ]
   [ -f "$CANOPY_CONFIG/user.conf" ]
   [ ! -s "$CANOPY_CONFIG/user.conf" ] || grep -q '^#' "$CANOPY_CONFIG/user.conf"
+  [ -f "$XDG_CONFIG_HOME/tmux/tmux.conf" ]
+  grep -q 'source-file "\$CANOPY_STORE/tmux/tmux.conf"' "$XDG_CONFIG_HOME/tmux/tmux.conf"
+  run canopy_tmux_validate "$CANOPY_STORE/tmux/tmux.conf"
+  [ "$status" -eq 0 ]
+}
+
+@test "the fresh entry point is recorded as drop with an absent pre-state" {
+  run canopy install
+  [ "$status" -eq 0 ]
+  for tx in "$CANOPY_STATE"/backups/*/; do tx_dir="$tx"; done
+  row="$(awk -F'\t' -v p="$XDG_CONFIG_HOME/tmux/tmux.conf" '$2==p' "${tx_dir}manifest.tsv")"
+  [ -n "$row" ]
+  [ "$(printf '%s' "$row" | awk -F'\t' '{print $1}')" = "drop" ]
+  [ "$(printf '%s' "$row" | awk -F'\t' '{print $3}')" = "absent" ]
+}
+
+@test "restore removes the fresh entry point and the parent directory canopy created for it" {
+  run canopy install
+  [ "$status" -eq 0 ]
+  [ -d "$XDG_CONFIG_HOME/tmux" ]
+  for tx in "$CANOPY_STATE"/backups/*/; do tx_dir="$tx"; done
+  "${tx_dir}restore.sh"
+  [ ! -e "$XDG_CONFIG_HOME/tmux/tmux.conf" ]
+  [ ! -d "$XDG_CONFIG_HOME/tmux" ]
+}
+
+@test "restore keeps a tmux dir that predates canopy, with its other contents" {
+  mkdir -p "$XDG_CONFIG_HOME/tmux/plugins"
+  touch "$XDG_CONFIG_HOME/tmux/plugins/.keep"
+  run canopy install
+  [ "$status" -eq 0 ]
+  for tx in "$CANOPY_STATE"/backups/*/; do tx_dir="$tx"; done
+  "${tx_dir}restore.sh"
+  [ ! -e "$XDG_CONFIG_HOME/tmux/tmux.conf" ]
+  [ -d "$XDG_CONFIG_HOME/tmux" ]
+  [ -f "$XDG_CONFIG_HOME/tmux/plugins/.keep" ]
 }
 
 @test "install writes the mise fragment when mise conf.d already exists" {
@@ -99,7 +135,7 @@ setup() {
   cp -R "$CANOPY_STORE/bin" "$store_copy/bin"
   cp -R "$CANOPY_STORE/lib" "$store_copy/lib"
   cp -R "$CANOPY_STORE/tmux" "$store_copy/tmux"
-  printf 'totally-not-a-real-tmux-command\n' >"$store_copy/tmux/conf.d/zz-broken.conf"
+  printf 'totally-not-a-real-tmux-command\n' >"$store_copy/tmux/conf.d/99-broken.conf"
 
   CANOPY_STORE="$store_copy"
   export CANOPY_STORE

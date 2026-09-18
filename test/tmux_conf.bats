@@ -76,3 +76,20 @@ EOF
   tmux -L "$sock" kill-server
   [ "$output" = "present" ]
 }
+
+@test "00-core.conf is sourced exactly once, not re-sourced by the layer glob" {
+  # The store is read-only by convention; copy the tree so a counter line
+  # can be planted in 00-core.conf without touching the checked-out file.
+  # set -ga appends, so a single source yields "x" and a double source
+  # (the bug this loader guards against) would yield "xx".
+  store_copy="$BATS_TEST_TMPDIR/store"
+  mkdir -p "$store_copy"
+  cp -R "$CANOPY_STORE/tmux" "$store_copy/tmux"
+  printf 'set -ga @canopy_test_counter x\n' >>"$store_copy/tmux/conf.d/00-core.conf"
+
+  sock="canopy-test-sourceonce-$$"
+  CANOPY_STORE="$store_copy" tmux -L "$sock" -f "$store_copy/tmux/tmux.conf" new-session -d
+  run tmux -L "$sock" show -gv @canopy_test_counter
+  tmux -L "$sock" kill-server
+  [ "$output" = "x" ]
+}
