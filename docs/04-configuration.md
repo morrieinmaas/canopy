@@ -138,7 +138,7 @@ tmux.
 
 | Variable | Default | Holds |
 |---|---|---|
-| `CANOPY_STORE` | the clone, resolved from `$(dirname "$0")/..` | The read-only distribution |
+| `CANOPY_STORE` | the clone. `bin/canopy` resolves it from the real path of the running script, following symlinks; the `bin/canopy-*` files resolve it from `$(dirname "$0")/..`, or inherit it from the dispatcher | The read-only distribution |
 | `CANOPY_CONFIG` | `${XDG_CONFIG_HOME:-$HOME/.config}/canopy` | `user.conf`. Yours, survives uninstall |
 | `CANOPY_STATE` | `${XDG_STATE_HOME:-$HOME/.local/state}/canopy` | Caps cache, command index, restore points |
 | `CANOPY_RUNTIME` | `$XDG_RUNTIME_DIR/canopy`, else `/tmp/canopy-<uid>` | Scratch files. Created mode 0700 |

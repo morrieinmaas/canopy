@@ -20,8 +20,19 @@ M1 ships seven: the dispatcher and six subcommands.
 | [`canopy restore`](#canopy-restore) | Roll back transactions canopy recorded | core |
 | [`canopy version`](#canopy-version) | Print the canopy version | core |
 
-Each subcommand can also be run directly as `canopy-<name>`; the dispatcher adds
-nothing but the lookup.
+Each subcommand can also be run directly as `canopy-<name>`, provided the store's
+`bin/` is on your `PATH`. The dispatcher adds two things: the lookup, and resolving the
+store through a symlink to itself, which the subcommand files do not do.
+
+Every command refuses an argument it does not recognise, with the same message shape
+and the same exit code:
+
+```
+$ canopy version --shrot
+canopy: canopy-version: unknown argument: --shrot
+```
+
+Exit 1, and nothing is written. The first unrecognised argument is the one named.
 
 ---
 
@@ -57,6 +68,12 @@ canopy: unknown command "zzz"
 
 Only files in the store's own `bin/` are dispatched. A `canopy-*` executable
 elsewhere on your `PATH` is not picked up in M1.
+
+The store is derived from the real path of `bin/canopy`: the dispatcher follows the
+symlink chain of its own path before taking the parent of the directory it lands in, so
+`~/.local/bin/canopy` pointing into the clone resolves the store to the clone. It then
+exports `CANOPY_STORE`, so the subcommand it `exec`s inherits that rather than deriving
+its own.
 
 | Exit | Meaning |
 |---|---|
@@ -245,12 +262,19 @@ round-trip through the TSV. A missing `canopy:group=` defaults to `misc`; a miss
 Nothing reads `commands.tsv` yet. It exists so the palette and which-key menu in M4
 can read one file instead of stat-ing thirty. `canopy install` runs it for you.
 
-Note that `canopy index` accepts, and silently ignores, extra arguments.
+`canopy index` takes no arguments, and refuses one it does not recognise rather than
+ignoring it:
+
+```
+$ canopy index --print
+canopy: canopy-index: unknown argument: --print
+```
 
 | Exit | Meaning |
 |---|---|
 | 0 | Index written |
 | 1 | A metadata value contains a tab or carriage return |
+| 1 | Unknown argument |
 
 ---
 
@@ -358,12 +382,18 @@ $ canopy version
 0.0.0-dev
 ```
 
-Note that it accepts, and silently ignores, extra arguments.
+It takes no arguments either, and refuses one it does not recognise:
+
+```
+$ canopy version --short
+canopy: canopy-version: unknown argument: --short
+```
 
 | Exit | Meaning |
 |---|---|
 | 0 | Version printed |
 | 1 | `VERSION` not found in the store |
+| 1 | Unknown argument |
 
 ---
 

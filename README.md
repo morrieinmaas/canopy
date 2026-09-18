@@ -55,7 +55,7 @@ How the guarantee is enforced:
 |---|---|---|
 | Restore proof | Three scenarios: a home with real configs, an empty home, a symlinked `tmux.conf` pointing outside `$HOME`. Records hashes and a full `find` listing before install, restores, and diffs both. | `test/restore-proof.sh`, run in CI on Ubuntu and macOS |
 | Container acceptance | Six scenarios inside Debian (`/bin/sh` is dash) and Alpine (BusyBox userland), from a bare environment with no `CANOPY_*` set. Covers a virgin box, an existing config, a symlinked config, a dangling symlink, an interrupted install, and two user accounts on one machine. | `test/smoke/run.sh`, run in CI on Linux |
-| Unit suite | 130 bats tests over the libraries and every command. | `test/*.bats`, run in CI on Ubuntu and macOS |
+| Unit suite | 136 bats tests over the libraries and every command. | `test/*.bats`, run in CI on Ubuntu and macOS |
 
 A restore promise that is not in CI stops being true around version three.
 
@@ -69,9 +69,13 @@ canopy install --dry-run    # prints every path it would touch, changes nothing
 canopy install              # add --yes if you already have a tmux config
 ```
 
-Clone anywhere you like. canopy finds its own store from the path of the running
-script, so put the real directory on your `PATH` rather than symlinking `bin/canopy`
-into `/usr/local/bin`.
+Clone anywhere you like. canopy finds its own store from the real path of the running
+script, following symlinks first, so symlinking `bin/canopy` into a directory already
+on your `PATH` works just as well as putting the clone's `bin/` there:
+
+```sh
+ln -s ~/.local/share/canopy/bin/canopy ~/.local/bin/canopy
+```
 
 `canopy install` refuses without `--yes` when a tmux config already exists, because
 taking it over is a migration rather than a merge. Your config is copied into
@@ -147,5 +151,8 @@ overridden directly with `CANOPY_CONFIG`, `CANOPY_STATE`, `CANOPY_RUNTIME` and
 
 The full product design lives in
 [docs/superpowers/specs/2026-09-17-canopy-design.md](docs/superpowers/specs/2026-09-17-canopy-design.md).
-It describes all six milestones, so most of it is not implemented. Where the design
-and the code disagree, the code is what your machine runs.
+It describes all six milestones, so most of it is not implemented. Everything in it
+that does not exist yet carries an explicit `[planned, M<n>]` marker, and its opening
+section explains the convention, so a sentence with no marker describes what the code
+does today. Where the design and the code disagree anyway, the code is what your
+machine runs.

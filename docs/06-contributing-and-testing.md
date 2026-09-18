@@ -68,7 +68,7 @@ Prefix commands with `mise exec --` if the tools are not already on your `PATH`.
 mise exec -- bats test/
 ```
 
-130 tests. Each one gets its own `$HOME`, `$XDG_CONFIG_HOME` and `CANOPY_*` under
+136 tests. Each one gets its own `$HOME`, `$XDG_CONFIG_HOME` and `CANOPY_*` under
 `$BATS_TEST_TMPDIR`, via `setup_canopy_env` and `setup_canopy_home` in
 `test/helper.bash`. Never the real `$HOME`, and never the default tmux socket: every
 tmux invocation in the suite carries `-L <scratch-socket>` and cleans up after itself.
@@ -201,6 +201,24 @@ canopy_paths
 Headers must appear in the first 40 lines and must not contain a tab or carriage
 return. The dispatcher and `canopy index` both read them; nothing registers a command
 anywhere else.
+
+A command that takes no options still parses its arguments, so a typo is refused rather
+than swallowed:
+
+```sh
+if [ $# -gt 0 ]; then
+  canopy_die "canopy-<name>: unknown argument: $1"
+fi
+```
+
+One that takes options loops over `"$@"` and ends its `case` with the same
+`canopy_die`. The message shape and the exit code are the same across every command;
+`test/version.bats` pins that.
+
+`bin/canopy` is the exception to the store-resolution snippet above: it follows the
+symlink chain of its own path before taking the dirname, because it is the file a user
+symlinks onto a `PATH`. It exports `CANOPY_STORE` through `canopy_paths` before
+`exec`ing a subcommand, so nothing else needs to.
 
 Constraints that apply to everything in `bin/` and `lib/`:
 
