@@ -127,15 +127,42 @@ $missing"
   return 0
 }
 
+# First pass: tmux's own precedence, over the paths tmux can actually
+# load. ~/.tmux.conf wins when it is readable, else the XDG path.
 user_entry=""
-if [ -f "$dot_tmux_conf" ]; then
-  user_entry="$dot_tmux_conf"
-elif [ -f "$xdg_tmux_conf" ]; then
-  user_entry="$xdg_tmux_conf"
+for candidate in "$dot_tmux_conf" "$xdg_tmux_conf"; do
+  if [ -f "$candidate" ]; then
+    user_entry="$candidate"
+    break
+  fi
+done
+
+# Second pass, only when tmux would load nothing: a DANGLING symlink at
+# either path. tmux skips such a link, but canopy is about to write a
+# regular file straight over it, and -f alone reads it as "nothing here",
+# so the link was destroyed and never recorded and the restore guarantee
+# was false for that path. chezmoi, stow and a bare dotfiles repo all
+# leave one behind whenever the source tree is not checked out yet.
+#
+# It is a second pass rather than `-f` widened to `-f || -L`, because
+# widening the first pass would let a dangling ~/.tmux.conf outrank a
+# real ~/.config/tmux/tmux.conf: canopy would own the link, write its
+# stub at the path tmux prefers, and leave the config the user actually
+# loads unmigrated and shadowed.
+if [ -z "$user_entry" ]; then
+  for candidate in "$dot_tmux_conf" "$xdg_tmux_conf"; do
+    if [ -L "$candidate" ]; then
+      user_entry="$candidate"
+      break
+    fi
+  done
 fi
 
+# -f guards the grep: a dangling link has no bytes to search, and grep
+# would only report the read error. Nothing canopy wrote can be behind
+# one, so "not installed" is the right answer there.
 already_installed=0
-if [ -n "$user_entry" ] && grep -qF "$entry_marker" "$user_entry"; then
+if [ -n "$user_entry" ] && [ -f "$user_entry" ] && grep -qF "$entry_marker" "$user_entry"; then
   already_installed=1
 fi
 
@@ -203,7 +230,15 @@ if [ -n "$user_entry" ]; then
   canopy_tx_record "$tx" own "$user_entry"
   {
     printf '\n# canopy: migrated from %s on %s\n' "$user_entry" "$(date +%Y-%m-%d)"
-    cat "$user_entry"
+    # A dangling symlink is owned and recorded like any other entry point,
+    # but it has no bytes behind it, so there is nothing to migrate and
+    # reading it would only fail. Said in user.conf rather than left as a
+    # silent gap.
+    if [ -f "$user_entry" ]; then
+      cat "$user_entry"
+    else
+      printf '# It was a symlink to %s, which does not exist, so there was nothing to migrate.\n' "$(readlink "$user_entry")"
+    fi
   } >>"$CANOPY_CONFIG/user.conf"
   write_entry_stub "$user_entry"
 else
