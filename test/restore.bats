@@ -153,6 +153,35 @@ setup() {
   [ "$(canopy_sha256 "$c")" = "$orig_c" ]
 }
 
+@test "two transactions touching one file replay newest first, landing on the pre-first bytes" {
+  # Replay order is load-bearing and, with a single transaction, entirely
+  # unobservable: every other test in this file uses exactly one. tx1 took
+  # the file from original to v1, tx2 from v1 to v2. Replayed newest
+  # first, tx2 puts v1 back and tx1 then puts the original back. Replayed
+  # oldest first, tx1's hash guard sees v2 where it expects v1, keeps the
+  # row, and the file is left holding canopy's bytes instead of the
+  # user's.
+  f="$BATS_TEST_TMPDIR/two-tx.conf"
+  printf 'original\n' > "$f"; orig="$(canopy_sha256 "$f")"
+
+  tx1="$(canopy_tx_begin install)"; touch "$tx1/.pinned"
+  canopy_tx_record "$tx1" own "$f"
+  printf 'canopy-v1\n' > "$f"
+  canopy_tx_commit "$tx1"
+
+  # "zlater" sorts after "install", so this stays the newer transaction
+  # even when both land in the same wall-clock second.
+  tx2="$(canopy_tx_begin zlater)"
+  canopy_tx_record "$tx2" own "$f"
+  printf 'canopy-v2\n' > "$f"
+  canopy_tx_commit "$tx2"
+
+  run canopy restore --all
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"2 reverted, 0 kept"* ]]
+  [ "$(canopy_sha256 "$f")" = "$orig" ]
+}
+
 @test "--list shows newest first, marks the pinned install, and distinguishes a failed transaction from a committed one" {
   tx1="$(canopy_tx_begin install)"; touch "$tx1/.pinned"
   canopy_tx_record "$tx1" own "$target"
