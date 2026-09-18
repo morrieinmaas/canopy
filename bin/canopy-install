@@ -33,11 +33,37 @@ xdg_conf_home="${XDG_CONFIG_HOME:-$HOME/.config}"
 xdg_tmux_conf="$xdg_conf_home/tmux/tmux.conf"
 dot_tmux_conf="$HOME/.tmux.conf"
 
+# Written into every entry point canopy-install ever creates or replaces —
+# both branches below call write_entry_stub so the text can never diverge —
+# and how a re-run recognises its own file instead of migrating it.
+entry_marker='# canopy:entry-point'
+
+write_entry_stub() {
+  printf '%s — managed by canopy, do not edit directly.\n' "$entry_marker" >"$1"
+  cat >>"$1" <<'EOF'
+# Any original content was migrated to $CANOPY_CONFIG/user.conf.
+source-file "$CANOPY_STORE/tmux/tmux.conf"
+EOF
+}
+
 user_entry=""
 if [ -f "$dot_tmux_conf" ]; then
   user_entry="$dot_tmux_conf"
 elif [ -f "$xdg_tmux_conf" ]; then
   user_entry="$xdg_tmux_conf"
+fi
+
+already_installed=0
+if [ -n "$user_entry" ] && grep -qF "$entry_marker" "$user_entry"; then
+  already_installed=1
+fi
+
+if [ "$already_installed" -eq 1 ]; then
+  if [ "$dry_run" -eq 1 ]; then
+    printf 'canopy is already installed: %s already sources canopy — nothing to do\n' "$user_entry"
+    exit 0
+  fi
+  canopy_die "canopy is already installed: $user_entry already sources canopy's tmux.conf — nothing to migrate"
 fi
 
 mise_conf_dir="$xdg_conf_home/mise/conf.d"
@@ -48,8 +74,10 @@ if [ -d "$mise_conf_dir" ] || canopy_have mise; then
 fi
 
 print_plan() {
-  if [ ! -f "$CANOPY_CONFIG/user.conf" ]; then
-    printf 'create empty %s\n' "$CANOPY_CONFIG/user.conf"
+  if [ -f "$CANOPY_CONFIG/user.conf" ]; then
+    printf 'own %s (backed up)\n' "$CANOPY_CONFIG/user.conf"
+  else
+    printf 'create %s\n' "$CANOPY_CONFIG/user.conf"
   fi
   if [ -n "$user_entry" ]; then
     printf 'own %s (backed up) and migrate it into %s\n' "$user_entry" "$CANOPY_CONFIG/user.conf"
@@ -76,10 +104,12 @@ if [ -n "$user_entry" ] && [ "$yes" -ne 1 ]; then
 fi
 
 tx="$(canopy_tx_begin install)"
-touch "$tx/.pinned"
 
 mkdir -p "$CANOPY_CONFIG"
-if [ ! -f "$CANOPY_CONFIG/user.conf" ]; then
+if [ -f "$CANOPY_CONFIG/user.conf" ]; then
+  canopy_tx_record "$tx" own "$CANOPY_CONFIG/user.conf"
+else
+  canopy_tx_record "$tx" drop "$CANOPY_CONFIG/user.conf"
   printf '# canopy user config — sourced last, wins over every shipped default.\n' >"$CANOPY_CONFIG/user.conf"
 fi
 
@@ -89,11 +119,7 @@ if [ -n "$user_entry" ]; then
     printf '\n# canopy: migrated from %s on %s\n' "$user_entry" "$(date +%Y-%m-%d)"
     cat "$user_entry"
   } >>"$CANOPY_CONFIG/user.conf"
-  cat >"$user_entry" <<'EOF'
-# Managed by canopy. Your previous config was migrated to
-# $CANOPY_CONFIG/user.conf — edit that file instead.
-source-file "$CANOPY_STORE/tmux/tmux.conf"
-EOF
+  write_entry_stub "$user_entry"
 else
   # No pre-existing config anywhere canopy or tmux would look: canopy still
   # "owns the entry point" (spec 5.2), so create one at the XDG path. It is
@@ -103,29 +129,33 @@ else
   [ -d "$entry_dir" ] || entry_dir_created=1
   canopy_tx_record "$tx" drop "$xdg_tmux_conf"
   mkdir -p "$entry_dir"
-  cat >"$xdg_tmux_conf" <<'EOF'
-# Managed by canopy — do not edit.
-source-file "$CANOPY_STORE/tmux/tmux.conf"
-EOF
+  write_entry_stub "$xdg_tmux_conf"
   if [ "$entry_dir_created" -eq 1 ]; then
     # The manifest format models files, not directories, so a directory
     # canopy-install itself created (to hold the file above) is tracked in
     # a sidecar next to restore.sh instead of as a manifest row. The
-    # cleanup snippet is appended verbatim (no data interpolated into
-    # generated code) and only ever reads that sidecar back by line,
-    # mirroring how restore.sh already reads manifest.tsv.
+    # cleanup snippet is spliced in before restore.sh's own final summary
+    # line (not appended after it), so the summary reflects a finished
+    # restore. It contains no interpolated path data — just a static loop
+    # over the sidecar file, mirroring how restore.sh already reads
+    # manifest.tsv line-by-line.
     printf '%s\n' "$entry_dir" >>"$tx/dirs-created.txt"
-    cat >>"$tx/restore.sh" <<'RESTORE_DIRS_EOF'
+    final_line="$(tail -n 1 "$tx/restore.sh")"
+    sed '$d' "$tx/restore.sh" >"$tx/restore.sh.new"
+    cat >>"$tx/restore.sh.new" <<'RESTORE_DIRS_EOF'
 
 # Directories canopy-install created solely to hold a fresh entry point:
-# removed on restore only if still empty, so pre-existing sibling content
-# (e.g. an unrelated plugins/ dir under the same path) is kept.
+# removed only if still empty, so pre-existing sibling content (e.g. an
+# unrelated plugins/ dir under the same path) is kept.
 if [ -f "$dir/dirs-created.txt" ]; then
   while IFS= read -r d; do
     rmdir "$d" 2>/dev/null || :
   done <"$dir/dirs-created.txt"
 fi
 RESTORE_DIRS_EOF
+    printf '%s\n' "$final_line" >>"$tx/restore.sh.new"
+    mv "$tx/restore.sh.new" "$tx/restore.sh"
+    chmod +x "$tx/restore.sh"
   fi
 fi
 
@@ -144,11 +174,12 @@ fi
 "$CANOPY_STORE/bin/canopy-caps"
 "$CANOPY_STORE/bin/canopy-index"
 
-canopy_tx_commit "$tx"
-
 if canopy_tmux_validate "$CANOPY_STORE/tmux/tmux.conf"; then
+  canopy_tx_commit "$tx"
+  touch "$tx/.pinned"
   printf 'canopy installed.\n'
 else
   "$tx/restore.sh"
+  touch "$tx/.failed"
   canopy_die "the resulting tmux config failed validation — installation rolled back"
 fi

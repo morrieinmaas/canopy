@@ -142,4 +142,62 @@ setup() {
   run canopy install --yes
   [ "$status" -ne 0 ]
   [ "$(canopy_sha256 "$XDG_CONFIG_HOME/tmux/tmux.conf")" = "$orig_hash" ]
+  # a failed install must not leave a phantom pinned/committed restore point
+  [ -z "$(find "$CANOPY_STATE/backups" -name .pinned)" ]
+  [ -z "$(find "$CANOPY_STATE/backups" -name .committed)" ]
+  [ -n "$(find "$CANOPY_STATE/backups" -name .failed)" ]
+}
+
+@test "a failed install leaves a pre-existing user.conf byte-identical" {
+  mkdir -p "$CANOPY_CONFIG"
+  printf '# my prior overrides\nset -g @mine 1\n' >"$CANOPY_CONFIG/user.conf"
+  orig_hash="$(canopy_sha256 "$CANOPY_CONFIG/user.conf")"
+
+  mkdir -p "$XDG_CONFIG_HOME/tmux"
+  printf 'set -g @preexisting yes\n' >"$XDG_CONFIG_HOME/tmux/tmux.conf"
+
+  store_copy="$BATS_TEST_TMPDIR/store"
+  mkdir -p "$store_copy"
+  cp -R "$CANOPY_STORE/bin" "$store_copy/bin"
+  cp -R "$CANOPY_STORE/lib" "$store_copy/lib"
+  cp -R "$CANOPY_STORE/tmux" "$store_copy/tmux"
+  printf 'totally-not-a-real-tmux-command\n' >"$store_copy/tmux/conf.d/99-broken.conf"
+
+  CANOPY_STORE="$store_copy"
+  export CANOPY_STORE
+  run canopy install --yes
+  [ "$status" -ne 0 ]
+  [ "$(canopy_sha256 "$CANOPY_CONFIG/user.conf")" = "$orig_hash" ]
+}
+
+@test "a second install recognises its own entry point and refuses without mutating anything" {
+  run canopy install
+  [ "$status" -eq 0 ]
+  tx_count_before="$(find "$CANOPY_STATE/backups" -mindepth 1 -maxdepth 1 -type d | wc -l)"
+
+  run canopy install
+  [ "$status" -ne 0 ]
+  [[ "$output" == *"already"* ]]
+
+  tx_count_after="$(find "$CANOPY_STATE/backups" -mindepth 1 -maxdepth 1 -type d | wc -l)"
+  [ "$tx_count_before" = "$tx_count_after" ]
+  run canopy_tmux_validate "$CANOPY_STORE/tmux/tmux.conf"
+  [ "$status" -eq 0 ]
+}
+
+@test "a second install over a migrated foreign config also refuses, non-destructively" {
+  mkdir -p "$XDG_CONFIG_HOME/tmux"
+  printf 'set -g @preexisting yes\n' >"$XDG_CONFIG_HOME/tmux/tmux.conf"
+  run canopy install --yes
+  [ "$status" -eq 0 ]
+  user_conf_hash_before="$(canopy_sha256 "$CANOPY_CONFIG/user.conf")"
+  entry_hash_before="$(canopy_sha256 "$XDG_CONFIG_HOME/tmux/tmux.conf")"
+
+  run canopy install --yes
+  [ "$status" -ne 0 ]
+  [[ "$output" == *"already"* ]]
+  [ "$(canopy_sha256 "$CANOPY_CONFIG/user.conf")" = "$user_conf_hash_before" ]
+  [ "$(canopy_sha256 "$XDG_CONFIG_HOME/tmux/tmux.conf")" = "$entry_hash_before" ]
+  run canopy_tmux_validate "$CANOPY_STORE/tmux/tmux.conf"
+  [ "$status" -eq 0 ]
 }
