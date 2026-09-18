@@ -2,7 +2,31 @@
 # Dispatch canopy subcommands and render metadata-driven help.
 set -eu
 
-: "${CANOPY_STORE:=$(cd "$(dirname "$0")/.." && pwd)}"
+# The store is derived from the real path of this file, not from $0.
+# Putting canopy on a PATH normally means symlinking bin/canopy into a
+# directory like ~/.local/bin, and $0 then names the link, whose parent's
+# parent is not the store: lib/env.sh was looked for beside the link and
+# nothing dispatched. `readlink -f` would resolve it in one call, but it
+# is GNU-only (absent on macOS before Monterey, and BusyBox spells its
+# flags differently), so the link is walked one hop at a time here. The
+# hop cap is what stops a symlink cycle from spinning forever.
+if [ -z "${CANOPY_STORE-}" ]; then
+  canopy_self="$0"
+  canopy_hops=0
+  while [ -L "$canopy_self" ]; do
+    canopy_hops=$((canopy_hops + 1))
+    if [ "$canopy_hops" -gt 40 ]; then
+      printf 'canopy: too many symlinks while resolving %s\n' "$0" >&2
+      exit 1
+    fi
+    canopy_link="$(readlink "$canopy_self")"
+    case "$canopy_link" in
+      /*) canopy_self="$canopy_link" ;;
+      *) canopy_self="$(dirname "$canopy_self")/$canopy_link" ;;
+    esac
+  done
+  CANOPY_STORE="$(cd "$(dirname "$canopy_self")/.." && pwd)"
+fi
 # shellcheck source=../lib/env.sh
 # shellcheck disable=SC1091
 . "$CANOPY_STORE/lib/env.sh"
