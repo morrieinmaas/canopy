@@ -74,3 +74,10 @@ EOF
   first="$(awk -F'\t' 'NR==1{print $1}' "$CANOPY_STATE/commands.tsv")"
   [ "$first" = "Zeta" ]
 }
+
+@test "rejects an unknown argument instead of silently ignoring it" {
+  run canopy-index --print
+  [ "$status" -eq 1 ]
+  [ "$output" = "canopy: canopy-index: unknown argument: --print" ]
+  [ ! -f "$CANOPY_STATE/commands.tsv" ]
+}

@@ -9,6 +9,10 @@ set -eu
 . "$CANOPY_STORE/lib/env.sh"
 canopy_paths
 
+if [ $# -gt 0 ]; then
+  canopy_die "canopy-version: unknown argument: $1"
+fi
+
 version_file="$CANOPY_STORE/VERSION"
 if [ ! -f "$version_file" ]; then
   canopy_die "VERSION file not found at $version_file"
