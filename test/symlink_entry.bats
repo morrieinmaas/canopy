@@ -126,3 +126,93 @@ setup() {
   bare_tmux_cleanup "$sock"
   [ "$output" = "yes" ]
 }
+
+# --- a DANGLING entry-point symlink ----------------------------------------
+# chezmoi and stow both leave one behind whenever the source tree they point
+# into is not checked out yet. tmux skips such a link, and install's old -f
+# test read it as "nothing here".
+#
+# What survived that, and is asserted below as a regression guard: the
+# transaction still recorded the link, because canopy_file_state asks -L
+# before -e, so restore could always put it back. What did not survive: the
+# link was not an "existing config", so install skipped the --yes consent
+# gate and replaced a path a dotfiles manager owns without asking,
+# --dry-run announced it would "create" an entry point that was already
+# there, and user.conf carried no note of what had been at the path.
+
+@test "install owns a dangling entry-point symlink instead of writing over it" {
+  missing="$dotfiles/not-checked-out.conf"
+  ln -s "$missing" "$entry"
+  [ -L "$entry" ]
+  [ ! -e "$entry" ]
+
+  run canopy install --yes
+  [ "$status" -eq 0 ]
+
+  [ ! -L "$entry" ]
+  grep -q 'canopy:entry-point' "$entry"
+  # The target the link pointed at was never created.
+  [ ! -e "$missing" ]
+  # There were no bytes to migrate, and user.conf says so rather than
+  # leaving a silent gap.
+  grep -q 'nothing to migrate' "$CANOPY_CONFIG/user.conf"
+
+  for tx in "$CANOPY_STATE"/backups/*/; do tx_dir="$tx"; done
+  row="$(awk -F'\t' -v p="$entry" '$2==p' "${tx_dir}manifest.tsv")"
+  [ "$(printf '%s' "$row" | awk -F'\t' '{print $3}')" = "symlink:$missing" ]
+}
+
+@test "restore --all puts a dangling entry-point symlink back, still dangling" {
+  missing="$dotfiles/not-checked-out.conf"
+  ln -s "$missing" "$entry"
+  before="$(find "$HOME" | sort)"
+
+  run canopy install --yes
+  [ "$status" -eq 0 ]
+  run canopy restore --all
+  [ "$status" -eq 0 ]
+
+  [ -L "$entry" ]
+  [ "$(readlink "$entry")" = "$missing" ]
+  [ ! -e "$missing" ]
+  [ "$(find "$HOME" | sort)" = "$before" ]
+}
+
+@test "a dangling ~/.tmux.conf never outranks a config tmux can actually load" {
+  missing="$dotfiles/not-checked-out.conf"
+  ln -s "$missing" "$HOME/.tmux.conf"
+  printf 'set -g @real_xdg_config yes\n' >"$entry"
+
+  run canopy install --yes
+  [ "$status" -eq 0 ]
+
+  # The XDG file is what tmux loads, so it is what canopy owns and
+  # migrates; the dangling link is left exactly as it was found.
+  grep -q '@real_xdg_config' "$CANOPY_CONFIG/user.conf"
+  grep -q 'canopy:entry-point' "$entry"
+  [ -L "$HOME/.tmux.conf" ]
+  [ "$(readlink "$HOME/.tmux.conf")" = "$missing" ]
+}
+
+@test "install refuses a dangling entry-point symlink without --yes" {
+  # The consent gate is the part a dangling link used to slip past
+  # entirely: replacing a link a dotfiles manager owns is a migration like
+  # any other, and install must say so before doing it.
+  missing="$dotfiles/not-checked-out.conf"
+  ln -s "$missing" "$entry"
+
+  run canopy install
+  [ "$status" -ne 0 ]
+  [[ "$output" == *"--yes"* ]]
+  [ -L "$entry" ]
+  [ "$(readlink "$entry")" = "$missing" ]
+}
+
+@test "--dry-run names a dangling entry-point symlink as a path it would own" {
+  missing="$dotfiles/not-checked-out.conf"
+  ln -s "$missing" "$entry"
+
+  run canopy install --dry-run
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"own $entry"* ]]
+}
