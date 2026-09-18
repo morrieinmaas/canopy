@@ -1,0 +1,16 @@
+#!/bin/sh
+# canopy:summary=Print the canopy version
+# canopy:group=core
+set -eu
+
+: "${CANOPY_STORE:=$(cd "$(dirname "$0")/.." && pwd)}"
+# shellcheck source=../lib/env.sh
+# shellcheck disable=SC1091
+. "$CANOPY_STORE/lib/env.sh"
+canopy_paths
+
+version_file="$CANOPY_STORE/VERSION"
+if [ ! -f "$version_file" ]; then
+  canopy_die "VERSION file not found at $version_file"
+fi
+cat "$version_file"
