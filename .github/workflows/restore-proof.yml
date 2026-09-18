@@ -1,0 +1,21 @@
+name: Restore proof
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  restore-proof:
+    strategy:
+      matrix:
+        os: [ubuntu-latest, macos-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: install tmux (ubuntu)
+        if: runner.os == 'Linux'
+        run: sudo apt-get update && sudo apt-get install -y tmux
+      - name: install tmux (macos)
+        if: runner.os == 'macOS'
+        run: brew install tmux
+      - run: sh test/restore-proof.sh
