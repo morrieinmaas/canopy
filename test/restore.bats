@@ -368,3 +368,33 @@ interrupt_install() {
   [ "$(cat "$entry")" = "totally-not-a-real-tmux-command" ]
   [[ "$output" == *"totally-not-a-real-tmux-command"* ]]
 }
+
+@test "restore --all reverts a rollback set that mixes a committed and an uncommitted transaction" {
+  # The only shape in this file where automatic rollback has to replay
+  # both kinds of transaction in one run. An uncommitted transaction is
+  # not a transaction to skip: it means canopy was interrupted partway
+  # through, so its partial changes are sitting on disk and the user's
+  # original bytes are sitting in its files/ directory.
+  a="$BATS_TEST_TMPDIR/mixed-a.conf"
+  b="$BATS_TEST_TMPDIR/mixed-b.conf"
+  printf 'orig-a\n' > "$a"; orig_a="$(canopy_sha256 "$a")"
+  printf 'orig-b\n' > "$b"; orig_b="$(canopy_sha256 "$b")"
+
+  tx1="$(canopy_tx_begin install)"; touch "$tx1/.pinned"
+  canopy_tx_record "$tx1" own "$a"
+  printf 'canopy-a\n' > "$a"
+  canopy_tx_commit "$tx1"
+
+  # Begun and recorded, never committed. "zinterrupted" sorts after
+  # "install", so this stays the newer transaction even when both land in
+  # the same wall-clock second.
+  tx2="$(canopy_tx_begin zinterrupted)"
+  canopy_tx_record "$tx2" own "$b"
+  printf 'canopy-b\n' > "$b"
+
+  run canopy restore --all
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"2 reverted, 0 kept"* ]]
+  [ "$(canopy_sha256 "$a")" = "$orig_a" ]
+  [ "$(canopy_sha256 "$b")" = "$orig_b" ]
+}
