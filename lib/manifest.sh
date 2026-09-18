@@ -100,9 +100,6 @@ canopy_tx_record() {
   printf '%s\t%s\t%s\t%s\t%s\n' "$action" "$path" "$pre" "$backup_rel" "" >>"$tx/manifest.tsv"
 }
 
-# canopy_tx_commit <txdir>
-# Records each recorded path's post-state sha256 (or absent) and marks
-# the transaction complete.
 # canopy_tx_commit <tx>
 # Stamps each row's post-state and marks the transaction committed.
 # Post-stamping is per row, not per path: rows are the unit of this
