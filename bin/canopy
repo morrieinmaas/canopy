@@ -10,9 +10,14 @@ canopy_paths
 
 bin_dir="$CANOPY_STORE/bin"
 
+# Enumeration uses the same test dispatch does, -x rather than -f: a
+# canopy-* file that is not executable cannot be run, so advertising it in
+# help or offering it as a suggestion only sends the user at a command
+# that fails. Dispatch still explains a non-executable file by name when
+# one is asked for directly.
 canopy_list_commands() {
   for f in "$bin_dir"/canopy-*; do
-    [ -f "$f" ] || continue
+    [ -x "$f" ] || continue
     printf '%s\n' "${f##*/canopy-}"
   done
 }
@@ -20,7 +25,7 @@ canopy_list_commands() {
 canopy_help() {
   {
     for f in "$bin_dir"/canopy-*; do
-      [ -f "$f" ] || continue
+      [ -x "$f" ] || continue
       name=${f##*/canopy-}
       awk -v name="$name" '
         BEGIN { group = "misc"; summary = "" }

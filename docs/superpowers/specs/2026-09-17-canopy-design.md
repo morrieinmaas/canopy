@@ -203,7 +203,7 @@ Every mutating operation (`install`, `update` when it touches user-owned files,
 
 ```
 ~/.local/state/canopy/backups/<ts>/
-  manifest.json     # per path: action (own|splice|drop|generate|env), pre-state (absent | sha256+copy), post-state sha256
+  manifest.tsv      # one row per recorded path: action (own|splice|drop|generate|env), pre-state (absent | sha256+copy), post-state sha256
   files/...         # byte copies of everything that existed before
   restore.sh        # self-contained POSIX sh
 ```

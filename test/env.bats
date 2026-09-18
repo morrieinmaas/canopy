@@ -13,6 +13,25 @@ setup() { setup_canopy_env; . "$CANOPY_STORE/lib/env.sh"; }
   [ "$CANOPY_CONFIG" = "$BATS_TEST_TMPDIR/home/.config/canopy" ]
 }
 
+@test "a relative XDG_CONFIG_HOME is rejected by name, not silently resolved" {
+  # A relative value would be recorded verbatim into a manifest, and
+  # $tx/restore.sh resolves manifest paths against whatever directory it
+  # is later run from, so the restore point would name a different file
+  # than the one canopy backed up.
+  unset CANOPY_CONFIG CANOPY_STATE
+  run env HOME="$BATS_TEST_TMPDIR/home" XDG_CONFIG_HOME="relative/config" canopy doctor
+  [ "$status" -ne 0 ]
+  [[ "$output" == *"XDG_CONFIG_HOME"* ]]
+  [[ "$output" == *"absolute"* ]]
+}
+
+@test "a relative CANOPY_STATE is rejected by name too" {
+  run env CANOPY_STATE="relative/state" canopy doctor
+  [ "$status" -ne 0 ]
+  [[ "$output" == *"CANOPY_STATE"* ]]
+  [[ "$output" == *"absolute"* ]]
+}
+
 @test "canopy_have detects present and absent tools" {
   canopy_have sh
   ! canopy_have definitely-not-a-real-binary-xyz
