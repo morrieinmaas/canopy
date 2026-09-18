@@ -193,6 +193,27 @@ EOF
   [ -d "$XDG_CONFIG_HOME/mise" ]
 }
 
+@test "install tracks the directory it creates for its own config dir, but never that dir itself" {
+  # The real default layout, which the rest of this file deliberately
+  # avoids by pointing CANOPY_CONFIG outside $HOME: canopy's own config
+  # lives inside $XDG_CONFIG_HOME. install used to create $CANOPY_CONFIG
+  # with a bare mkdir -p, so the ~/.config it made on the way was the one
+  # directory install creates that canopy_mkdir_tracked never saw.
+  CANOPY_CONFIG="$XDG_CONFIG_HOME/canopy"
+  export CANOPY_CONFIG
+  [ ! -d "$XDG_CONFIG_HOME" ]
+
+  run canopy install
+  [ "$status" -eq 0 ]
+
+  for tx in "$CANOPY_STATE"/backups/*/; do tx_dir="$tx"; done
+  grep -qx "$XDG_CONFIG_HOME" "${tx_dir}dirs-created.txt"
+  # $CANOPY_CONFIG is never touched by restore (spec 5.5), so it must not
+  # be tracked for removal in the first place, and neither must anything
+  # under it.
+  ! grep -qx "$CANOPY_CONFIG" "${tx_dir}dirs-created.txt"
+}
+
 @test "install writes the mise fragment when mise conf.d already exists" {
   mkdir -p "$XDG_CONFIG_HOME/mise/conf.d"
   PATH="$(restricted_path)"
