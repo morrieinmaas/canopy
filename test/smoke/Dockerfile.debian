@@ -1,0 +1,30 @@
+# Debian's /bin/sh is dash. This image is what catches a bashism in a
+# canopy script that bash on macOS or in bats would happily accept.
+#
+# Only what canopy genuinely needs is installed: tmux, git, and a shell,
+# which the base image already provides. Nothing from this repo's
+# mise.toml: a scenario must run the shipped artifact through the same
+# entry path a user does, from a bare environment, and a user does not
+# have the project's toolchain on their PATH.
+#
+# Finding: canopy itself never invokes git. It is here because a canopy
+# install is a checkout, so a user needs git to GET canopy, not to run
+# it. Everything canopy does call (awk, sed, grep, cut, find, sha256sum,
+# readlink, cp, mv, date, sort, tail, id, rmdir) is in both base images
+# already.
+FROM debian:stable-slim
+
+RUN apt-get update \
+  && apt-get install -y --no-install-recommends tmux git \
+  && rm -rf /var/lib/apt/lists/*
+
+# The repository, copied in exactly as a user would have it checked out.
+# Last, so editing canopy does not invalidate the package layer.
+COPY . /canopy
+
+# How a user puts canopy on their PATH. Deliberately not a symlink into
+# /usr/local/bin: canopy derives its store from "$(dirname "$0")/..", so a
+# symlinked entry would resolve the store to /usr/local.
+ENV PATH="/canopy/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
+
+CMD ["/canopy/test/smoke/scenarios.sh"]

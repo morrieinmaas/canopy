@@ -17,7 +17,7 @@ jobs:
         run: |
           set -eu
           targets=""
-          for f in bin/* lib/*.sh; do
+          for f in bin/* lib/*.sh test/smoke/*.sh; do
             [ -e "$f" ] && targets="$targets $f"
           done
           if [ -n "$targets" ]; then shellcheck $targets; fi
@@ -25,7 +25,7 @@ jobs:
         run: |
           set -eu
           dirs=""
-          for d in bin lib; do
+          for d in bin lib test/smoke; do
             [ -d "$d" ] && dirs="$dirs $d"
           done
           if [ -n "$dirs" ]; then shfmt -d -i 2 -ci $dirs; fi
