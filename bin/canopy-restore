@@ -94,7 +94,13 @@ if [ "$mode" = "list" ]; then
     label="${id#*-}"
     epoch="${id%%-*}"
     ts="$(canopy_restore_timestamp "$epoch")"
-    count="$(grep -vc '^#' "$d/manifest.tsv")"
+    # awk, not grep -c: grep -c exits 1 on zero matches (a genuinely
+    # empty or header-only manifest, e.g. a transaction that failed or
+    # was interrupted before recording anything), and under set -eu
+    # inside this piped while loop that kills the whole subshell, not
+    # just this row, truncating the rest of the listing silently. awk
+    # always exits 0 here regardless of match count.
+    count="$(awk '!/^#/ { n++ } END { print n + 0 }' "$d/manifest.tsv")"
     if [ -f "$d/.failed" ]; then
       marker="  FAILED"
     elif [ -f "$d/.committed" ]; then

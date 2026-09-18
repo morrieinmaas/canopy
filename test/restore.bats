@@ -175,6 +175,62 @@ setup() {
   [[ "$second_line" != *"FAILED"* ]]
 }
 
+@test "--list survives a transaction with an empty manifest, listing all three and marking it INCOMPLETE" {
+  a="$BATS_TEST_TMPDIR/list-a.conf"
+  c="$BATS_TEST_TMPDIR/list-c.conf"
+  tx1="$(canopy_tx_begin install)"; touch "$tx1/.pinned"
+  canopy_tx_record "$tx1" own "$a"
+  canopy_tx_commit "$tx1"
+
+  # Deliberately begun and left alone: never recorded into, never
+  # committed, never marked failed. This is exactly the empty-manifest
+  # shape (manifest.tsv holding only its header row) that an interrupted
+  # transaction leaves behind, and the shape that used to make --list
+  # exit 1 and print nothing at all.
+  canopy_tx_begin interrupted >/dev/null
+
+  tx3="$(canopy_tx_begin zlater)"
+  canopy_tx_record "$tx3" own "$c"
+  canopy_tx_commit "$tx3"
+
+  run canopy restore --list
+  [ "$status" -eq 0 ]
+  line_count="$(printf '%s\n' "$output" | wc -l | tr -d ' ')"
+  [ "$line_count" -eq 3 ]
+  first_line="$(printf '%s\n' "$output" | sed -n '1p')"
+  second_line="$(printf '%s\n' "$output" | sed -n '2p')"
+  third_line="$(printf '%s\n' "$output" | sed -n '3p')"
+  [[ "$first_line" == *"zlater"* ]]
+  [[ "$second_line" == *"interrupted"* ]]
+  [[ "$second_line" == *"INCOMPLETE"* ]]
+  [[ "$third_line" == *"install"* ]]
+  [[ "$third_line" == *"PINNED"* ]]
+}
+
+@test "a plain rollback still skips a non-committed transaction, even though --list can now see it" {
+  a="$BATS_TEST_TMPDIR/skip-a.conf"
+  b="$BATS_TEST_TMPDIR/skip-b.conf"
+  printf 'orig-a\n' > "$a"
+  printf 'orig-b\n' > "$b"
+
+  tx1="$(canopy_tx_begin install)"; touch "$tx1/.pinned"
+  canopy_tx_record "$tx1" own "$a"
+  printf 'canopy-a\n' > "$a"
+  canopy_tx_commit "$tx1"
+
+  # Begun and recorded, but never committed, e.g. the process was
+  # interrupted mid-transaction: must never be replayed by rollback,
+  # even though --list can now show it (as INCOMPLETE).
+  tx2="$(canopy_tx_begin interrupted)"
+  canopy_tx_record "$tx2" own "$b"
+  printf 'canopy-b\n' > "$b"
+
+  run canopy restore --all
+  [ "$status" -eq 0 ]
+  [ "$(cat "$a")" = "orig-a" ]
+  [ "$(cat "$b")" = "canopy-b" ]
+}
+
 @test "restore fails and surfaces tmux's own error when the restored config is broken" {
   entry_dir="$XDG_CONFIG_HOME/tmux"
   entry="$entry_dir/tmux.conf"
