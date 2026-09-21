@@ -62,6 +62,17 @@ canopy_tmux_bare() {
 # -f <conf>: a config loaded at server start reports its errors to the
 # client and still leaves new-session exiting 0, while source-file as a
 # command returns tmux's own verdict.
+#
+# The scratch session runs `sleep`, not the user's shell. A bare
+# `new-session -d` starts whatever login shell the passwd entry names, and
+# that shell writes to $HOME when it is killed: on this machine validation
+# left a .zsh_history behind in an otherwise untouched home, so `canopy
+# install` followed by `canopy restore --all` no longer returned the home
+# to its exact prior state. The bug predates the plugin layer and was only
+# hidden by timing; the layer's extra second of work gave the shell long
+# enough to get its write in. Nothing validation does needs a shell, so it
+# no longer starts one. The 600 seconds are slack, not a wait: the server
+# is killed a moment later, on every path.
 canopy_tmux_validate() {
   conf="$1"
   if [ ! -f "$conf" ]; then
@@ -73,7 +84,7 @@ canopy_tmux_validate() {
     return 1
   fi
   sock="canopy-verify-$$"
-  err="$(canopy_tmux_bare "$tmux_bin" -L "$sock" -f /dev/null new-session -d \; source-file "$conf" 2>&1)"
+  err="$(canopy_tmux_bare "$tmux_bin" -L "$sock" -f /dev/null new-session -d 'sleep 600' \; source-file "$conf" 2>&1)"
   rc=$?
   canopy_tmux_bare "$tmux_bin" -L "$sock" kill-server >/dev/null 2>&1
   # kill-server stops the server and leaves its socket file behind, one per

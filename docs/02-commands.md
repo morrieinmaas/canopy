@@ -163,6 +163,11 @@ Layers:
   gum (gum): dormant (gum not found)
   ...
 
+Plugins:
+  bash (both plugins are bash scripts): yes
+  tmux-resurrect: pinned cff343cf9e81983d3da0c8562b01616f12e8d548, tree matches
+  tmux-continuum: pinned 0698e8f4b17d6454c71bf5212895ec055c578da0, tree matches
+
 Load-bearing settings (M1):
   tmux version floor (>= 3.4): ok
   installed entry point: /home/you/.config/tmux/tmux.conf
@@ -189,6 +194,7 @@ Sections, and what each one is actually checking:
 | Environment | The tmux version string and the three paths canopy resolved |
 | Capabilities | A direct read of `05-caps.conf`. Doctor never re-probes; run `canopy caps` for that |
 | Layers | The same data, named by feature. M1 ships no gated layer yet, so this says what each capability *will* enable |
+| Plugins | Each vendored plugin's pinned commit from `plugins/VERSIONS`, and whether the tree on disk still matches the digest `plugins/vendor.sh` recorded in `plugins/CHECKSUMS`. Also whether bash, which both plugins need, is present at all |
 | Load-bearing settings | tmux 3.4 floor; the installed entry point loading from a bare environment; `user.conf` being the last `source-file` in the store's `tmux.conf` |
 | Restore points | How many committed points exist, whether the pinned pre-install one is among them, and any transaction interrupted before it committed |
 | Commands | Every `bin/canopy-*` carries a `canopy:summary=` header |

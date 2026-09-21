@@ -20,8 +20,12 @@ cd "$here"
 
 status=0
 
+# plugins/vendor.sh is named as a file, never as a directory: plugins/
+# also holds the vendored upstream trees, which are bash and are not
+# canopy's code to reformat. Only canopy's own script under plugins/ is
+# linted.
 set --
-for f in bin/* lib/*.sh test/smoke/*.sh; do
+for f in bin/* lib/*.sh test/smoke/*.sh plugins/vendor.sh; do
   [ -e "$f" ] && set -- "$@" "$f"
 done
 if [ "$#" -gt 0 ]; then
@@ -29,8 +33,8 @@ if [ "$#" -gt 0 ]; then
 fi
 
 set --
-for d in bin lib test/smoke; do
-  [ -d "$d" ] && set -- "$@" "$d"
+for f in bin lib test/smoke plugins/vendor.sh; do
+  [ -e "$f" ] && set -- "$@" "$f"
 done
 if [ "$#" -gt 0 ]; then
   shfmt -d -i 2 -ci "$@" || status=1

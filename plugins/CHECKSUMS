@@ -1,0 +1,5 @@
+# Digest of each vendored tree as shipped: <name> <sha256>
+# Written by plugins/vendor.sh; doctor compares the tree on disk
+# against it. See lib/plugins.sh for how the digest is formed.
+tmux-continuum 7e238092a2729cb3f2b2aff0eb0ceceefeed8299fb72a6c340853985b8717f1d
+tmux-resurrect e0c5c35f08201505d0210ed008262c85eb67a70e9bfadf5fdedc6381c91bb3b3
