@@ -23,9 +23,10 @@ status=0
 # plugins/vendor.sh is named as a file, never as a directory: plugins/
 # also holds the vendored upstream trees, which are bash and are not
 # canopy's code to reformat. Only canopy's own script under plugins/ is
-# linted.
+# linted, and for the same reason test/fixtures is named one file at a
+# time rather than as a directory.
 set --
-for f in bin/* lib/*.sh test/smoke/*.sh plugins/vendor.sh; do
+for f in bin/* lib/*.sh test/smoke/*.sh plugins/vendor.sh test/fixtures/fake-agent; do
   [ -e "$f" ] && set -- "$@" "$f"
 done
 if [ "$#" -gt 0 ]; then
@@ -33,7 +34,7 @@ if [ "$#" -gt 0 ]; then
 fi
 
 set --
-for f in bin lib test/smoke plugins/vendor.sh; do
+for f in bin lib test/smoke plugins/vendor.sh test/fixtures/fake-agent; do
   [ -e "$f" ] && set -- "$@" "$f"
 done
 if [ "$#" -gt 0 ]; then
