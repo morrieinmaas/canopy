@@ -54,3 +54,50 @@ canopy_resume_stagger_strip() {
     *) printf '%s\n' "$1" ;;
   esac
 }
+
+# canopy_resume_stagger_pattern
+# The wrapper as the extended regular expression resurrect matches saved
+# commands against. The third statement of the same shape, and the reason
+# all three live in this file: a pattern that stops agreeing with the
+# prefix is a pane that silently comes back as a bare shell.
+canopy_resume_stagger_pattern() { printf '^sleep [0-9.]* && \n'; }
+
+# canopy_resume_processes_option
+# The value for @resurrect-processes: the list of saved commands resurrect
+# is allowed to type back into a restored pane.
+#
+# Generated from the adapters canopy has rather than written out anywhere,
+# so installing an adapter is what makes its panes restorable, and a
+# machine with no adapters gets an empty list and leaves resurrect's own
+# defaults exactly as they were.
+#
+# Two entries per command. The plain one is resurrect's own form, anchored
+# by resurrect at the start of the saved command. The second is a regular
+# expression for the same command behind the stagger wrapper, which the
+# first would no longer match.
+#
+# Quoting is not decoration: resurrect splits this value with `eval set`,
+# so the regular expression has to arrive as one word and anything a shell
+# would act on has to stay inert. A command that is not a plain word is
+# dropped rather than quoted harder, because the safe answer for a pane is
+# to come back without its conversation and the unsafe one is to run an
+# adapter's manifest as code.
+canopy_resume_processes_option() {
+  local id command seen out
+  seen=""
+  out=""
+  for id in $(canopy_adapter_list); do
+    command="$(canopy_adapter_get "$id" command 2>/dev/null)" || continue
+    case "$command" in
+      '' | *[!A-Za-z0-9._-]*) continue ;;
+      *) ;;
+    esac
+    case " $seen " in
+      *" $command "*) continue ;;
+      *) ;;
+    esac
+    seen="$seen $command"
+    out="$out $command \"~$(canopy_resume_stagger_pattern)$command\""
+  done
+  printf '%s\n' "${out# }"
+}
