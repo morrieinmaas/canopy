@@ -70,6 +70,11 @@ strategy_tmux_start() {
   else
     tmux -L "$sock" -f /dev/null new-session -d
   fi
+  # The resume stagger is off for every test in this file. What is under
+  # test here is which command a pane is saved as, and a wait in front of
+  # it would only make each assertion say so twice. The wrapper has its own
+  # file, test/stagger.bats.
+  tmux -L "$sock" set -g @canopy_resume_stagger_ms 0
   pane="$(tmux -L "$sock" list-panes -a -F '#{pane_id}' | head -1)"
   sock_path="$(tmux -L "$sock" display-message -p '#{socket_path}')"
   TMUX="$sock_path,0,0"

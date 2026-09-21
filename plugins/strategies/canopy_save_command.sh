@@ -54,7 +54,7 @@ canopy_save_resume_command() {
   [ -n "$pane_pid" ] || return 1
   [ -n "$store" ] || return 1
 
-  for lib in env.sh adapter.sh pane.sh; do
+  for lib in env.sh adapter.sh pane.sh resume.sh; do
     [ -r "$store/lib/$lib" ] || return 1
   done
   # shellcheck source=../../lib/env.sh
@@ -66,6 +66,9 @@ canopy_save_resume_command() {
   # shellcheck source=../../lib/pane.sh
   # shellcheck disable=SC1091
   . "$store/lib/pane.sh"
+  # shellcheck source=../../lib/resume.sh
+  # shellcheck disable=SC1091
+  . "$store/lib/resume.sh"
   # Set before canopy_paths rather than left to it: canopy_paths derives an
   # unset store from its caller's own directory, and this caller lives two
   # levels down from one.
@@ -111,6 +114,12 @@ EOF
   [ -n "$adapter" ] || return 1
 
   out="$(canopy_adapter_resume_command "$adapter" "$session" 2>/dev/null)" || return 1
+
+  # The wait goes in front of the command that is about to be saved, not
+  # around the restore, because the saved line is the only thing resurrect
+  # replays.
+  stagger="$(tmux show -gqv @canopy_resume_stagger_ms 2>/dev/null)" || stagger=""
+  out="$(canopy_resume_stagger_prefix "$pane_pid" "$stagger")$out"
 
   # resurrect's save file is tab delimited and one line per pane. A command
   # carrying a control character would not come back as itself; it would
