@@ -2,11 +2,22 @@
 load helper
 
 # A minimal PATH that still resolves every tool canopy install itself needs
-# (tmux, sh, awk, sort, date, cp, mkdir, chmod, sha256 tool) but excludes the
-# directory that holds mise on this development machine, so "mise absent" can
-# be asserted deterministically. Mirrors caps.bats' restricted_path().
+# (tmux, sh, awk, sort, date, cp, mkdir, chmod, sha256 tool) but excludes
+# wherever mise itself lives, so "mise absent" can be asserted
+# deterministically. Mirrors caps.bats' restricted_path().
+#
+# tmux's own directory is derived from the PATH already in effect rather
+# than hardcoded to one machine's package manager: a hardcoded
+# /opt/nanobrew/... path resolved tmux on the machine this was written on
+# and nowhere else, which is exactly what let two tests here pass locally
+# and fail on the macOS CI runner, where tmux comes from mise and lives
+# somewhere else entirely. Whatever directory provides tmux is never where
+# the mise binary itself lives, so deriving it this way still excludes
+# mise; /usr/bin and /bin cover the rest on every platform this runs on.
 restricted_path() {
-  printf '%s' "$CANOPY_STORE/bin:/opt/nanobrew/prefix/opt/coreutils/libexec/gnubin:/opt/nanobrew/prefix/opt/gnu-sed/libexec/gnubin:/opt/nanobrew/prefix/opt/gawk/libexec/gnubin:/opt/nanobrew/prefix/bin:/usr/bin:/bin"
+  local tmux_dir
+  tmux_dir="$(dirname "$(command -v tmux)")"
+  printf '%s' "$CANOPY_STORE/bin:$tmux_dir:/usr/bin:/bin"
 }
 
 setup() {

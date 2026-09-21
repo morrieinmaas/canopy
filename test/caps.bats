@@ -5,11 +5,15 @@ setup() { setup_canopy_env; }
 
 # A minimal PATH that still resolves every tool canopy-caps itself needs
 # (mkdir, sed, cat, printf, dirname, tmux, sh) but excludes the directories
-# that hold every one of the six probed tools on this development machine,
-# so "absent" can be asserted deterministically instead of depending on
-# what happens to be installed on the host running the tests.
+# that hold every one of the six probed tools, so "absent" can be asserted
+# deterministically instead of depending on what happens to be installed on
+# the host running the tests. tmux's directory is derived rather than
+# hardcoded to one machine's package manager; see install.bats' copy of
+# this function for why.
 restricted_path() {
-  printf '%s' "$CANOPY_STORE/bin:/opt/nanobrew/prefix/opt/coreutils/libexec/gnubin:/opt/nanobrew/prefix/opt/gnu-sed/libexec/gnubin:/opt/nanobrew/prefix/bin:/usr/bin:/bin"
+  local tmux_dir
+  tmux_dir="$(dirname "$(command -v tmux)")"
+  printf '%s' "$CANOPY_STORE/bin:$tmux_dir:/usr/bin:/bin"
 }
 
 @test "generates 05-caps.conf under CANOPY_STATE" {

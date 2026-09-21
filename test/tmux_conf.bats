@@ -45,6 +45,31 @@ setup() {
   [ "$status" -ne 0 ]
 }
 
+@test "canopy_tmux_validate succeeds when tmux is reached through a wrapper that needs the bare environment to work" {
+  # Stands in for a version-manager shim (mise, asdf, ...): a thin wrapper
+  # on PATH that resolves and execs the real tmux, and refuses to run at
+  # all unless HOME is set, the one variable a shim needs to find its own
+  # install data that canopy_tmux_bare's env -i is specifically supposed
+  # to preserve. If canopy_tmux_bare ever regressed to a bare env -i with
+  # no variables carried through, this wrapper would fail and so would
+  # this test.
+  real_tmux="$(command -v tmux)"
+  wrapper_dir="$BATS_TEST_TMPDIR/wrapper-bin"
+  mkdir -p "$wrapper_dir"
+  cat > "$wrapper_dir/tmux" <<EOF
+#!/bin/sh
+[ -n "\$HOME" ] || { echo "wrapper: HOME not set, cannot resolve the real tmux" >&2; exit 1; }
+exec "$real_tmux" "\$@"
+EOF
+  chmod +x "$wrapper_dir/tmux"
+  PATH="$wrapper_dir:/usr/bin:/bin"
+
+  conf="$BATS_TEST_TMPDIR/wrapper-ok.conf"
+  printf 'set -g @canopy_wrapper_marker ok\n' > "$conf"
+  run canopy_tmux_validate "$conf"
+  [ "$status" -eq 0 ]
+}
+
 @test "canopy_tmux_version_ok accepts the installed tmux" {
   run canopy_tmux_version_ok
   [ "$status" -eq 0 ]
