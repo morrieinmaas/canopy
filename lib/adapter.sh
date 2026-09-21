@@ -73,6 +73,45 @@ canopy_adapter_list() {
 # return a correct value out of a manifest that is wrong three lines
 # lower, and the consumer that eventually trips over that line would be
 # debugging the wrong file.
+# canopy_adapter_expand <template> <id>
+# The one place the {id} placeholder is substituted. Every template key in
+# the contract carries it, and more than one caller needs the same answer:
+# the save strategy writes a pane's resume command, and reboot-check has to
+# work out what that command would have been to tell whether the save on
+# disk actually holds it. The same rule written out beside each caller is a
+# rule that drifts, and this project has paid for that already.
+canopy_adapter_expand() {
+  local out rest
+  out=""
+  rest="$1"
+  while :; do
+    case "$rest" in
+      *'{id}'*)
+        out="$out${rest%%"{id}"*}$2"
+        rest="${rest#*"{id}"}"
+        ;;
+      *)
+        out="$out$rest"
+        break
+        ;;
+    esac
+  done
+  printf '%s\n' "$out"
+}
+
+# canopy_adapter_resume_command <adapter-id> <session-id>
+# The command that puts a pane back into the conversation it was in.
+# An empty session id fails rather than producing a resume command with
+# nothing to resume: that command would start a fresh conversation while
+# looking exactly like one that continued the old one.
+canopy_adapter_resume_command() {
+  local template
+  [ -n "${2-}" ] || return 1
+  template="$(canopy_adapter_get "$1" resume_template)" || return 1
+  [ -n "$template" ] || return 1
+  canopy_adapter_expand "$template" "$2"
+}
+
 canopy_adapter_get() {
   local id key dir manifest known line k v seen
   local a_id a_command a_resume a_pin a_launch a_draft

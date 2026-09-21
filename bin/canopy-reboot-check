@@ -1,0 +1,218 @@
+#!/bin/sh
+# canopy:summary=Say which agent panes survive a reboot, and why the rest do not
+# canopy:group=agent
+# canopy:args=
+# canopy:examples=canopy reboot-check
+# shellcheck disable=SC2154,SC2153  # CANOPY_STATE is exported by lib/env.sh's canopy_paths
+set -eu
+
+: "${CANOPY_STORE:=$(cd "$(dirname "$0")/.." && pwd)}"
+# shellcheck source=../lib/env.sh
+# shellcheck disable=SC1091
+. "$CANOPY_STORE/lib/env.sh"
+# shellcheck source=../lib/adapter.sh
+# shellcheck disable=SC1091
+. "$CANOPY_STORE/lib/adapter.sh"
+# shellcheck source=../lib/pane.sh
+# shellcheck disable=SC1091
+. "$CANOPY_STORE/lib/pane.sh"
+canopy_paths
+
+[ "$#" -eq 0 ] || canopy_die "canopy-reboot-check: unknown argument: $1"
+
+# Every verdict here is read off what resurrect actually saved, never off
+# what canopy meant to save. A pre-flight that reports the intention rather
+# than the file on disk is the one failure this command exists to prevent:
+# it would say yes, and the user would find out after the reboot.
+
+# continuum's own defaults, at the commit pinned in plugins/VERSIONS. They
+# are repeated rather than read out of the vendored tree because the tree
+# holds upstream bytes and canopy sources none of them, and because an
+# unset option is the common case: reporting "unknown" for the machine
+# nobody has configured would make this command useless on most machines.
+canopy_rc_default_interval=15
+
+canopy_rc_option() {
+  canopy_rc_raw="$(tmux show -gqv "$1" 2>/dev/null)" || canopy_rc_raw=""
+  printf '%s\n' "$canopy_rc_raw"
+}
+
+# canopy_rc_saved_command <session> <window index> <pane index>
+# The command resurrect recorded for that pane in the last save, or a
+# failure when the save does not have the pane at all. The file is tab
+# delimited, one line per pane, and the command field carries a leading
+# colon that resurrect adds so an empty command survives the round trip.
+canopy_rc_saved_command() {
+  [ -f "$canopy_rc_save_file" ] || return 1
+  awk -F'\t' -v s="$1" -v w="$2" -v p="$3" '
+    $1 == "pane" && $2 == s && $3 == w && $6 == p {
+      command = $11
+      sub(/^:/, "", command)
+      print command
+      found = 1
+      exit
+    }
+    END { exit found ? 0 : 1 }
+  ' "$canopy_rc_save_file"
+}
+
+printf 'canopy reboot-check\n'
+printf '===================\n\n'
+
+if ! tmux list-panes -a -F '#{pane_id}' >/dev/null 2>&1; then
+  printf 'No tmux server is running, so a reboot has nothing to lose.\n'
+  exit 0
+fi
+
+canopy_rc_tab="$(printf '\t')"
+canopy_rc_newline='
+'
+canopy_rc_problems=""
+canopy_rc_problem() {
+  canopy_rc_problems="$canopy_rc_problems  $1$canopy_rc_newline"
+}
+
+# --- where the saves are ---------------------------------------------------
+# Read from the option rather than assumed, because the option is what
+# resurrect itself reads. A machine whose user pointed it elsewhere must be
+# told about the saves it actually has.
+canopy_rc_dir="$(canopy_rc_option @resurrect-dir)"
+[ -n "$canopy_rc_dir" ] || canopy_rc_dir="$CANOPY_STATE/resurrect"
+canopy_rc_save_file="$canopy_rc_dir/last"
+
+# --- the panes -------------------------------------------------------------
+canopy_rc_total=0
+canopy_rc_resuming=0
+canopy_rc_report=""
+
+while IFS="$canopy_rc_tab" read -r canopy_rc_pane canopy_rc_adapter; do
+  [ -n "$canopy_rc_pane" ] || continue
+  canopy_rc_info="$(tmux display-message -p -t "$canopy_rc_pane" \
+    "#{session_name}$canopy_rc_tab#{window_index}$canopy_rc_tab#{pane_index}$canopy_rc_tab#{@canopy_agent_session}" \
+    2>/dev/null)" || continue
+
+  canopy_rc_session="${canopy_rc_info%%"$canopy_rc_tab"*}"
+  canopy_rc_rest="${canopy_rc_info#*"$canopy_rc_tab"}"
+  canopy_rc_window="${canopy_rc_rest%%"$canopy_rc_tab"*}"
+  canopy_rc_rest="${canopy_rc_rest#*"$canopy_rc_tab"}"
+  canopy_rc_index="${canopy_rc_rest%%"$canopy_rc_tab"*}"
+  canopy_rc_id="${canopy_rc_rest#*"$canopy_rc_tab"}"
+
+  canopy_rc_total=$((canopy_rc_total + 1))
+
+  # shellcheck disable=SC2310  # every branch here asks a question, so a non-zero return is the answer and not a failure to abort on
+  if [ -z "$canopy_rc_id" ]; then
+    canopy_rc_verdict="will restart without its conversation"
+    canopy_rc_reason="no session id has been reported for this pane"
+  elif ! canopy_rc_resume="$(canopy_adapter_resume_command \
+    "$canopy_rc_adapter" "$canopy_rc_id" 2>/dev/null)"; then
+    canopy_rc_verdict="will restart without its conversation"
+    canopy_rc_reason="the $canopy_rc_adapter adapter has no usable resume command"
+  elif ! canopy_rc_saved="$(canopy_rc_saved_command \
+    "$canopy_rc_session" "$canopy_rc_window" "$canopy_rc_index")"; then
+    canopy_rc_verdict="not saved yet"
+    canopy_rc_reason="the last save does not have this pane"
+  elif [ "$canopy_rc_saved" = "$canopy_rc_resume" ]; then
+    canopy_rc_verdict="will resume"
+    canopy_rc_reason="the last save resumes $canopy_rc_id"
+    canopy_rc_resuming=$((canopy_rc_resuming + 1))
+  else
+    canopy_rc_verdict="will restart without its conversation"
+    canopy_rc_reason="the last save records: $canopy_rc_saved"
+  fi
+
+  canopy_rc_report="$canopy_rc_report  $canopy_rc_session:$canopy_rc_window.$canopy_rc_index  $canopy_rc_adapter: $canopy_rc_verdict, $canopy_rc_reason$canopy_rc_newline"
+done <<EOF
+$(canopy_pane_agent_panes)
+EOF
+
+printf 'Agent panes:\n'
+if [ "$canopy_rc_total" -eq 0 ]; then
+  printf '  no agent panes are open, so a reboot has no conversation to lose\n'
+else
+  printf '%s' "$canopy_rc_report"
+fi
+printf '\n'
+
+# --- whether anything is being saved at all --------------------------------
+canopy_rc_interval="$(canopy_rc_option @continuum-save-interval)"
+[ -n "$canopy_rc_interval" ] || canopy_rc_interval="$canopy_rc_default_interval"
+case "$canopy_rc_interval" in
+  '' | *[!0-9]* | 0) canopy_rc_interval_ok=0 ;;
+  *) canopy_rc_interval_ok=1 ;;
+esac
+
+printf 'Persistence:\n'
+
+if [ "$canopy_rc_interval_ok" -eq 0 ]; then
+  printf '  continuum autosave: off\n'
+  canopy_rc_problem "autosave is off: @continuum-save-interval is $canopy_rc_interval"
+else
+  printf '  continuum autosave: every %s minutes\n' "$canopy_rc_interval"
+fi
+
+case "$(canopy_rc_option status-interval)" in
+  0) canopy_rc_problem "status-interval is 0, so the status line never redraws and continuum's autosave never fires" ;;
+  *) ;;
+esac
+
+# How long ago a save last ran. Two sources, because neither alone is the
+# truth: resurrect leaves the save file untouched when the new save is byte
+# identical to the last one, so an idle machine's file ages while autosave
+# is working perfectly, and continuum's own timestamp is set at load before
+# any file exists. The newer of the two is when autosave last ran.
+canopy_rc_last=""
+canopy_rc_stamp="$(canopy_rc_option @continuum-save-last-timestamp)"
+case "$canopy_rc_stamp" in
+  '' | *[!0-9]*) ;;
+  *) canopy_rc_last="$canopy_rc_stamp" ;;
+esac
+if [ -e "$canopy_rc_save_file" ]; then
+  canopy_rc_mtime="$(canopy_stat_field '%Y' '%m' "$canopy_rc_save_file")" || canopy_rc_mtime=""
+  case "$canopy_rc_mtime" in
+    '' | *[!0-9]*) ;;
+    *)
+      if [ -z "$canopy_rc_last" ] || [ "$canopy_rc_mtime" -gt "$canopy_rc_last" ]; then
+        canopy_rc_last="$canopy_rc_mtime"
+      fi
+      ;;
+  esac
+fi
+
+if [ -z "$canopy_rc_last" ]; then
+  printf '  last save: never\n'
+  canopy_rc_problem "continuum has not run on this server, so nothing is being saved"
+else
+  canopy_rc_age=$(($(date +%s) - canopy_rc_last))
+  [ "$canopy_rc_age" -ge 0 ] || canopy_rc_age=0
+  canopy_rc_minutes=$((canopy_rc_age / 60))
+  if [ "$canopy_rc_minutes" -eq 0 ]; then
+    printf '  last save: less than a minute ago\n'
+  elif [ "$canopy_rc_minutes" -eq 1 ]; then
+    printf '  last save: 1 minute ago\n'
+  else
+    printf '  last save: %s minutes ago\n' "$canopy_rc_minutes"
+  fi
+  # Twice the configured interval. One missed tick is ordinary: continuum's
+  # save rides on a status line redraw, and a redraw can be late or, while
+  # nothing is attached, not happen at all. Two missed ticks is a timer
+  # that is not running.
+  if [ "$canopy_rc_interval_ok" -eq 1 ] &&
+    [ "$canopy_rc_age" -gt $((canopy_rc_interval * 120)) ]; then
+    canopy_rc_problem "autosave has not run for $((canopy_rc_age / 60)) minutes, more than twice the $canopy_rc_interval minute @continuum-save-interval"
+  fi
+fi
+printf '  saves: %s\n' "$canopy_rc_dir"
+
+if [ -n "$canopy_rc_problems" ]; then
+  printf '\nPersistence is misconfigured:\n'
+  printf '%s' "$canopy_rc_problems"
+  exit 2
+fi
+
+if [ "$canopy_rc_total" -ne "$canopy_rc_resuming" ]; then
+  printf '\n%s of %s agent panes will resume.\n' "$canopy_rc_resuming" "$canopy_rc_total"
+  exit 1
+fi
+
+exit 0
