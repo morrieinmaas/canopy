@@ -34,26 +34,34 @@ canopy_tmux_version_ok() {
 # `-f /dev/null` so it never consults a real default config file
 # (~/.tmux.conf or $XDG_CONFIG_HOME/tmux/tmux.conf).
 # canopy_tmux_bare <tmux-binary> [arg...]
-# Runs tmux holding nothing this process holds: env -i, $HOME, a PATH
-# minimal enough to still resolve tmux itself, and a named TMUX_TMPDIR.
+# Runs tmux with the four CANOPY_* roots removed from its environment and
+# everything else left alone, plus a named TMUX_TMPDIR.
 #
-# The environment is the point. tmux expands a variable reference in a
+# Those four are the whole point. tmux expands a variable reference in a
 # source-file path from the tmux SERVER's environment, which on a user's
 # machine contains no CANOPY_* at all, so a config chain that resolves
 # only because the caller exported CANOPY_STORE is a config chain that
 # loads nothing for the person who installed it. That is not a
 # hypothetical: it shipped, green, past 93 tests.
 #
+# It was `env -i` once, which removed everything rather than those four.
+# That is a different and much stronger claim than the one this function
+# needs to make, and it is false in a common case: a tmux reached through a
+# shim (mise, asdf, a distro wrapper) is a program that needs its own
+# environment to find the binary it forwards to, and env -i took that away.
+# It is how milestone 1's macOS CI broke.
+#
 # TMUX_TMPDIR is named rather than inherited so the socket file's path is
 # known and can be removed afterwards.
 canopy_tmux_bare() {
   canopy_tmux_bin="$1"
   shift
-  env -i \
-    HOME="$HOME" \
-    PATH="${canopy_tmux_bin%/*}:/usr/bin:/bin" \
-    TMUX_TMPDIR=/tmp \
-    "$canopy_tmux_bin" "$@"
+  (
+    unset CANOPY_STORE CANOPY_CONFIG CANOPY_STATE CANOPY_RUNTIME
+    TMUX_TMPDIR=/tmp
+    export TMUX_TMPDIR
+    exec "$canopy_tmux_bin" "$@"
+  )
 }
 
 # canopy_tmux_validate <conf>

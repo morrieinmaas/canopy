@@ -177,15 +177,45 @@ and stays alive until it is killed. That transcript is how a test proves a
 restored pane continued the same conversation instead of starting a new
 one.
 
+## Reporting state: the files beside the manifest
+
+If the agent reports its own state, it also needs the hooks that call
+`canopy agent report`, which live alongside the manifest in the same
+directory. That is a separate concern from this contract: an adapter with
+a manifest and no hooks is still a valid adapter, it just has less to say
+about what its panes are doing. Nothing below adds a manifest key; the
+contract is six keys and stays six keys.
+
+The convention `canopy agent install <id>` follows, as the shipped
+`adapters/claude-code/` demonstrates:
+
+| File | Is |
+|---|---|
+| `hooks.json` | the agent's own hook configuration, with `{report}` standing for the absolute path of `report.sh` |
+| `report.sh` | the reporter the hooks call, which turns one of the agent's events into one `canopy agent report` |
+| `install.sh` | how the two above get into the agent's own configuration |
+
+`install.sh` is **sourced** by `canopy agent install`, inside a transaction
+it has already opened. It gets `$CANOPY_ADAPTER_DIR`, `$CANOPY_ADAPTER_ID`,
+`$CANOPY_TX`, and two functions: `canopy_die`, and `canopy_agent_own <path>`.
+
+**Call `canopy_agent_own` on every path before touching it.** That is what
+records the file's prior bytes, and it is the whole reason `canopy restore`
+can put the agent's configuration back exactly as it was. An installer that
+writes to a path it did not own first has quietly broken canopy's one
+promise. If the installer fails at any point, the transaction is rolled back
+and marked failed.
+
+An adapter with no `install.sh` is still a valid adapter. `canopy agent
+install` refuses it by name, because canopy has no idea where that agent
+keeps its configuration, and guessing is not a thing it is willing to do
+with somebody else's config file.
+
 ## Adding an adapter
 
 1. Create `adapters/<id>/manifest` with all six keys.
 2. Read one key back with `canopy_adapter_get <id> id`. Validation runs on
    every read, so this is a full check of the file.
 3. Confirm `canopy_adapter_list` names it.
-
-If the agent reports its own state, it also needs the hooks that call
-`canopy agent report`, which live alongside the manifest in the same
-directory. That is a separate concern from this contract: an adapter with
-a manifest and no hooks is still a valid adapter, it just has less to say
-about what its panes are doing.
+4. If the agent can report its own state, add `hooks.json`, `report.sh` and
+   `install.sh` next to the manifest, per the section above.

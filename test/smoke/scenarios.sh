@@ -167,15 +167,21 @@ without_state() {
 
 # --- tmux, from an environment holding nothing this script holds -----------
 
+# Exactly the four CANOPY_* roots are removed and nothing else, matching
+# canopy_tmux_bare in lib/tmux.sh. `env -i` used to empty the environment
+# outright, which is a stronger claim than this needs and a false one for a
+# tmux reached through a version-manager shim: such a wrapper needs its own
+# environment to find the binary it forwards to.
 # shellcheck disable=SC2317,SC2329  # reached only through capture(), which invokes it by name
 bare_tmux() {
   bare_bin="$1"
   shift
-  env -i \
-    HOME="${HOME}" \
-    PATH="${bare_bin%/*}:/usr/bin:/bin" \
-    TMUX_TMPDIR=/tmp \
-    "${bare_bin}" "$@"
+  (
+    unset CANOPY_STORE CANOPY_CONFIG CANOPY_STATE CANOPY_RUNTIME
+    TMUX_TMPDIR=/tmp
+    export TMUX_TMPDIR
+    exec "${bare_bin}" "$@"
+  )
 }
 
 # tmux_option <entry-point> <option>

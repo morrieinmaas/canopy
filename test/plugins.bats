@@ -133,6 +133,32 @@ plugins_dir() { printf '%s' "$CANOPY_STORE/plugins"; }
   [[ "$output" == *"/plugins/tmux-resurrect/scripts/save.sh"* ]]
 }
 
+@test "resurrect saves into canopy's own state tree, not upstream's default" {
+  # The saves are the data persistence depends on. Left at upstream's
+  # default (~/.local/share/tmux/resurrect) they sit outside the tree
+  # restore and uninstall reason about, so canopy could neither promise to
+  # put a machine back nor say where the saves went.
+  sock="cnp-plg-e-$$"
+  tmux -L "$sock" -f /dev/null new-session -d
+  tmux -L "$sock" source-file "$CANOPY_STORE/tmux/conf.d/30-plugins.conf"
+  run tmux -L "$sock" show -gv @resurrect-dir
+  [ "$status" -eq 0 ]
+  [ "$output" = "$CANOPY_STATE/resurrect" ]
+}
+
+@test "the resurrect directory is expanded by tmux, not left as a literal" {
+  # tmux expands $CANOPY_STATE from the SERVER's environment, which the
+  # installed entry point populates. A value that reached resurrect still
+  # holding the dollar sign would have it create a directory literally
+  # named $CANOPY_STATE in whatever the cwd happened to be.
+  sock="cnp-plg-f-$$"
+  tmux -L "$sock" -f "$CANOPY_STORE/tmux/tmux.conf" new-session -d
+  run tmux -L "$sock" show -gv @resurrect-dir
+  [ "$status" -eq 0 ]
+  [[ "$output" != *'$'* ]]
+  [[ "$output" == /* ]]
+}
+
 @test "canopy_plugin_digest is stable and changes when a file changes" {
   copy="$BATS_TEST_TMPDIR/tree"
   cp -R "$(plugins_dir)/tmux-continuum" "$copy"

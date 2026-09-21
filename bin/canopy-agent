@@ -1,0 +1,185 @@
+#!/bin/sh
+# canopy:summary=Report an agent's state into its pane, and install adapters
+# canopy:group=agent
+# canopy:args=report <state> [--source <id>] [--session-id <id>] | install <adapter-id>
+# canopy:examples=canopy agent report working --source claude-code
+# shellcheck disable=SC2154,SC2153  # CANOPY_STATE/CANOPY_CONFIG are exported by lib/env.sh's canopy_paths
+set -eu
+
+: "${CANOPY_STORE:=$(cd "$(dirname "$0")/.." && pwd)}"
+# shellcheck source=../lib/env.sh
+# shellcheck disable=SC1091
+. "$CANOPY_STORE/lib/env.sh"
+# shellcheck source=../lib/adapter.sh
+# shellcheck disable=SC1091
+. "$CANOPY_STORE/lib/adapter.sh"
+# shellcheck source=../lib/manifest.sh
+# shellcheck disable=SC1091
+. "$CANOPY_STORE/lib/manifest.sh"
+canopy_paths
+
+states='idle working blocked completed exited'
+
+# --- report ----------------------------------------------------------------
+
+# An agent's hooks call this on every tool use, so the common case has to be
+# cheap: one `tmux display-message` that reads all three carried values at
+# once, and no write at all when none of them moved. Only a real transition
+# costs a write, and only a write moves the timestamp.
+#
+# Silence is the contract everywhere except a malformed call. An agent
+# running outside tmux (an IDE, the web) has no $TMUX_PANE, and an agent
+# whose pane or server has gone away gets no answer from tmux; neither is
+# the agent's problem, and a hook that fails is a hook that interrupts
+# somebody's work to report something they cannot act on. A state that is
+# not one of the five is different: that is a bug in the adapter, and it is
+# reported wherever it is run.
+canopy_agent_report() {
+  [ $# -gt 0 ] ||
+    canopy_die "canopy-agent: report needs a state (one of: $states)"
+  state="$1"
+  shift
+  case " $states " in
+    *" $state "*) ;;
+    *) canopy_die "canopy-agent: $state is not an agent state (one of: $states)" ;;
+  esac
+
+  source_id=""
+  session_id=""
+  have_source=0
+  have_session=0
+  while [ $# -gt 0 ]; do
+    case "$1" in
+      --source)
+        shift
+        [ $# -gt 0 ] || canopy_die "canopy-agent: --source requires an adapter id"
+        source_id="$1"
+        have_source=1
+        ;;
+      --session-id)
+        shift
+        [ $# -gt 0 ] || canopy_die "canopy-agent: --session-id requires a session id"
+        session_id="$1"
+        have_session=1
+        ;;
+      *) canopy_die "canopy-agent: unknown argument: $1" ;;
+    esac
+    shift
+  done
+
+  # The three values come back from tmux in one string, so they may not
+  # contain the character that separates them. Both are identifiers, so this
+  # costs nothing real and it keeps the read unambiguous.
+  case "$source_id$session_id" in
+    *'|'*) canopy_die "canopy-agent: an adapter id and a session id may not contain '|'" ;;
+    *) ;;
+  esac
+
+  pane="${TMUX_PANE-}"
+  [ -n "$pane" ] || exit 0
+
+  current="$(tmux display-message -p -t "$pane" \
+    '#{@canopy_agent_state}|#{@canopy_agent_source}|#{@canopy_agent_session}' \
+    2>/dev/null)" || exit 0
+
+  current_state="${current%%|*}"
+  current_rest="${current#*|}"
+  current_source="${current_rest%%|*}"
+  current_session="${current_rest#*|}"
+
+  # An option the caller did not name keeps the value the pane already has,
+  # so a hook that knows only the state cannot blank out the session id the
+  # launch hook recorded.
+  [ "$have_source" -eq 1 ] || source_id="$current_source"
+  [ "$have_session" -eq 1 ] || session_id="$current_session"
+
+  # The session id is compared, not just the state. /clear starts a fresh
+  # conversation in the same pane: a new id arrives on SessionStart, whose
+  # state is idle, and the pane is very often already idle. Debouncing on
+  # the state alone would keep the old id, and the pane would come back from
+  # a reboot resumed into the wrong conversation.
+  if [ "$state" = "$current_state" ] &&
+    [ "$source_id" = "$current_source" ] &&
+    [ "$session_id" = "$current_session" ]; then
+    exit 0
+  fi
+
+  tmux set -p -t "$pane" @canopy_agent_state "$state" \; \
+    set -p -t "$pane" @canopy_agent_source "$source_id" \; \
+    set -p -t "$pane" @canopy_agent_session "$session_id" \; \
+    set -p -t "$pane" @canopy_agent_ts "$(date +%s)" \
+    >/dev/null 2>&1 || exit 0
+}
+
+# --- install ---------------------------------------------------------------
+
+# canopy_agent_own <path>
+# The one way an adapter's installer is allowed to take ownership of a file
+# in the agent's own configuration. Recording the file's prior bytes first
+# is what makes `canopy restore` able to put it back, so installing an
+# adapter is exactly as reversible as installing canopy.
+canopy_agent_own() {
+  canopy_tx_record "$CANOPY_TX" own "$1"
+}
+
+# The tiers the design document defines, read off the manifest rather than
+# stated a second time in each adapter: an agent that can be handed its
+# session id at launch is resumable from the moment it starts (tier 1); one
+# that can only resume by id needs canopy to rewrite the saved command when
+# resurrect saves the pane (tier 2). Printed at install time, because a user
+# should meet the tier of an agent they opted into and no others.
+canopy_agent_tier_line() {
+  if [ "$(canopy_adapter_get "$1" can_pin_at_launch)" = "yes" ]; then
+    printf '%s: tier 1, it takes a session id at launch, so its panes are resumable from the moment they start.\n' "$1"
+  else
+    printf '%s: tier 2, it resumes by id, so canopy rewrites the pane command when resurrect saves it.\n' "$1"
+  fi
+}
+
+canopy_agent_install() {
+  [ $# -gt 0 ] || canopy_die "canopy-agent: install needs an adapter id"
+  id="$1"
+  shift
+  [ $# -eq 0 ] || canopy_die "canopy-agent: unknown argument: $1"
+
+  if ! dir="$(canopy_adapter_dir "$id")"; then
+    canopy_die "canopy-agent: no adapter named $id is installed"
+  fi
+  # Reading any key validates the whole manifest, so a broken adapter is
+  # caught before anything of the user's is touched.
+  canopy_adapter_get "$id" id >/dev/null
+
+  [ -f "$dir/install.sh" ] ||
+    canopy_die "canopy-agent: adapter $id ships no install.sh, so canopy does not know where $id keeps its own configuration"
+
+  CANOPY_TX="$(canopy_tx_begin "agent-install-$id")"
+  CANOPY_ADAPTER_DIR="$dir"
+  CANOPY_ADAPTER_ID="$id"
+  export CANOPY_TX CANOPY_ADAPTER_DIR CANOPY_ADAPTER_ID
+
+  # Sourced in a subshell: the installer gets canopy_agent_own and
+  # canopy_die without being able to change anything here, and a
+  # canopy_die inside it ends the installer rather than this process, so
+  # the rollback below still runs.
+  # shellcheck disable=SC1091
+  if (. "$dir/install.sh"); then
+    canopy_tx_commit "$CANOPY_TX"
+    canopy_agent_tier_line "$id"
+    printf 'restore this with: canopy restore --to %s\n' "${CANOPY_TX##*/}"
+  else
+    "$CANOPY_TX/restore.sh" >/dev/null 2>&1 || :
+    touch "$CANOPY_TX/.failed"
+    canopy_die "canopy-agent: installing the $id adapter failed; the change was rolled back"
+  fi
+}
+
+# --- dispatch --------------------------------------------------------------
+
+[ $# -gt 0 ] || canopy_die "canopy-agent: needs a subcommand (report or install)"
+subcommand="$1"
+shift
+case "$subcommand" in
+  report) canopy_agent_report "$@" ;;
+  install) canopy_agent_install "$@" ;;
+  *) canopy_die "canopy-agent: unknown argument: $subcommand" ;;
+esac

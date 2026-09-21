@@ -1,0 +1,17 @@
+# The adapter for Claude Code.
+#
+# Tier 1 of the capability table: it takes a caller-chosen session id at
+# launch AND resumes by that id, so a pane running it is resumable from the
+# moment it starts. See docs/adapters/contract.md for what each key means.
+#
+# detect_draft is empty on purpose. Claude Code exposes no way to ask
+# whether a pane is holding a message somebody typed and has not sent, and
+# an empty value means "undetermined", which `canopy adopt` is required to
+# treat as "do not touch this pane". Guessing here would cost somebody an
+# unsent message; saying nothing costs them re-running a command.
+id=claude-code
+command=claude
+resume_template=claude --resume {id}
+can_pin_at_launch=yes
+launch_template=claude --session-id {id}
+detect_draft=

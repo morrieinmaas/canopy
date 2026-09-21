@@ -224,13 +224,25 @@ EOF
   [[ "$output" == *"other-agent"* ]]
 }
 
+# empty_store
+# Points the lookup at a store with no adapters/ tree at all. canopy now
+# ships an adapter of its own, and the two claims below are about the
+# lookup, not about what happens to be vendored in the tree this week.
+empty_store() {
+  CANOPY_STORE="$BATS_TEST_TMPDIR/empty-store"
+  export CANOPY_STORE
+  mkdir -p "$CANOPY_STORE"
+}
+
 @test "canopy_adapter_list is empty when nothing is installed" {
+  empty_store
   run canopy_adapter_list
   [ "$status" -eq 0 ]
   [ "$output" = "" ]
 }
 
 @test "a directory without a manifest is not an adapter" {
+  empty_store
   mkdir -p "$CANOPY_CONFIG/adapters/not-an-adapter"
   run canopy_adapter_list
   [ "$output" = "" ]

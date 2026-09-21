@@ -45,6 +45,49 @@ setup() {
   [ "$status" -ne 0 ]
 }
 
+@test "canopy_tmux_validate works when tmux is reached through a wrapper that needs the environment" {
+  # Validation used to run tmux under `env -i`, which strips everything. A
+  # tmux reached through a shim (mise, asdf, a distro wrapper) is a program
+  # that needs its environment to find the binary it forwards to, so env -i
+  # killed it before it ever ran: that is how milestone 1's macOS CI broke.
+  # Isolation now means unsetting exactly the four CANOPY_* roots, which is
+  # the property the bare environment was ever actually about.
+  real_tmux="$(command -v tmux)"
+  shim_dir="$BATS_TEST_TMPDIR/shim"
+  mkdir -p "$shim_dir"
+  cat >"$shim_dir/tmux" <<EOF
+#!/bin/sh
+# Stands in for a version-manager shim: without its own variable in the
+# environment it cannot work out what to forward to.
+[ -n "\${CANOPY_TEST_SHIM_TARGET-}" ] || {
+  echo "shim: CANOPY_TEST_SHIM_TARGET is not set" >&2
+  exit 127
+}
+exec "\$CANOPY_TEST_SHIM_TARGET" "\$@"
+EOF
+  chmod +x "$shim_dir/tmux"
+  CANOPY_TEST_SHIM_TARGET="$real_tmux"
+  export CANOPY_TEST_SHIM_TARGET
+  PATH="$shim_dir:$PATH"
+
+  good="$BATS_TEST_TMPDIR/good.conf"
+  printf 'set -g @canopy_shim_marker ok\n' >"$good"
+  run canopy_tmux_validate "$good"
+  [ "$status" -eq 0 ]
+}
+
+@test "validation still hides CANOPY_* from the tmux server it starts" {
+  # The reason the bare environment exists at all: tmux expands a variable
+  # in a source-file path from the SERVER's environment, which on a user's
+  # machine holds no CANOPY_* at all. A config that resolves only because
+  # the caller exported CANOPY_STORE is a config that loads nothing for the
+  # person who installed it, and that shipped once, green, past 93 tests.
+  conf="$BATS_TEST_TMPDIR/needs-store.conf"
+  printf 'source-file "$CANOPY_STORE/tmux/conf.d/00-core.conf"\n' >"$conf"
+  run canopy_tmux_validate "$conf"
+  [ "$status" -ne 0 ]
+}
+
 @test "canopy_tmux_version_ok accepts the installed tmux" {
   run canopy_tmux_version_ok
   [ "$status" -eq 0 ]

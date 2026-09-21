@@ -25,15 +25,23 @@ setup_canopy_home() {
 }
 
 # bare_tmux [arg...]
-# tmux with nothing of this harness in its environment, the same way
-# lib/tmux.sh runs it and the same way a user's tmux runs: no CANOPY_*
-# anywhere. A test that exports those and then checks the installed config
-# is checking the harness, which is precisely how an entry point that
-# loaded nothing passed 93 tests.
+# tmux with no CANOPY_* in its environment, the same way lib/tmux.sh runs
+# it and the same way a user's tmux runs. A test that exports those and then
+# checks the installed config is checking the harness, which is precisely
+# how an entry point that loaded nothing passed 93 tests.
+#
+# Exactly those four are removed and nothing else, matching
+# canopy_tmux_bare. `env -i` used to empty the environment outright, which
+# breaks a tmux reached through a version-manager shim: the shim needs its
+# own environment to find what it forwards to.
 bare_tmux() {
   local bin
   bin="$(command -v tmux)"
-  env -i HOME="$HOME" PATH="${bin%/*}:/usr/bin:/bin" TMUX_TMPDIR=/tmp "$bin" "$@"
+  (
+    unset CANOPY_STORE CANOPY_CONFIG CANOPY_STATE CANOPY_RUNTIME
+    export TMUX_TMPDIR=/tmp
+    exec "$bin" "$@"
+  )
 }
 
 # bare_tmux_cleanup <socket-name>
