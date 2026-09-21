@@ -95,6 +95,21 @@ plumbing rather than plugin content:
   branch, and on macOS that is an unconditional
   `rm "$HOME/Library/LaunchAgents/Tmux.Start.plist"`. Every test here that
   starts tmux gets a scratch `$HOME` for that reason.
+- **resurrect builds a save-command strategy's path out of one option, and
+  does not sanitise it.** `_save_command_strategy_file` in
+  `tmux-resurrect/scripts/save.sh` resolves
+  `<its own tree>/save_command_strategies/<@resurrect-save-command-strategy>.sh`
+  and falls back to its own `ps` strategy when that file does not exist.
+  Both halves carry weight here. Because the option is interpolated
+  unsanitised, a relative value reaches back out of the tree, which is how
+  `plugins/strategies/canopy_save_command.sh` is reached with no patch
+  against upstream at all. Because the path is checked before it is used, a
+  value that ever stops resolving costs the agent rewrite and not the whole
+  save. Both are asserted in `test/save_strategy.bats`, which builds the
+  same path by hand and runs a real save through resurrect. If a future pin
+  sanitises that option, that test is where it surfaces, and the answer is
+  the recorded patch in `plugins/patches/` that §7.5 of the design provides
+  for, applied by `vendor.sh`.
 - **`continuum.tmux` carries a stray `set -x`** at the top, upstream, since
   the systemd-support commit. Its trace goes to the job's stderr, which
   tmux discards when the plugin is loaded from a config, so nothing is
