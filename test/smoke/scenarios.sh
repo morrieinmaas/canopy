@@ -167,7 +167,7 @@ without_state() {
 
 # --- tmux, from an environment holding nothing this script holds -----------
 
-# shellcheck disable=SC2317  # reached only through capture(), which invokes it by name
+# shellcheck disable=SC2317,SC2329  # reached only through capture(), which invokes it by name
 bare_tmux() {
   bare_bin="$1"
   shift
@@ -184,7 +184,7 @@ bare_tmux() {
 # point: nothing puts CANOPY_* into a tmux server on a real machine, so a
 # config chain that resolves only because the caller exported CANOPY_STORE
 # is a config chain that loads nothing for the person who installed it.
-# shellcheck disable=SC2317  # reached only through capture(), which invokes it by name
+# shellcheck disable=SC2317,SC2329  # reached only through capture(), which invokes it by name
 # shellcheck disable=SC2310  # every failure here is the answer this function reports, not a reason to abort
 tmux_option() {
   tmux_bin="$(command -v tmux)"
@@ -508,7 +508,7 @@ second_home="${work}/home-second"
 # Runs a command as uid 65534 (nobody, present with the same uid on both
 # images) with its own $HOME. Nothing about canopy is passed in beyond
 # the PATH a user would have.
-# shellcheck disable=SC2317  # reached only through capture(), which invokes it by name
+# shellcheck disable=SC2317,SC2329  # reached only through capture(), which invokes it by name
 as_second_user() {
   su -s /bin/sh -c "HOME='${second_home}' PATH='${PATH}' $1" nobody
 }

@@ -43,10 +43,15 @@ The repo declares its tools in `mise.toml`:
 ```toml
 [tools]
 bats = "latest"
-shellcheck = "latest"
+shellcheck = "0.11.0"
 shfmt = "latest"
 tmux = "latest"
 ```
+
+`shellcheck` is pinned rather than `"latest"`: an unpinned version resolved to a stale
+install locally while CI resolved a fresh one on every run, and the fresh one
+implemented a check the stale one did not, so the same lint passed locally and failed
+in CI. Bump the pin deliberately, run `test/lint.sh`, and commit the result.
 
 ```sh
 mise install
@@ -149,12 +154,15 @@ crash partway through is caught by the missing sentinel.
 ## Lint
 
 ```sh
-mise exec -- shellcheck bin/* lib/*.sh test/smoke/*.sh
-mise exec -- shfmt -d -i 2 -ci bin lib test/smoke
+mise exec -- sh test/lint.sh
 ```
 
-`.shellcheckrc` sets `shell=sh` and `enable=all`, with `SC2250` and `SC2312` disabled.
-Both must be clean. `shfmt -w` applies the formatting.
+`test/lint.sh` is the one definition of what gets linted and how: it runs shellcheck
+over `bin/* lib/*.sh test/smoke/*.sh` and `shfmt -d -i 2 -ci` over `bin lib
+test/smoke`. CI calls this same script, so a contributor running it locally lints
+exactly what the runner lints. `.shellcheckrc` sets `shell=sh` and `enable=all`, with
+`SC2250` and `SC2312` disabled. Both tools must be clean; `mise exec -- shfmt -w bin
+lib test/smoke` applies the formatting.
 
 Files that are not POSIX sh carry a directive. `lib/*.sh` start with
 `# shellcheck shell=sh` because they are sourced, not executed.
@@ -163,7 +171,7 @@ Files that are not POSIX sh carry a directive. `lib/*.sh` start with
 
 | Workflow | Jobs |
 |---|---|
-| `.github/workflows/ci.yml` | shellcheck, shfmt, `bats test/`, on ubuntu-latest and macos-latest |
+| `.github/workflows/ci.yml` | `sh test/lint.sh`, `bats test/`, on ubuntu-latest and macos-latest |
 | `.github/workflows/restore-proof.yml` | `sh test/restore-proof.sh`, on ubuntu-latest and macos-latest |
 | `.github/workflows/smoke.yml` | `sh test/smoke/run.sh`, ubuntu-latest only, 20-minute timeout |
 

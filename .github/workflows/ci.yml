@@ -13,20 +13,6 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - uses: jdx/mise-action@v2
-      - name: shellcheck
-        run: |
-          set -eu
-          targets=""
-          for f in bin/* lib/*.sh test/smoke/*.sh; do
-            [ -e "$f" ] && targets="$targets $f"
-          done
-          if [ -n "$targets" ]; then shellcheck $targets; fi
-      - name: shfmt
-        run: |
-          set -eu
-          dirs=""
-          for d in bin lib test/smoke; do
-            [ -d "$d" ] && dirs="$dirs $d"
-          done
-          if [ -n "$dirs" ]; then shfmt -d -i 2 -ci $dirs; fi
+      - name: lint
+        run: sh test/lint.sh
       - run: bats test/
