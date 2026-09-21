@@ -26,15 +26,17 @@ status=0
 # linted, and for the same reason test/fixtures is named one file at a
 # time rather than as a directory.
 set --
-for f in bin/* lib/*.sh test/smoke/*.sh plugins/vendor.sh test/fixtures/fake-agent; do
+for f in bin/* lib/*.sh test/smoke/*.sh plugins/vendor.sh test/fixtures/fake-agent adapters/*/*.sh; do
   [ -e "$f" ] && set -- "$@" "$f"
 done
 if [ "$#" -gt 0 ]; then
   shellcheck "$@" || status=1
 fi
 
+# adapters/ is named one glob at a time rather than as a directory, because
+# it also holds manifests and hooks.json, which are not shell.
 set --
-for f in bin lib test/smoke plugins/vendor.sh test/fixtures/fake-agent; do
+for f in bin lib test/smoke plugins/vendor.sh test/fixtures/fake-agent adapters/*/*.sh; do
   [ -e "$f" ] && set -- "$@" "$f"
 done
 if [ "$#" -gt 0 ]; then
