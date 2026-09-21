@@ -115,11 +115,16 @@ canopy_runtime_ensure() {
   fi
 }
 
+# canopy_sha256 [file]
+# With a file argument, hashes that file; with none, hashes stdin. The
+# stdin form is why the argument is forwarded as "$@" rather than "$1":
+# both tools already read stdin when given no operand, so one spelling
+# covers both and neither caller needs to know which tool is installed.
 canopy_sha256() {
   if canopy_have sha256sum; then
-    sha256sum "$1" | cut -d' ' -f1
+    sha256sum "$@" | cut -d' ' -f1
   elif canopy_have shasum; then
-    shasum -a 256 "$1" | cut -d' ' -f1
+    shasum -a 256 "$@" | cut -d' ' -f1
   else canopy_die "no sha256 tool found (need sha256sum or shasum)"; fi
 }
 

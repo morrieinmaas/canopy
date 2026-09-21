@@ -1,0 +1,7 @@
+# Vendored tmux plugins: <name> <upstream-url> <commit>
+#
+# This file is the provenance record and the input to plugins/vendor.sh.
+# To move a pin: edit the commit on its line, run `plugins/vendor.sh
+# <name>`, and commit the whole resulting diff, including CHECKSUMS.
+tmux-resurrect https://github.com/tmux-plugins/tmux-resurrect.git cff343cf9e81983d3da0c8562b01616f12e8d548
+tmux-continuum https://github.com/tmux-plugins/tmux-continuum.git 0698e8f4b17d6454c71bf5212895ec055c578da0

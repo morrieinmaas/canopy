@@ -11,6 +11,9 @@ set -eu
 # shellcheck source=../lib/tmux.sh
 # shellcheck disable=SC1091
 . "$CANOPY_STORE/lib/tmux.sh"
+# shellcheck source=../lib/plugins.sh
+# shellcheck disable=SC1091
+. "$CANOPY_STORE/lib/plugins.sh"
 canopy_paths
 
 if [ $# -gt 0 ]; then
@@ -82,6 +85,68 @@ if [ -f "$caps_file" ]; then
   done
 else
   printf '  unknown, capabilities not yet probed (run: canopy caps)\n'
+fi
+printf '\n'
+
+# --- Plugins ---------------------------------------------------------------
+# Two questions per vendored plugin, and they are different questions.
+# "Pinned at" comes from plugins/VERSIONS and says which upstream commit
+# this checkout claims. "Tree matches" compares the bytes on disk against
+# the digest plugins/vendor.sh recorded when it wrote them, and it is the
+# only one of the two that can catch a tree edited in place. Reporting the
+# commit alone would let a locally patched plugin keep presenting an
+# upstream sha, which is how a persistence bug ends up being debugged
+# against source that is not what is running.
+#
+# Names are read once into a variable rather than iterated straight out of
+# a pipe: a `while read` on the right of a pipe runs in a subshell, and
+# every warnings increment inside it would be discarded at the pipe's end.
+plugin_names="$(canopy_plugin_names 2>/dev/null || true)"
+printf 'Plugins:\n'
+if [ -z "$plugin_names" ]; then
+  printf '  none vendored (no plugins/VERSIONS in the store)\n'
+  warnings=$((warnings + 1))
+else
+  # Both vendored plugins are upstream bash scripts. Where bash is absent,
+  # which is the normal state of an Alpine or other BusyBox userland, the
+  # layer goes dormant: no binding, no autosave, no restore after a
+  # reboot. Said here, once, rather than left for the reboot to reveal.
+  #
+  # Reported as dormant and not counted as a warning, the same as every
+  # other capability-gated layer above: an absent optional tool is a
+  # description of the machine, not a fault in the install. The verdict
+  # that an agent pane will not survive a reboot belongs to
+  # `canopy reboot-check`, whose entire job is to judge that, not to
+  # doctor, whose job is to describe.
+  if canopy_have bash; then
+    printf '  bash (both plugins are bash scripts): yes\n'
+  else
+    printf '  bash (both plugins are bash scripts): dormant (bash not found, the layer loads nothing)\n'
+  fi
+  for plugin_name in $plugin_names; do
+    plugin_pin="$(canopy_plugin_pin "$plugin_name" 2>/dev/null || true)"
+    plugin_commit="${plugin_pin#* }"
+    plugin_dir="$CANOPY_STORE/plugins/$plugin_name"
+    if [ ! -d "$plugin_dir" ]; then
+      printf '  %s: pinned %s, tree MISSING from plugins/ (re-vendor with: plugins/vendor.sh %s)\n' \
+        "$plugin_name" "$plugin_commit" "$plugin_name"
+      warnings=$((warnings + 1))
+      continue
+    fi
+    plugin_recorded="$(canopy_plugin_recorded_digest "$plugin_name" 2>/dev/null || true)"
+    plugin_actual="$(canopy_plugin_digest "$plugin_dir")"
+    if [ -z "$plugin_recorded" ]; then
+      printf '  %s: pinned %s, no digest in plugins/CHECKSUMS, cannot tell whether the tree is intact\n' \
+        "$plugin_name" "$plugin_commit"
+      warnings=$((warnings + 1))
+    elif [ "$plugin_recorded" = "$plugin_actual" ]; then
+      printf '  %s: pinned %s, tree matches\n' "$plugin_name" "$plugin_commit"
+    else
+      printf '  %s: pinned %s, tree MODIFIED since it was vendored (re-vendor with: plugins/vendor.sh %s)\n' \
+        "$plugin_name" "$plugin_commit" "$plugin_name"
+      warnings=$((warnings + 1))
+    fi
+  done
 fi
 printf '\n'
 
