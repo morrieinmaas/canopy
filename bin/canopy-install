@@ -1,0 +1,315 @@
+#!/bin/sh
+# canopy:summary=Install canopy, migrating any existing tmux config
+# canopy:group=core
+# canopy:args=[--yes] [--dry-run]
+# canopy:examples=canopy install --yes
+# shellcheck disable=SC2154,SC2153  # CANOPY_CONFIG/CANOPY_STATE are exported by lib/env.sh's canopy_paths
+set -eu
+
+: "${CANOPY_STORE:=$(cd "$(dirname "$0")/.." && pwd)}"
+# shellcheck source=../lib/env.sh
+# shellcheck disable=SC1091
+. "$CANOPY_STORE/lib/env.sh"
+# shellcheck source=../lib/manifest.sh
+# shellcheck disable=SC1091
+. "$CANOPY_STORE/lib/manifest.sh"
+# shellcheck source=../lib/tmux.sh
+# shellcheck disable=SC1091
+. "$CANOPY_STORE/lib/tmux.sh"
+canopy_paths
+
+yes=0
+dry_run=0
+for arg in "$@"; do
+  case "$arg" in
+    --yes) yes=1 ;;
+    --dry-run) dry_run=1 ;;
+    *) canopy_die "canopy-install: unknown argument: $arg" ;;
+  esac
+done
+
+# tmux's own precedence: ~/.tmux.conf wins when present, else the XDG path.
+xdg_conf_home="${XDG_CONFIG_HOME:-$HOME/.config}"
+xdg_tmux_conf="$xdg_conf_home/tmux/tmux.conf"
+dot_tmux_conf="$HOME/.tmux.conf"
+
+# Written into every entry point canopy-install ever creates or replaces
+# (both branches below call write_entry_stub so the text can never diverge)
+# and how a re-run recognises its own file instead of migrating it.
+entry_marker='# canopy:entry-point'
+
+# write_entry_stub <path>
+# The entry point canopy installs: self-locating, and dependent on nothing
+# in the environment.
+#
+# Every path in it is an absolute literal resolved now, at install time,
+# not a variable reference. tmux expands a variable reference in a
+# source-file path from the tmux SERVER's environment, and nothing puts
+# CANOPY_* there, so the stub this used to write loaded nothing at all on
+# a real machine while every test passed, because the test harness
+# exported those variables before invoking anything.
+#
+# The set-environment lines are not a second copy of the same idea. The
+# literal is what makes this file load; set-environment is what makes
+# everything the server starts later inherit the same three paths:
+# run-shell, display-popup, and the agent hooks M3 adds. The store's own
+# tmux.conf reads CANOPY_STATE and CANOPY_CONFIG from exactly there.
+#
+# The file is removed before it is written, never truncated in place. When
+# the path is a symlink, which is what chezmoi, stow and bare dotfiles
+# repos all leave behind, truncating it writes through to the link's
+# target: a file canopy never recorded and cannot promise to restore.
+write_entry_stub() {
+  rm -f "$1"
+  {
+    printf '%s: managed by canopy, do not edit directly.\n' "$entry_marker"
+    printf '# Any original content was migrated to %s/user.conf.\n' "$CANOPY_CONFIG"
+    printf '#\n'
+    printf '# The paths below are absolute literals written at install time. tmux\n'
+    printf '# expands a variable reference in a source-file path from the tmux\n'
+    printf '# server environment, which nothing outside tmux ever sets.\n'
+    printf 'set-environment -g CANOPY_STORE "%s"\n' "$CANOPY_STORE"
+    printf 'set-environment -g CANOPY_STATE "%s"\n' "$CANOPY_STATE"
+    printf 'set-environment -g CANOPY_CONFIG "%s"\n' "$CANOPY_CONFIG"
+    printf 'source-file "%s/tmux/tmux.conf"\n' "$CANOPY_STORE"
+  } >"$1"
+}
+
+# canopy_materialise_symlink <path>
+# Replaces a symlink at <path> with a regular file holding the bytes it
+# pointed at. A path that is not a symlink is left alone.
+#
+# The counterpart to write_entry_stub's rm: canopy appends to user.conf
+# rather than overwriting it, so it cannot simply remove the link first.
+# Taking ownership of a path must never mean writing through a link to a
+# target canopy did not record and cannot promise to restore. The link is
+# recorded before this runs, so restore puts it back exactly as it was.
+canopy_materialise_symlink() {
+  [ -L "$1" ] || return 0
+  materialise_tmp="$1.canopy-materialise.$$"
+  if [ -f "$1" ]; then
+    cp "$1" "$materialise_tmp"
+  else
+    : >"$materialise_tmp"
+  fi
+  rm -f "$1"
+  mv "$materialise_tmp" "$1"
+}
+
+# canopy_mkdir_tracked <dir>
+# mkdir -p <dir>, recording every path level this call actually creates in
+# $tx/dirs-created.txt, shallowest first (so a later cleanup that reads the
+# file in reverse can rmdir deepest first, letting each removal make its
+# parent empty in turn). A level that already existed is never recorded,
+# which is what keeps restore from removing a directory that predates
+# canopy. This is the single call site every directory-creating line in
+# this script goes through, on purpose: two separate hand-rolled tracking
+# sites already drifted once (the entry point vs. the mise fragment)
+# before this fix.
+#
+# $CANOPY_CONFIG is recorded like any other level canopy creates. Skipping
+# it, as this used to, left ~/.config/canopy and then ~/.config itself
+# standing on a machine that had neither before install, so a virgin box
+# did not come back virgin. Restore removes these with rmdir, which fails
+# on a directory that still holds anything, so a $CANOPY_CONFIG carrying
+# user overrides survives on its own merits rather than by exemption.
+canopy_mkdir_tracked() {
+  target="$1"
+  missing=""
+  d="$target"
+  while [ ! -d "$d" ]; do
+    missing="$d
+$missing"
+    d="$(dirname "$d")"
+  done
+  mkdir -p "$target"
+  [ -n "$missing" ] && printf '%s' "$missing" >>"$tx/dirs-created.txt"
+  return 0
+}
+
+# First pass: tmux's own precedence, over the paths tmux can actually
+# load. ~/.tmux.conf wins when it is readable, else the XDG path.
+user_entry=""
+for candidate in "$dot_tmux_conf" "$xdg_tmux_conf"; do
+  if [ -f "$candidate" ]; then
+    user_entry="$candidate"
+    break
+  fi
+done
+
+# Second pass, only when tmux would load nothing: a DANGLING symlink at
+# either path. tmux skips such a link, but canopy is about to write a
+# regular file straight over it, and -f alone reads it as "nothing here",
+# so the link was destroyed and never recorded and the restore guarantee
+# was false for that path. chezmoi, stow and a bare dotfiles repo all
+# leave one behind whenever the source tree is not checked out yet.
+#
+# It is a second pass rather than `-f` widened to `-f || -L`, because
+# widening the first pass would let a dangling ~/.tmux.conf outrank a
+# real ~/.config/tmux/tmux.conf: canopy would own the link, write its
+# stub at the path tmux prefers, and leave the config the user actually
+# loads unmigrated and shadowed.
+if [ -z "$user_entry" ]; then
+  for candidate in "$dot_tmux_conf" "$xdg_tmux_conf"; do
+    if [ -L "$candidate" ]; then
+      user_entry="$candidate"
+      break
+    fi
+  done
+fi
+
+# -f guards the grep: a dangling link has no bytes to search, and grep
+# would only report the read error. Nothing canopy wrote can be behind
+# one, so "not installed" is the right answer there.
+already_installed=0
+if [ -n "$user_entry" ] && [ -f "$user_entry" ] && grep -qF "$entry_marker" "$user_entry"; then
+  already_installed=1
+fi
+
+if [ "$already_installed" -eq 1 ]; then
+  if [ "$dry_run" -eq 1 ]; then
+    printf 'canopy is already installed: %s already sources canopy; nothing to do\n' "$user_entry"
+    exit 0
+  fi
+  canopy_die "canopy is already installed: $user_entry already sources canopy's tmux.conf; nothing to migrate"
+fi
+
+mise_conf_dir="$xdg_conf_home/mise/conf.d"
+mise_frag="$mise_conf_dir/canopy.toml"
+write_mise=0
+if [ -d "$mise_conf_dir" ] || canopy_have mise; then
+  write_mise=1
+fi
+
+print_plan() {
+  if [ -f "$CANOPY_CONFIG/user.conf" ]; then
+    printf 'own %s (backed up)\n' "$CANOPY_CONFIG/user.conf"
+  else
+    printf 'create %s\n' "$CANOPY_CONFIG/user.conf"
+  fi
+  if [ -n "$user_entry" ]; then
+    printf 'own %s (backed up) and migrate it into %s\n' "$user_entry" "$CANOPY_CONFIG/user.conf"
+  else
+    printf 'create entry point %s, sourcing the store tmux.conf\n' "$xdg_tmux_conf"
+  fi
+  if [ "$write_mise" -eq 1 ]; then
+    printf 'write %s\n' "$mise_frag"
+  fi
+  printf 'run canopy-caps\n'
+  printf 'run canopy-index\n'
+  printf 'validate the resulting tmux config\n'
+}
+
+if [ "$dry_run" -eq 1 ]; then
+  print_plan
+  exit 0
+fi
+
+if [ -n "$user_entry" ] && [ "$yes" -ne 1 ]; then
+  printf 'canopy install found an existing tmux config and would migrate it:\n'
+  print_plan
+  canopy_die "owning $user_entry is a migration, not a merge; re-run with --yes to proceed"
+fi
+
+tx="$(canopy_tx_begin install)"
+
+canopy_mkdir_tracked "$CANOPY_CONFIG"
+if [ -f "$CANOPY_CONFIG/user.conf" ]; then
+  canopy_tx_record "$tx" own "$CANOPY_CONFIG/user.conf"
+  canopy_materialise_symlink "$CANOPY_CONFIG/user.conf"
+else
+  canopy_tx_record "$tx" drop "$CANOPY_CONFIG/user.conf"
+  # rm, not truncate: a dangling symlink here is still a symlink, and
+  # writing into it would create the file it points at.
+  rm -f "$CANOPY_CONFIG/user.conf"
+  printf '# canopy user config: sourced last, wins over every shipped default.\n' >"$CANOPY_CONFIG/user.conf"
+fi
+
+if [ -n "$user_entry" ]; then
+  entry_point="$user_entry"
+  canopy_tx_record "$tx" own "$user_entry"
+  {
+    printf '\n# canopy: migrated from %s on %s\n' "$user_entry" "$(date +%Y-%m-%d)"
+    # A dangling symlink is owned and recorded like any other entry point,
+    # but it has no bytes behind it, so there is nothing to migrate and
+    # reading it would only fail. Said in user.conf rather than left as a
+    # silent gap.
+    if [ -f "$user_entry" ]; then
+      cat "$user_entry"
+    else
+      printf '# It was a symlink to %s, which does not exist, so there was nothing to migrate.\n' "$(readlink "$user_entry")"
+    fi
+  } >>"$CANOPY_CONFIG/user.conf"
+  write_entry_stub "$user_entry"
+else
+  # No pre-existing config anywhere canopy or tmux would look: canopy still
+  # "owns the entry point" (spec 5.2), so create one at the XDG path. It is
+  # a brand-new file (action drop, pre-state absent), not a migration.
+  entry_point="$xdg_tmux_conf"
+  entry_dir="$(dirname "$xdg_tmux_conf")"
+  canopy_tx_record "$tx" drop "$xdg_tmux_conf"
+  canopy_mkdir_tracked "$entry_dir"
+  write_entry_stub "$xdg_tmux_conf"
+fi
+
+if [ "$write_mise" -eq 1 ]; then
+  canopy_tx_record "$tx" drop "$mise_frag"
+  canopy_mkdir_tracked "$mise_conf_dir"
+  rm -f "$mise_frag"
+  cat >"$mise_frag" <<'EOF'
+# Managed by canopy: do not edit; overwritten by `canopy install`.
+[tools]
+fzf = "latest"
+gum = "latest"
+starship = "latest"
+EOF
+fi
+
+if [ -s "$tx/dirs-created.txt" ]; then
+  # The manifest format models files, not directories, so directories
+  # canopy-install itself created (and, per canopy_mkdir_tracked, only
+  # those it created) are tracked in a sidecar next to restore.sh instead
+  # of as manifest rows. The cleanup snippet is spliced in before
+  # restore.sh's own final summary line (not appended after it), so the
+  # summary reflects a finished restore, and it reads the sidecar back in
+  # reverse (deepest-created directory first) so each rmdir can make its
+  # parent empty in turn rather than only ever removing the leaf. It
+  # contains no interpolated path data, just a static loop over the
+  # sidecar file, mirroring how restore.sh already reads manifest.tsv.
+  final_line="$(tail -n 1 "$tx/restore.sh")"
+  sed '$d' "$tx/restore.sh" >"$tx/restore.sh.new"
+  cat >>"$tx/restore.sh.new" <<'RESTORE_DIRS_EOF'
+
+# Directories canopy-install created while installing (and only those it
+# created): removed deepest-first, only while still empty, so pre-existing
+# sibling or ancestor content (e.g. an unrelated plugins/ dir, or a mise/
+# directory that already existed) is kept.
+if [ -f "$dir/dirs-created.txt" ]; then
+  awk '{ lines[NR] = $0 } END { for (i = NR; i >= 1; i--) print lines[i] }' "$dir/dirs-created.txt" |
+    while IFS= read -r d; do
+      rmdir "$d" 2>/dev/null || :
+    done
+fi
+RESTORE_DIRS_EOF
+  printf '%s\n' "$final_line" >>"$tx/restore.sh.new"
+  mv "$tx/restore.sh.new" "$tx/restore.sh"
+  chmod +x "$tx/restore.sh"
+fi
+
+"$CANOPY_STORE/bin/canopy-caps"
+"$CANOPY_STORE/bin/canopy-index"
+
+# Validated through the entry point just written, not through the store's
+# own copy with this process's environment helpfully filled in: install
+# has to fail when the artifact it installed is the thing that will not
+# load. canopy_tmux_validate starts tmux from a bare environment, so this
+# is the same load a user's tmux performs.
+if canopy_tmux_validate "$entry_point"; then
+  canopy_tx_commit "$tx"
+  touch "$tx/.pinned"
+  printf 'canopy installed.\n'
+else
+  "$tx/restore.sh"
+  touch "$tx/.failed"
+  canopy_die "the resulting tmux config failed validation; installation rolled back"
+fi

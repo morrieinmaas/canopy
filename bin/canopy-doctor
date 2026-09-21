@@ -1,0 +1,282 @@
+#!/bin/sh
+# canopy:summary=Report what is working, what is dormant, and why
+# canopy:group=core
+# shellcheck disable=SC2154,SC2153  # CANOPY_CONFIG/CANOPY_STATE are exported by lib/env.sh's canopy_paths
+set -eu
+
+: "${CANOPY_STORE:=$(cd "$(dirname "$0")/.." && pwd)}"
+# shellcheck source=../lib/env.sh
+# shellcheck disable=SC1091
+. "$CANOPY_STORE/lib/env.sh"
+# shellcheck source=../lib/tmux.sh
+# shellcheck disable=SC1091
+. "$CANOPY_STORE/lib/tmux.sh"
+canopy_paths
+
+if [ $# -gt 0 ]; then
+  canopy_die "canopy-doctor: unknown argument: $1"
+fi
+
+warnings=0
+load_bearing_failed=0
+
+printf 'canopy doctor\n'
+printf '=============\n\n'
+
+# --- Environment -------------------------------------------------------
+printf 'Environment:\n'
+if tmux_raw="$(tmux -V 2>/dev/null)"; then
+  printf '  tmux: %s\n' "$tmux_raw"
+else
+  printf '  tmux: not found\n'
+fi
+printf '  shell: %s\n' "$(command -v sh 2>/dev/null || printf 'sh')"
+printf '  store: %s\n' "$CANOPY_STORE"
+printf '  config: %s\n' "$CANOPY_CONFIG"
+printf '  state: %s\n' "$CANOPY_STATE"
+printf '\n'
+
+# --- Capabilities --------------------------------------------------------
+# The tool set and order mirror canopy-caps exactly, so this section is a
+# direct read of what canopy-caps already probed and wrote; doctor never
+# re-probes capabilities itself.
+tools="wt fzf gum ghostty starship mise"
+caps_file="$CANOPY_STATE/05-caps.conf"
+printf 'Capabilities:\n'
+if [ -f "$caps_file" ]; then
+  for tool in $tools; do
+    val="$(awk -v t="@canopy_has_$tool" '$3 == t { print $4 }' "$caps_file")"
+    if [ "$val" = "1" ]; then
+      printf '  %s: yes\n' "$tool"
+    else
+      printf '  %s: no\n' "$tool"
+    fi
+  done
+else
+  printf '  not yet generated (run: canopy caps)\n'
+  warnings=$((warnings + 1))
+fi
+printf '\n'
+
+# --- Layers ----------------------------------------------------------------
+# M1 ships no optional conf.d layer files yet (only 00-core and the
+# generated 05-caps); every layer that exists in the spec's layer table is
+# still capability-gated future work. What doctor CAN report honestly today
+# is exactly what each capability enables once its layer ships: the same
+# data as Capabilities, framed by feature name instead of raw tool name, per
+# the design doc's own worked example ("worktree: wt not found"). "wt" is
+# the only tool the design doc names a layer for (worktree); the rest reuse
+# the tool name until their own layer ships and earns a name.
+layer_pairs="wt:worktree fzf:fzf gum:gum ghostty:ghostty starship:starship mise:mise"
+printf 'Layers:\n'
+if [ -f "$caps_file" ]; then
+  for pair in $layer_pairs; do
+    tool="${pair%%:*}"
+    label="${pair#*:}"
+    val="$(awk -v t="@canopy_has_$tool" '$3 == t { print $4 }' "$caps_file")"
+    if [ "$val" = "1" ]; then
+      printf '  %s (%s): active\n' "$label" "$tool"
+    else
+      printf '  %s (%s): dormant (%s not found)\n' "$label" "$tool" "$tool"
+    fi
+  done
+else
+  printf '  unknown, capabilities not yet probed (run: canopy caps)\n'
+fi
+printf '\n'
+
+# --- Load-bearing settings --------------------------------------------------
+# For M1: the tmux version floor, the shipped config validating on a
+# scratch socket, and user.conf being sourced last. Failing any of these is
+# what earns exit 2, not a warning.
+printf 'Load-bearing settings (M1):\n'
+
+if canopy_tmux_version_ok; then
+  printf '  tmux version floor (>= 3.4): ok\n'
+else
+  printf '  tmux version floor (>= 3.4): FAILED (found: %s)\n' "${tmux_raw:-not found}"
+  load_bearing_failed=1
+fi
+
+# What gets validated is the entry point tmux actually loads on this
+# machine, from the bare environment canopy_tmux_validate imposes. Doctor
+# used to validate the store's own tmux.conf while this process had
+# CANOPY_* exported, and so reported OK on a machine whose installed
+# config loaded nothing whatsoever. A check that runs the artifact through
+# a richer environment than the user has is not a check.
+#
+# canopy_tmux_validate is called directly as the if-condition, not wrapped
+# in a nested command substitution: under `set -e`, canopy_tmux_validate's
+# own internal `err="$(tmux ... )"` assignment is only exempt from -e when
+# the function itself is the direct condition being tested, not when it
+# is nested one command-substitution subshell deeper; nesting it would
+# abort that subshell before kill-server ever runs, leaking the scratch
+# server. Output goes to a real file for the same reason: a still-running
+# descendant holding a pipe open can hang a reader waiting on EOF; a file
+# has no such hazard.
+canopy_runtime_ensure
+validate_tmp="$CANOPY_RUNTIME/doctor-validate.$$"
+trap 'rm -f "$validate_tmp"' EXIT
+entry_point="$(canopy_entry_point)"
+if [ -z "$entry_point" ]; then
+  # No entry point means canopy is not installed, so there is no shipped
+  # artifact to run through a user's entry path, and nothing doctor could
+  # honestly validate in its place. Reported as a warning rather than
+  # silence: "canopy doctor: OK" on a machine with no canopy on it is the
+  # same lie in a smaller costume.
+  printf '  installed entry point: none, canopy is not installed (run: canopy install)\n'
+  warnings=$((warnings + 1))
+else
+  printf '  installed entry point: %s\n' "$entry_point"
+  if canopy_tmux_validate "$entry_point" >"$validate_tmp" 2>&1; then
+    printf '  entry point loads from a bare environment: ok\n'
+  else
+    printf '  entry point loads from a bare environment: FAILED\n'
+    while IFS= read -r line; do
+      printf '    %s\n' "$line"
+    done <"$validate_tmp"
+    load_bearing_failed=1
+  fi
+fi
+rm -f "$validate_tmp"
+
+# Checked textually against the store's own tmux.conf (never against a real
+# $HOME entry point): the last `source-file` directive must target
+# user.conf, so a later layer can never be sourced after it and win instead.
+last_source="$(grep '^source-file' "$CANOPY_STORE/tmux/tmux.conf" | tail -n 1)"
+# The literal string in the pattern below is intentional: it matches the
+# raw tmux.conf text, not a shell-expanded path.
+# shellcheck disable=SC2016
+case "$last_source" in
+  *'$CANOPY_CONFIG/user.conf'*)
+    printf '  user.conf sourced last: ok\n'
+    ;;
+  *)
+    printf '  user.conf sourced last: FAILED (last source-file line: %s)\n' "$last_source"
+    load_bearing_failed=1
+    ;;
+esac
+printf '\n'
+
+# --- Restore points ----------------------------------------------------
+
+# canopy_doctor_tx_reverted <txdir>
+# True when every path <txdir> recorded currently holds the exact state it
+# held before that transaction touched it, i.e. the transaction's effect is
+# no longer on the machine.
+#
+# Doctor asks this of the machine rather than of the ledger on purpose. A
+# "recovered" marker could only ever be written by canopy-restore, and the
+# recovery route canopy documents for the case where canopy itself is
+# broken is the transaction's own self-contained restore.sh, which knows
+# nothing about canopy and can write no marker. So can a user putting the
+# file back by hand. All three leave the same machine behind, and the
+# machine is what doctor exists to report on.
+#
+# A transaction that recorded nothing is vacuously reverted: it changed
+# nothing, so there is nothing to put back.
+canopy_doctor_tx_reverted() {
+  canopy_doctor_tab="$(printf '\t')"
+  canopy_doctor_verdict=0
+  while IFS="$canopy_doctor_tab" read -r row_action row_path row_pre row_backup row_post; do
+    case "$row_action" in
+      '#'* | '') continue ;;
+      *) ;;
+    esac
+    : "$row_backup" "$row_post"
+    if [ "$(canopy_file_state "$row_path")" != "$row_pre" ]; then
+      canopy_doctor_verdict=1
+      break
+    fi
+  done <"$1/manifest.tsv"
+  return "$canopy_doctor_verdict"
+}
+
+printf 'Restore points:\n'
+restore_count=0
+pinned_found=no
+recovered_count=0
+incomplete_list=""
+if [ -d "$CANOPY_STATE/backups" ]; then
+  for d in "$CANOPY_STATE"/backups/*/; do
+    [ -d "$d" ] || continue
+    d="${d%/}"
+    if [ -f "$d/.committed" ]; then
+      restore_count=$((restore_count + 1))
+      if [ -f "$d/.pinned" ]; then
+        pinned_found=yes
+      fi
+    elif [ ! -f "$d/.failed" ]; then
+      # Recorded rows, no .committed marker and no .failed marker: canopy
+      # was interrupted between migrating the user's files and committing
+      # the transaction. The user's original bytes are sitting in this
+      # directory's files/, and nothing else in canopy would say so. A
+      # recovery tool that stays silent here is worse than no tool.
+      #
+      # Unless the user has already acted on that advice. Warning about a
+      # transaction whose effect is no longer on disk tells someone who
+      # did exactly what doctor asked that their machine still needs
+      # attention, which is how a diagnostic stops being believed.
+      # shellcheck disable=SC2310  # a state question, so its non-zero return is the answer, not a failure to abort on
+      if canopy_doctor_tx_reverted "$d"; then
+        recovered_count=$((recovered_count + 1))
+      else
+        incomplete_list="$incomplete_list$d
+"
+      fi
+    fi
+  done
+fi
+printf '  count: %s\n' "$restore_count"
+printf '  pinned pre-install point: %s\n' "$pinned_found"
+if [ "$recovered_count" -gt 0 ]; then
+  printf '  %s interrupted transaction(s) already reverted, nothing to do\n' "$recovered_count"
+fi
+if [ -n "$incomplete_list" ]; then
+  printf '%s' "$incomplete_list" | while IFS= read -r d; do
+    [ -n "$d" ] || continue
+    printf '  INCOMPLETE transaction, interrupted before it committed: %s\n' "${d##*/}"
+    printf '    your original files are backed up under %s\n' "$d/files"
+    printf '    recover with: canopy restore --to %s\n' "${d##*/}"
+  done
+  warnings=$((warnings + 1))
+fi
+printf '\n'
+
+# --- Commands ------------------------------------------------------------
+printf 'Commands:\n'
+commands_file="$CANOPY_STATE/commands.tsv"
+if [ -f "$commands_file" ]; then
+  missing="$(awk -F'\t' '$3 == "" { print $1 }' "$commands_file")"
+  if [ -n "$missing" ]; then
+    printf '%s\n' "$missing" | while IFS= read -r name; do
+      printf '  missing summary header: canopy-%s\n' "$name"
+    done
+    warnings=$((warnings + 1))
+  else
+    printf '  all commands carry a summary header\n'
+  fi
+else
+  printf '  not yet generated (run: canopy index)\n'
+  warnings=$((warnings + 1))
+fi
+printf '\n'
+
+# --- Keybindings -----------------------------------------------------------
+# Deliberately stubbed: the key table (spec 4.4) does not exist until M4, so
+# there is nothing to cross-reference `list-keys` against yet. Said here
+# rather than left out silently.
+printf 'Keybindings:\n'
+printf '  cross-check stubbed for M1: the key table does not exist until M4\n'
+printf '\n'
+
+if [ "$load_bearing_failed" -eq 1 ]; then
+  printf 'canopy doctor: FAILED, a load-bearing check did not pass\n'
+  exit 2
+elif [ "$warnings" -gt 0 ]; then
+  printf 'canopy doctor: %d warning(s)\n' "$warnings"
+  exit 1
+else
+  printf 'canopy doctor: OK\n'
+  exit 0
+fi

@@ -1,0 +1,120 @@
+#!/bin/sh
+# Dispatch canopy subcommands and render metadata-driven help.
+set -eu
+
+# The store is derived from the real path of this file, not from $0.
+# Putting canopy on a PATH normally means symlinking bin/canopy into a
+# directory like ~/.local/bin, and $0 then names the link, whose parent's
+# parent is not the store: lib/env.sh was looked for beside the link and
+# nothing dispatched. `readlink -f` would resolve it in one call, but it
+# is GNU-only (absent on macOS before Monterey, and BusyBox spells its
+# flags differently), so the link is walked one hop at a time here. The
+# hop cap is what stops a symlink cycle from spinning forever.
+if [ -z "${CANOPY_STORE-}" ]; then
+  canopy_self="$0"
+  canopy_hops=0
+  while [ -L "$canopy_self" ]; do
+    canopy_hops=$((canopy_hops + 1))
+    if [ "$canopy_hops" -gt 40 ]; then
+      printf 'canopy: too many symlinks while resolving %s\n' "$0" >&2
+      exit 1
+    fi
+    canopy_link="$(readlink "$canopy_self")"
+    case "$canopy_link" in
+      /*) canopy_self="$canopy_link" ;;
+      *) canopy_self="$(dirname "$canopy_self")/$canopy_link" ;;
+    esac
+  done
+  CANOPY_STORE="$(cd "$(dirname "$canopy_self")/.." && pwd)"
+fi
+# shellcheck source=../lib/env.sh
+# shellcheck disable=SC1091
+. "$CANOPY_STORE/lib/env.sh"
+canopy_paths
+
+bin_dir="$CANOPY_STORE/bin"
+
+# Enumeration uses the same test dispatch does, -x rather than -f: a
+# canopy-* file that is not executable cannot be run, so advertising it in
+# help or offering it as a suggestion only sends the user at a command
+# that fails. Dispatch still explains a non-executable file by name when
+# one is asked for directly.
+canopy_list_commands() {
+  for f in "$bin_dir"/canopy-*; do
+    [ -x "$f" ] || continue
+    printf '%s\n' "${f##*/canopy-}"
+  done
+}
+
+canopy_help() {
+  {
+    for f in "$bin_dir"/canopy-*; do
+      [ -x "$f" ] || continue
+      name=${f##*/canopy-}
+      awk -v name="$name" '
+        BEGIN { group = "misc"; summary = "" }
+        NR > 40 { exit }
+        /^# canopy:group=/   { group = substr($0, index($0, "=") + 1) }
+        /^# canopy:summary=/ { summary = substr($0, index($0, "=") + 1) }
+        END { printf "%s\t%s\t%s\n", group, name, summary }
+      ' "$f"
+    done
+  } | LC_ALL=C sort -t "$(printf '\t')" -k1,1 -k2,2 | awk -F'\t' '
+    $1 != prev { if (NR > 1) print ""; printf "%s:\n", $1; prev = $1 }
+    { printf "  %-12s %s\n", $2, $3 }
+  '
+}
+
+canopy_suggest() {
+  input="$1"
+  {
+    canopy_list_commands
+    printf '%s\n' help
+  } | awk -v input="$input" '
+    function commonlen(a, b,   i, n) {
+      n = length(a)
+      if (length(b) < n) n = length(b)
+      for (i = 1; i <= n; i++) {
+        if (substr(a, i, 1) != substr(b, i, 1)) return i - 1
+      }
+      return n
+    }
+    {
+      name = $0
+      score = commonlen(input, name)
+      if (length(name) > 0 && index(input, name) > 0 && length(name) > score) score = length(name)
+      if (length(input) > 0 && index(name, input) > 0 && length(name) > score) score = length(name)
+      if (score > best_score) { best_score = score; best = name }
+    }
+    END { if (best_score > 0) print best }
+  '
+}
+
+cmd=${1:-help}
+if [ $# -gt 0 ]; then
+  shift
+fi
+
+case "$cmd" in
+  help | --help | -h)
+    canopy_help
+    exit 0
+    ;;
+  *) ;;
+esac
+
+target="$bin_dir/canopy-$cmd"
+if [ -x "$target" ]; then
+  exec "$target" "$@"
+fi
+if [ -e "$target" ]; then
+  canopy_die "canopy-$cmd exists but is not executable"
+fi
+
+suggestion=$(canopy_suggest "$cmd")
+if [ -n "$suggestion" ]; then
+  printf 'canopy: unknown command "%s" (did you mean "%s"?)\n' "$cmd" "$suggestion" >&2
+else
+  printf 'canopy: unknown command "%s"\n' "$cmd" >&2
+fi
+exit 2

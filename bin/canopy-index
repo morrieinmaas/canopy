@@ -1,0 +1,51 @@
+#!/bin/sh
+# canopy:summary=Generate the command index from metadata headers
+# canopy:group=core
+# shellcheck disable=SC2154,SC2153  # CANOPY_STATE is exported by lib/env.sh's canopy_paths
+set -eu
+
+: "${CANOPY_STORE:=$(cd "$(dirname "$0")/.." && pwd)}"
+# shellcheck source=../lib/env.sh
+# shellcheck disable=SC1091
+. "$CANOPY_STORE/lib/env.sh"
+canopy_paths
+
+if [ $# -gt 0 ]; then
+  canopy_die "canopy-index: unknown argument: $1"
+fi
+
+bin_dir="$CANOPY_STORE/bin"
+out="$CANOPY_STATE/commands.tsv"
+tmp="$out.tmp.$$"
+
+mkdir -p "$CANOPY_STATE"
+trap 'rm -f "$tmp"' EXIT
+: >"$tmp"
+
+for f in "$bin_dir"/canopy-*; do
+  [ -f "$f" ] || continue
+  name=${f##*/canopy-}
+  awk -v name="$name" -v file="$f" '
+    function reject(key, val) {
+      if (index(val, "\t") > 0 || index(val, "\r") > 0) {
+        printf "canopy-index: %s: canopy:%s= contains a tab or newline\n", file, key > "/dev/stderr"
+        exit 1
+      }
+    }
+    BEGIN { group = "misc"; summary = ""; args = ""; examples = "" }
+    NR > 40 { exit }
+    /^# canopy:group=/    { group    = substr($0, index($0, "=") + 1) }
+    /^# canopy:summary=/  { summary  = substr($0, index($0, "=") + 1) }
+    /^# canopy:args=/     { args     = substr($0, index($0, "=") + 1) }
+    /^# canopy:examples=/ { examples = substr($0, index($0, "=") + 1) }
+    END {
+      reject("group", group)
+      reject("summary", summary)
+      reject("args", args)
+      reject("examples", examples)
+      printf "%s\t%s\t%s\t%s\t%s\n", name, group, summary, args, examples
+    }
+  ' "$f" >>"$tmp"
+done
+
+LC_ALL=C sort -t "$(printf '\t')" -k2,2 -k1,1 "$tmp" >"$out"

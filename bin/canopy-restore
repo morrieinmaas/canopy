@@ -1,0 +1,364 @@
+#!/bin/sh
+# canopy:summary=Roll back transactions canopy recorded
+# canopy:group=core
+# canopy:args=[--list] [--to <id>] [--all] [--force]
+# canopy:examples=canopy restore --all
+# shellcheck disable=SC2154,SC2153  # CANOPY_STATE/CANOPY_CONFIG are exported by lib/env.sh's canopy_paths
+set -eu
+
+: "${CANOPY_STORE:=$(cd "$(dirname "$0")/.." && pwd)}"
+# shellcheck source=../lib/env.sh
+# shellcheck disable=SC1091
+. "$CANOPY_STORE/lib/env.sh"
+# shellcheck source=../lib/manifest.sh
+# shellcheck disable=SC1091
+. "$CANOPY_STORE/lib/manifest.sh"
+# shellcheck source=../lib/tmux.sh
+# shellcheck disable=SC1091
+. "$CANOPY_STORE/lib/tmux.sh"
+canopy_paths
+
+mode=last
+to_id=""
+force=0
+
+while [ $# -gt 0 ]; do
+  case "$1" in
+    --list) mode=list ;;
+    --to)
+      shift
+      [ $# -gt 0 ] || canopy_die "canopy-restore: --to requires a transaction id"
+      mode=to
+      to_id="$1"
+      ;;
+    --all) mode=all ;;
+    --force) force=1 ;;
+    *) canopy_die "canopy-restore: unknown argument: $1" ;;
+  esac
+  shift
+done
+
+backups_dir="$CANOPY_STATE/backups"
+nl='
+'
+
+# canopy_restore_tx_list
+# Every transaction directory automatic rollback may act on, oldest
+# first. A transaction with recorded rows but no .committed marker is
+# included, not skipped: it means canopy was interrupted partway through,
+# so partial changes are sitting on disk and the user's original bytes
+# are sitting in its files/ directory, which is precisely the state
+# rollback exists to undo. The per-row hash guard below is what protects
+# a file the user has since changed.
+# Two kinds are excluded, and both stay visible in --list and nameable by
+# --to:
+#   .failed  install already reverted those itself by running
+#            $tx/restore.sh, so replaying them automatically would be
+#            noise.
+#   .rollback  a restore's own transaction. Replaying one puts canopy's
+#            bytes back, which is the exact opposite of what the mode
+#            named --all promises, and it compounds: every run would
+#            record a fresh transaction over the previous run's, so the
+#            rows to replay double each time. Reverting a revert is a
+#            legitimate thing to want, which is why the restore point
+#            keeps full fidelity and `--to <restore-id>` still reaches
+#            it, but it is an explicit request, never part of "undo
+#            everything canopy did".
+canopy_restore_tx_list() {
+  [ -d "$backups_dir" ] || return 0
+  for d in "$backups_dir"/*/; do
+    [ -d "$d" ] || continue
+    d="${d%/}"
+    [ -f "$d/.failed" ] && continue
+    [ -f "$d/.rollback" ] && continue
+    printf '%s\n' "$d"
+  done | sort
+}
+
+# canopy_restore_tx_list_all
+# Every transaction directory, oldest first, regardless of completion
+# state. --list renders this, and --to resolves against it, so every id
+# --list displays is an id --to accepts.
+canopy_restore_tx_list_all() {
+  [ -d "$backups_dir" ] || return 0
+  for d in "$backups_dir"/*/; do
+    [ -d "$d" ] || continue
+    d="${d%/}"
+    printf '%s\n' "$d"
+  done | sort
+}
+
+# canopy_restore_is_eligible <txdir>
+# True if <txdir> is one of the transactions automatic rollback may act
+# on, i.e. a line of $all_tx. A function rather than the case statement
+# written inline at its one call site: that call site is inside a command
+# substitution, and bash 3.2 (still /bin/sh on macOS) cannot parse a case
+# statement nested in one, failing at parse time with a syntax error.
+canopy_restore_is_eligible() {
+  case "$nl$all_tx$nl" in
+    *"$nl$1$nl"*) return 0 ;;
+    *) return 1 ;;
+  esac
+}
+
+# canopy_restore_timestamp <epoch>
+# Best-effort human-readable rendering of an epoch second. Tries BSD
+# date's "-r <epoch>" first, then GNU date's "-d @<epoch>", falling back
+# to the raw epoch if neither is available.
+canopy_restore_timestamp() {
+  epoch="$1"
+  if out=$(date -r "$epoch" '+%Y-%m-%d %H:%M:%S' 2>/dev/null); then
+    printf '%s' "$out"
+  elif out=$(date -d "@$epoch" '+%Y-%m-%d %H:%M:%S' 2>/dev/null); then
+    printf '%s' "$out"
+  else
+    printf '%s' "$epoch"
+  fi
+}
+
+if [ "$mode" = "list" ]; then
+  all_tx="$(canopy_restore_tx_list_all)"
+  if [ -z "$all_tx" ]; then
+    printf 'no restore points\n'
+    exit 0
+  fi
+  printf '%s\n' "$all_tx" | sort -r | while IFS= read -r d; do
+    id="${d##*/}"
+    label="${id#*-}"
+    epoch="${id%%-*}"
+    ts="$(canopy_restore_timestamp "$epoch")"
+    # awk, not grep -c: grep -c exits 1 on zero matches (a genuinely
+    # empty or header-only manifest, e.g. a transaction that failed or
+    # was interrupted before recording anything), and under set -eu
+    # inside this piped while loop that kills the whole subshell, not
+    # just this row, truncating the rest of the listing silently. awk
+    # always exits 0 here regardless of match count.
+    count="$(awk '!/^#/ { n++ } END { print n + 0 }' "$d/manifest.tsv")"
+    if [ -f "$d/.failed" ]; then
+      marker="  FAILED"
+    elif [ -f "$d/.committed" ]; then
+      marker=""
+      [ -f "$d/.pinned" ] && marker="  PINNED"
+    else
+      marker="  INCOMPLETE"
+    fi
+    printf '%s  %s  %s  %s file(s)%s\n' "$id" "$label" "$ts" "$count" "$marker"
+  done
+  exit 0
+fi
+
+all_tx="$(canopy_restore_tx_list)"
+
+# Resolve which transactions this run should undo, oldest first, before
+# opening our own transaction below (which must not be part of the set it
+# is about to undo).
+target_list=""
+case "$mode" in
+  last)
+    [ -n "$all_tx" ] && target_list="$(printf '%s\n' "$all_tx" | tail -n 1)"
+    ;;
+  to)
+    # Resolved against every transaction on disk, not just the ones
+    # automatic rollback would pick: --list and --to must agree on which
+    # ids exist, and one accepting what the other shows is a plain bug.
+    known_tx="$(canopy_restore_tx_list_all)"
+    match_dir=""
+    if [ -n "$known_tx" ]; then
+      match_dir="$(
+        printf '%s\n' "$known_tx" | while IFS= read -r d; do
+          if [ "${d##*/}" = "$to_id" ]; then
+            printf '%s\n' "$d"
+            break
+          fi
+        done
+      )"
+    fi
+    [ -n "$match_dir" ] || canopy_die "canopy-restore: no such transaction: $to_id"
+    # The named transaction plus every newer one automatic rollback would
+    # act on. "Newer" is a position in the already sorted list, not a
+    # string comparison against the named id: comparing ids (as an
+    # `awk '$0 >= want'` here used to) only agrees with the sort that
+    # built the list while awk's collation matches the locale's, and it
+    # need not. Under en_US.UTF-8, sort puts ".../<epoch>-alpha" before
+    # ".../<epoch>-Bravo" while a byte-wise awk comparison puts it after,
+    # so --to would silently drop a transaction --list had just shown as
+    # newer. Walking the list and taking everything after the match uses
+    # only string equality, which no collation can disagree about.
+    # The named transaction is always in the set, even when automatic
+    # rollback would skip it: naming it is an explicit request, and
+    # re-reverting an already-reverted transaction is a no-op.
+    reached=0
+    newer="$(
+      printf '%s\n' "$known_tx" | while IFS= read -r d; do
+        # shellcheck disable=SC2310  # a membership test, so its non-zero return is the answer, not a failure to abort on
+        if [ "$reached" -eq 1 ] && canopy_restore_is_eligible "$d"; then
+          printf '%s\n' "$d"
+        fi
+        if [ "$d" = "$match_dir" ]; then
+          reached=1
+        fi
+      done
+    )"
+    target_list="$(printf '%s\n%s\n' "$match_dir" "$newer" | awk 'NF && !seen[$0]++')"
+    ;;
+  all)
+    # Everything canopy recorded and has not already reverted itself.
+    # This used to anchor on the pinned pre-install point, but .pinned is
+    # written only after a successful commit, so anchoring on it made the
+    # one transaction a user most needs to reach (an install interrupted
+    # before it committed) invisible to the mode named --all.
+    target_list="$all_tx"
+    ;;
+  *) ;;
+esac
+
+mkdir -p "$CANOPY_STATE"
+tmp_target="$CANOPY_STATE/.restore-target.tmp.$$"
+kept_list="$CANOPY_STATE/.restore-kept.tmp.$$"
+unguarded_list="$CANOPY_STATE/.restore-unguarded.tmp.$$"
+validate_out="$CANOPY_STATE/.restore-validate.tmp.$$"
+trap 'rm -f "$tmp_target" "$kept_list" "$unguarded_list" "$validate_out"' EXIT
+: >"$kept_list"
+: >"$unguarded_list"
+if [ -n "$target_list" ]; then
+  printf '%s\n' "$target_list" | sort -r >"$tmp_target"
+else
+  : >"$tmp_target"
+fi
+
+reverted=0
+kept=0
+restore_id=""
+
+if [ -s "$tmp_target" ]; then
+  restore_tx="$(canopy_tx_begin restore)"
+  restore_id="${restore_tx##*/}"
+  # Marked before a single row is touched, so an interrupted restore is
+  # excluded from automatic rollback too: its rows describe a revert that
+  # only half happened, and replaying them would undo the half that did.
+  touch "$restore_tx/.rollback"
+  tab="$(printf '\t')"
+  while IFS= read -r tx_dir; do
+    [ -n "$tx_dir" ] || continue
+
+    while IFS="$tab" read -r action path pre backup_rel post; do
+      case "$action" in
+        '#'* | '') continue ;;
+        *) ;;
+      esac
+
+      current="$(canopy_file_state "$path")"
+
+      # An empty post column means this transaction never committed, so
+      # canopy never got to record what it left on disk and there is
+      # nothing to compare the current bytes against. Such a row is
+      # reverted, which is exactly what install itself does with
+      # $tx/restore.sh when its own validation fails. Every row of a
+      # committed transaction is still hash-guarded.
+      #
+      # The guard exists to protect bytes the user wrote after canopy did.
+      # A file already holding this row's own pre bytes is not that: it is
+      # a row that has already been reverted, and reverting it again is a
+      # no-op. Without that clause, a second `restore --all` read its own
+      # first run's work as an edit it must refuse to touch, and reported
+      # the user's original bytes as "changed since canopy wrote it".
+      if [ -n "$post" ] && [ "$current" != "$post" ] && [ "$current" != "$pre" ] && [ "$force" -ne 1 ]; then
+        kept=$((kept + 1))
+        printf '%s\n' "$path" >>"$kept_list"
+        continue
+      fi
+
+      # An unguarded revert overwrites whatever the file holds now,
+      # including edits made after canopy was interrupted, so it is named
+      # in the closing summary rather than done silently. The bytes it
+      # overwrites are not lost: canopy_tx_record below copies them into
+      # this restore transaction first, and the summary says how to get
+      # them back.
+      if [ -z "$post" ]; then
+        printf '%s\n' "$path" >>"$unguarded_list"
+      fi
+
+      # -e is false for a dangling symlink, so -L is asked too, both for
+      # what is on disk now and for the backup: a backed-up relative
+      # symlink almost never resolves from inside files/, and reading that
+      # as "no backup" would skip the revert silently.
+      canopy_tx_record "$restore_tx" "$action" "$path"
+      if [ "$pre" = "absent" ]; then
+        if [ -e "$path" ] || [ -L "$path" ]; then
+          rm -f "$path"
+        fi
+      elif [ "$backup_rel" != "-" ] && { [ -e "$tx_dir/$backup_rel" ] || [ -L "$tx_dir/$backup_rel" ]; }; then
+        mkdir -p "$(dirname "$path")"
+        # Removed first, then copied with -P: whatever sits at $path may be
+        # a symlink, and writing into it would write through to a file this
+        # manifest never recorded. A backed-up symlink goes back as the
+        # link it was, pointing where it pointed.
+        rm -f "$path"
+        cp -pP "$tx_dir/$backup_rel" "$path"
+      fi
+      reverted=$((reverted + 1))
+    done <"$tx_dir/manifest.tsv"
+
+    if [ -f "$tx_dir/dirs-created.txt" ]; then
+      # dirs-created.txt is written shallowest-created first (so a nested
+      # mkdir -p records every level, not just the leaf); read it back in
+      # reverse here so the deepest directory is rmdir'd first and each
+      # removal makes its parent empty in turn, instead of only ever
+      # removing the leaf.
+      awk '{ lines[NR] = $0 } END { for (i = NR; i >= 1; i--) print lines[i] }' "$tx_dir/dirs-created.txt" |
+        while IFS= read -r d; do
+          [ -n "$d" ] || continue
+          # rmdir, never rm -r: a directory that still holds anything at
+          # all is kept, which is the whole guard. That includes
+          # $CANOPY_CONFIG, which is listed here only when install created
+          # it: empty, it is an artifact of canopy and goes; holding user
+          # overrides, it stays.
+          rmdir "$d" 2>/dev/null || :
+        done
+    fi
+  done <"$tmp_target"
+  canopy_tx_commit "$restore_tx"
+fi
+
+printf 'restore: %d reverted, %d kept\n' "$reverted" "$kept"
+if [ -s "$kept_list" ]; then
+  while IFS= read -r kept_path; do
+    printf 'kept (changed since canopy wrote it): %s\n' "$kept_path"
+  done <"$kept_list"
+fi
+if [ -s "$unguarded_list" ]; then
+  while IFS= read -r unguarded_path; do
+    printf 'reverted without a hash guard, that transaction never committed so canopy never recorded what it left on disk: %s\n' "$unguarded_path"
+  done <"$unguarded_list"
+  printf 'the bytes overwritten above were backed up first; recover them with: canopy restore --to %s\n' "$restore_id"
+fi
+
+exit_status=0
+if [ "$kept" -gt 0 ] && [ "$force" -ne 1 ]; then
+  exit_status=1
+fi
+
+# Load whatever tmux config restore just left behind, on a throwaway
+# socket and from a bare environment, and report what tmux says about it.
+# A machine restored to having no tmux config at all has nothing to load
+# and is not a failure.
+#
+# This is a warning, not a failure. What restore promises is the user's
+# original bytes back, and once they are back the config being loadable is
+# the user's business: plugin-dependent and version-dependent configs
+# routinely carry lines a bare tmux rejects. Exiting non-zero here told
+# people a byte-perfect restore had failed, next to a summary reading
+# "0 reverted, 0 kept". Non-zero is reserved for a restore that did not
+# restore.
+entry="$(canopy_entry_point)"
+if [ -n "$entry" ]; then
+  if ! canopy_tmux_validate "$entry" >"$validate_out" 2>&1; then
+    printf 'warning: %s holds your original bytes again, but tmux does not load it cleanly:\n' "$entry"
+    while IFS= read -r line; do
+      printf '  %s\n' "$line"
+    done <"$validate_out"
+  fi
+  rm -f "$validate_out"
+fi
+
+exit "$exit_status"

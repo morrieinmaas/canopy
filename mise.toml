@@ -1,0 +1,9 @@
+[tools]
+bats = "latest"
+# Pinned, not "latest": an unpinned shellcheck resolved to a stale
+# version on a local machine while CI resolved a fresh one on every
+# run, and the fresh one implemented a check the stale one did not.
+# Bump this deliberately, run test/lint.sh, and commit the bump.
+shellcheck = "0.11.0"
+shfmt = "latest"
+tmux = "latest"
