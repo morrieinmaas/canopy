@@ -110,23 +110,7 @@ EOF
   fi
   [ -n "$adapter" ] || return 1
 
-  template="$(canopy_adapter_get "$adapter" resume_template 2>/dev/null)" || return 1
-  [ -n "$template" ] || return 1
-
-  out=""
-  rest="$template"
-  while :; do
-    case "$rest" in
-      *'{id}'*)
-        out="$out${rest%%"{id}"*}$session"
-        rest="${rest#*"{id}"}"
-        ;;
-      *)
-        out="$out$rest"
-        break
-        ;;
-    esac
-  done
+  out="$(canopy_adapter_resume_command "$adapter" "$session" 2>/dev/null)" || return 1
 
   # resurrect's save file is tab delimited and one line per pane. A command
   # carrying a control character would not come back as itself; it would
