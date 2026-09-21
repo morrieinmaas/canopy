@@ -1,0 +1,11 @@
+# The adapter for test/fixtures/fake-agent.
+#
+# Installed by the tests as $CANOPY_CONFIG/adapters/fake-agent, because an
+# adapter is looked up by its directory name and that name must match the
+# id below. See docs/adapters/contract.md for what each key means.
+id=fake-agent
+command=fake-agent
+resume_template=fake-agent --resume {id}
+can_pin_at_launch=yes
+launch_template=fake-agent --session-id {id}
+detect_draft=test -s ${FAKE_AGENT_HOME}/{pane}.draft
