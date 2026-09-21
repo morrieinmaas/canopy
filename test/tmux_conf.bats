@@ -45,6 +45,51 @@ setup() {
   [ "$status" -ne 0 ]
 }
 
+@test "canopy_tmux_validate leaves \$HOME exactly as it found it" {
+  # Regression test for a defect found while milestone 2 exercised this
+  # code from a different direction: a bare `new-session -d` starts
+  # whatever login shell the passwd entry names, and that shell can write
+  # into $HOME on startup (a history file, a completion cache, whatever its
+  # rc files do). validate runs during install, restore and doctor, all of
+  # which promise never to leave a mark on $HOME, so this asserts the
+  # property directly rather than the mechanism: run validate, then $HOME
+  # must hold exactly the files it held before, nothing more. Seeded with
+  # rc/profile files for both zsh and bash so whichever shell the local
+  # passwd entry names has something to run.
+  #
+  # Whether the shell actually gets far enough to write before validate's
+  # own kill-server call is itself a race (that is why it shipped past 93
+  # tests): on this machine a single attempt reproduces it only one time in
+  # roughly fifteen to twenty. The loop below is amplification, not a
+  # softer assertion, every one of these attempts must come back clean, and
+  # the first one that does not fails the test immediately.
+  #
+  # .zshenv is deliberately not seeded here: zsh sources it unconditionally
+  # on every invocation, including a plain `zsh -c '<command>'`, which is
+  # not something any command-argument-based fix can suppress, and, by zsh's
+  # own convention, .zshenv is meant to hold variable exports only, never
+  # the state-writing setup (history files, completion caches, plugin
+  # managers) that actually lives in the interactive/login files below.
+  setup_canopy_home
+  for rc in .zshrc .zprofile .zlogin .bashrc .bash_profile .profile; do
+    printf '#!/bin/sh\ntouch "$HOME/rc-ran-%s"\n' "$rc" >"$HOME/$rc"
+  done
+
+  attempt=0
+  while [ "$attempt" -lt 100 ]; do
+    attempt=$((attempt + 1))
+    conf="$BATS_TEST_TMPDIR/pollution-check-$attempt.conf"
+    printf 'set -g @canopy_pollution_marker ok\n' >"$conf"
+
+    before="$(find "$HOME" | sort)"
+    run canopy_tmux_validate "$conf"
+    after="$(find "$HOME" | sort)"
+
+    [ "$status" -eq 0 ]
+    [ "$before" = "$after" ]
+  done
+}
+
 @test "canopy_tmux_validate succeeds when tmux is reached through a wrapper that needs the bare environment to work" {
   # Stands in for a version-manager shim (mise, asdf, ...): a thin wrapper
   # on PATH that resolves and execs the real tmux, and refuses to run at
