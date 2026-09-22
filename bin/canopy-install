@@ -197,6 +197,7 @@ print_plan() {
   fi
   printf 'run canopy-caps\n'
   printf 'run canopy-index\n'
+  printf 'run canopy-keys\n'
   printf 'validate the resulting tmux config\n'
 }
 
@@ -298,6 +299,7 @@ fi
 
 "$CANOPY_STORE/bin/canopy-caps"
 "$CANOPY_STORE/bin/canopy-index"
+"$CANOPY_STORE/bin/canopy-keys"
 
 # Validated through the entry point just written, not through the store's
 # own copy with this process's environment helpfully filled in: install

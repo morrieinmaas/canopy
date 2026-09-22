@@ -77,9 +77,38 @@ EOF
   [[ "$output" == *"nosummary"* ]]
 }
 
-@test "the keybinding cross-check is reported as stubbed, not silently omitted" {
+@test "an ungenerated key layer is named as such, not silently omitted" {
+  # The section has to say something in every state. A doctor that prints
+  # a Keybindings heading and nothing under it reads as "fine".
   run canopy-doctor
+  [[ "$output" == *"Keybindings:"* ]]
+  [[ "$output" == *"canopy keys"* ]]
+}
+
+@test "a generated key layer is reported with both counts, and the live check as stubbed" {
+  run canopy-keys
+  [ "$status" -eq 0 ]
+  run canopy-doctor
+  [[ "$output" == *"keys declared in the table"* ]]
   [[ "$output" == *"stub"* ]]
+}
+
+@test "a key table that grew a row without regenerating is reported as stale" {
+  # The drift that a stored count could never catch: the table is the
+  # truth, the layer is what tmux actually loads, and nothing keeps them
+  # in step but running the generator.
+  run canopy-keys
+  [ "$status" -eq 0 ]
+  printf 'extra-row\tZ\t-\tdisplay-message "hi"\tpane\tA row added after the layer was generated\n' \
+    >>"$CANOPY_STORE/tmux/keys.tsv"
+  run canopy-doctor
+  status_seen="$status"
+  # Put the store back before asserting: the store is a real checkout, and
+  # a failed assertion here would otherwise leave a row in it.
+  sed -i.bak '/^extra-row/d' "$CANOPY_STORE/tmux/keys.tsv"
+  rm -f "$CANOPY_STORE/tmux/keys.tsv.bak"
+  [[ "$output" == *"the layer is stale"* ]]
+  [ "$status_seen" -eq 1 ]
 }
 
 @test "reports restore point count and whether the pinned point exists" {

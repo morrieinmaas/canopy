@@ -389,7 +389,29 @@ printf '\n'
 # there is nothing to cross-reference `list-keys` against yet. Said here
 # rather than left out silently.
 printf 'Keybindings:\n'
-printf '  cross-check stubbed for M1: the key table does not exist until M4\n'
+if [ ! -f "$CANOPY_STORE/tmux/keys.tsv" ]; then
+  printf '  no key table in the store, so canopy binds nothing\n'
+  warnings=$((warnings + 1))
+elif [ ! -f "$CANOPY_STATE/10-keys.conf" ]; then
+  printf '  key table present, layer not yet generated (run: canopy keys)\n'
+  warnings=$((warnings + 1))
+else
+  # Both numbers come from counting, not from a recorded total: a table
+  # that grew a row without the layer being regenerated is exactly the
+  # drift worth reporting, and it is invisible to anything that trusts a
+  # stored count.
+  keys_declared="$(grep -cv '^#' "$CANOPY_STORE/tmux/keys.tsv" 2>/dev/null || printf '0')"
+  keys_bound="$(grep -c '^bind ' "$CANOPY_STATE/10-keys.conf" 2>/dev/null || printf '0')"
+  if [ "$keys_declared" -eq "$keys_bound" ]; then
+    printf '  %s keys declared in the table, %s bound in the generated layer\n' \
+      "$keys_declared" "$keys_bound"
+  else
+    printf '  %s keys declared in the table but %s bound: the layer is stale (run: canopy keys)\n' \
+      "$keys_declared" "$keys_bound"
+    warnings=$((warnings + 1))
+  fi
+  printf '  live list-keys cross-check: still stubbed, it arrives with the palette in M4\n'
+fi
 printf '\n'
 
 if [ "$load_bearing_failed" -eq 1 ]; then
