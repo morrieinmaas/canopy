@@ -539,5 +539,321 @@ else
 fi
 end_scenario
 
+# --- the reboot scenarios' shared plumbing -------------------------------
+
+# The three conversations scenario 7 opens. Written out rather than
+# generated: a failure names the id, and an id that is the same on every
+# run is one that can be grepped for in a log from CI.
+reboot_ids='11111111-1111-1111-1111-111111111111 22222222-2222-2222-2222-222222222222 33333333-3333-3333-3333-333333333333'
+
+# agent_setup
+# The fake agent on PATH, its transcripts under this scenario's own tree,
+# and its adapter where canopy looks for one. The transcripts are the
+# evidence: the agent writes "launch <id>" when it is started with an id
+# and "resume <id>" when it is resumed with one, so a transcript holding
+# both lines is a conversation that was continued rather than replaced.
+agent_setup() {
+  agent_home="${work}/agent-home"
+  agent_map="${work}/panes.tsv"
+  mkdir -p "${agent_home}"
+  : >"${agent_map}"
+  # The agent goes on the login shell's PATH, not on this script's. A tmux
+  # pane runs the shell as a login shell, and /etc/profile resets PATH, so
+  # an agent reachable only through the environment this script exports is
+  # an agent no pane can start and no restored pane can resume. That is
+  # not an artefact of the harness: /usr/local/bin is where a user's agent
+  # actually lives.
+  ln -sf "${store}/test/fixtures/fake-agent" /usr/local/bin/fake-agent
+  FAKE_AGENT_HOME="${agent_home}"
+  export FAKE_AGENT_HOME
+  mkdir -p "${home}/.config/canopy/adapters"
+  cp -R "${store}/test/fixtures/fake-agent-adapter" \
+    "${home}/.config/canopy/adapters/fake-agent"
+}
+
+# rb <arg...>
+# tmux against this scenario's server, from the same bare environment a
+# user's tmux runs in.
+# shellcheck disable=SC2317,SC2329  # called directly and through capture()
+rb() {
+  bare_tmux "${tmux_bin}" -L "${reboot_sock}" "$@"
+}
+
+# in_pane <pane> <arg...>
+# Runs a canopy command the way an agent's hook runs it: from inside the
+# pane's world, with $TMUX_PANE naming the pane and $TMUX naming the
+# server, and nothing else borrowed from this script.
+# shellcheck disable=SC2317,SC2329  # called through capture()
+in_pane() {
+  ip_pane="$1"
+  shift
+  env TMUX="${sock_path},0,0" TMUX_TMPDIR=/tmp TMUX_PANE="${ip_pane}" "$@"
+}
+
+# wait_for <seconds> <command...>
+# Polls until the command succeeds. Everything this scenario waits on is
+# asynchronous by design: the agent starts when the shell gets round to
+# it, and continuum restores a second after the server starts.
+wait_for() {
+  wf_limit="$1"
+  shift
+  wf_i=0
+  while [ "${wf_i}" -lt "${wf_limit}" ]; do
+    if "$@" >/dev/null 2>&1; then
+      return 0
+    fi
+    sleep 1
+    wf_i=$((wf_i + 1))
+  done
+  return 1
+}
+
+# open_agent_pane <session-id>
+# A pane running the fake agent, started the way a person starts one: by
+# typing it at a shell. The pane's own command is therefore the shell, so
+# nothing about the pane records which conversation it holds until the
+# agent reports it.
+#
+# The window it lands in is asked for, never assumed. canopy sets
+# base-index 1, so the first window of a session is main:1, and a scenario
+# that counted from zero looked for windows that do not exist and reported
+# three healthy agents as missing.
+#
+# Records "<id><TAB><window index>" so the assertions after the reboot can
+# look for each conversation in the window it actually had.
+# shellcheck disable=SC2317,SC2329  # called through capture()
+# shellcheck disable=SC2310  # a wait is a question, so its non-zero return is the answer and not a reason to abort
+open_agent_pane() {
+  oap_id="$1"
+  if [ -s "${agent_map}" ]; then
+    oap_pane="$(rb new-window -t main -P -F '#{pane_id}')"
+  else
+    oap_pane="$(rb list-panes -t main -F '#{pane_id}' | head -1)"
+  fi
+  [ -n "${oap_pane}" ] || return 1
+  oap_window="$(rb display-message -p -t "${oap_pane}" '#{window_index}')"
+  [ -n "${oap_window}" ] || return 1
+  rb send-keys -t "${oap_pane}" "fake-agent --session-id ${oap_id}" Enter
+  wait_for 20 test -f "${agent_home}/${oap_id}.transcript" || return 1
+  printf '%s\t%s\n' "${oap_id}" "${oap_window}" >>"${agent_map}"
+  printf '%s\n' "${oap_pane}"
+}
+
+# window_of <session-id>
+window_of() {
+  awk -F'\t' -v id="$1" '$1 == id { print $2; exit }' "${agent_map}"
+}
+
+# force_save
+# resurrect's own save, run as continuum runs it. The scenario does not
+# wait out continuum's interval: what is being proven is that the save
+# holds the right command, not that a timer fires.
+# shellcheck disable=SC2317,SC2329  # called through capture()
+# shellcheck disable=SC2310  # the wait reports whether the save landed, which is the answer this returns
+force_save() {
+  rb run-shell "${store}/plugins/tmux-resurrect/scripts/save.sh quiet"
+  wait_for 20 test -f "${home}/.local/state/canopy/resurrect/last"
+}
+
+# simulate_reboot
+# Kill the server, then start one again from the installed entry point.
+# What a real reboot adds is a cold machine, and nothing in this chain
+# reads state that a reboot clears and a kill-server does not: the save
+# file is on disk, and the replay is driven by the config the new server
+# loads. The new server gets a session of its own name so that the
+# restored sessions are recreated rather than merged into it.
+# shellcheck disable=SC2310  # killing a server that is already gone is success here, not a reason to abort
+simulate_reboot() {
+  rb kill-server >/dev/null 2>&1 || :
+  rm -f "/tmp/tmux-$(id -u)/${reboot_sock}"
+  sleep 1
+  bare_tmux "${tmux_bin}" -L "${reboot_sock}" \
+    -f "${home}/.config/tmux/tmux.conf" new-session -d -s boot
+  sock_path="$(rb display-message -p '#{socket_path}')"
+}
+
+# pane_running_command <pane>
+# What the pane is actually running, as canopy's own pane library asks it:
+# the command whose parent is the pane's process. Not
+# #{pane_start_command}, which is empty for a restored pane, because
+# resurrect brings a pane back by handing its command to a shell rather
+# than by respawning it. Asserting the start command would therefore have
+# asserted nothing at all after a reboot, which is the only moment that
+# matters here.
+# shellcheck disable=SC2317,SC2329  # called through capture() and command substitution
+# shellcheck disable=SC2310  # asking a pane what it runs is a question, so a non-zero return is the answer
+pane_running_command() {
+  prc_pid="$(rb display-message -p -t "$1" '#{pane_pid}' 2>/dev/null)" || return 1
+  [ -n "${prc_pid}" ] || return 1
+  ps -ao ppid,args 2>/dev/null |
+    awk -v p="${prc_pid}" '$1 == p { $1 = ""; sub(/^ */, ""); print; exit }'
+}
+
+# assert_resumed <session-id>
+# The claim the milestone is made of, for one pane: the conversation was
+# continued, and it was continued in the window that held it.
+# shellcheck disable=SC2310  # every branch here asks a question, so a non-zero return is the answer
+assert_resumed() {
+  ar_id="$1"
+  ar_window="$(window_of "${ar_id}")"
+  ar_transcript="${agent_home}/${ar_id}.transcript"
+  if wait_for 45 grep -q "^resume ${ar_id}\$" "${ar_transcript}"; then
+    check "the conversation ${ar_id} was resumed, not restarted" \
+      "launch ${ar_id}
+resume ${ar_id}" "$(cat "${ar_transcript}")"
+  else
+    fail "the conversation ${ar_id} was resumed, not restarted" \
+      "a transcript holding launch then resume" \
+      "$(cat "${ar_transcript}" 2>/dev/null || printf 'no transcript at all')"
+  fi
+  ar_pane="$(rb list-panes -t "main:${ar_window}" -F '#{pane_id}' 2>/dev/null | head -1)" || ar_pane=""
+  if [ -z "${ar_pane}" ]; then
+    fail "main:${ar_window} came back" "a pane in main:${ar_window}" "no such window"
+    return 0
+  fi
+  check_contains "main:${ar_window} came back running its own resume command" \
+    "fake-agent --resume ${ar_id}" "$(pane_running_command "${ar_pane}" || printf '')"
+}
+
+# --- scenario 7: a reboot returns each pane to its own conversation --------
+#
+# The milestone's acceptance. Every link in the chain has unit tests, and
+# none of them can prove the chain: the adapter naming a resume command,
+# the save strategy writing that command instead of the shell's, continuum
+# replaying the file when a server starts, and the stagger wrapper
+# surviving both the write and the replay.
+
+begin_scenario 7 "a reboot returns each agent pane to its own conversation"
+
+tmux_bin="$(command -v tmux)"
+reboot_sock="canopy-smoke-reboot-$$"
+agent_setup
+
+capture canopy install
+check "install exits 0" 0 "${last_status}"
+
+bare_tmux "${tmux_bin}" -L "${reboot_sock}" \
+  -f "${home}/.config/tmux/tmux.conf" new-session -d -s main
+sock_path="$(rb display-message -p '#{socket_path}')"
+
+first_pane=""
+for reboot_id in ${reboot_ids}; do
+  capture open_agent_pane "${reboot_id}"
+  check "an agent pane holding ${reboot_id} is running" 0 "${last_status}"
+  reboot_pane="${last_output}"
+  [ -n "${first_pane}" ] || first_pane="${reboot_pane}"
+  capture in_pane "${reboot_pane}" canopy agent report idle \
+    --source fake-agent --session-id "${reboot_id}"
+  check "the agent reported ${reboot_id} into its pane" 0 "${last_status}"
+  check "the pane carries the id the agent reported" "${reboot_id}" \
+    "$(rb display-message -p -t "${reboot_pane}" '#{@canopy_agent_session}')"
+done
+
+# A save has to exist before the pre-flight is asked anything, because
+# reboot-check answers out of the save file rather than out of intentions.
+# On a real machine continuum's autosave has long since run by the time
+# anybody asks; here the interval is skipped and the save is forced,
+# because what is being proven is that the save holds the right command,
+# not that a timer fires.
+capture force_save
+check "a save was written" 0 "${last_status}"
+check_contains "the save holds a resume command rather than a shell" \
+  "fake-agent --resume" "$(cat "${home}/.local/state/canopy/resurrect/last")"
+
+# Before the reboot, the pre-flight has to say this will work. A command
+# that only tells the truth afterwards is worth nothing: the whole point
+# of reboot-check is to be trusted before the machine goes down.
+capture in_pane "${first_pane}" canopy reboot-check
+check "reboot-check exits 0 with every agent pane resumable" 0 "${last_status}"
+for reboot_id in ${reboot_ids}; do
+  check_contains "reboot-check says ${reboot_id} will resume" \
+    "${reboot_id}" "${last_output}"
+done
+check_contains "reboot-check reports the restore path as on" \
+  "continuum restore at server start: on" "${last_output}"
+
+simulate_reboot
+
+for reboot_id in ${reboot_ids}; do
+  assert_resumed "${reboot_id}"
+done
+
+# shellcheck disable=SC2310  # killing a server that is already gone is success here
+rb kill-server >/dev/null 2>&1 || :
+rm -f "/tmp/tmux-$(id -u)/${reboot_sock}"
+end_scenario
+
+# --- scenario 8: honest failure --------------------------------------------
+#
+# The other half of the promise, and the half that makes the first half
+# worth anything. A pane whose agent never reported an id cannot come
+# back, and what canopy must do about that is say so beforehand, name the
+# pane, and still bring back every pane that can be brought back.
+
+begin_scenario 8 "a pane with no session id is called out, and costs no other pane"
+
+tmux_bin="$(command -v tmux)"
+reboot_sock="canopy-smoke-noid-$$"
+agent_setup
+
+kept_id=44444444-4444-4444-4444-444444444444
+lost_id=55555555-5555-5555-5555-555555555555
+
+capture canopy install
+check "install exits 0" 0 "${last_status}"
+
+bare_tmux "${tmux_bin}" -L "${reboot_sock}" \
+  -f "${home}/.config/tmux/tmux.conf" new-session -d -s main
+sock_path="$(rb display-message -p '#{socket_path}')"
+
+capture open_agent_pane "${kept_id}"
+check "the reporting agent pane is running" 0 "${last_status}"
+kept_pane="${last_output}"
+capture in_pane "${kept_pane}" canopy agent report idle \
+  --source fake-agent --session-id "${kept_id}"
+check "the reporting agent reported its id" 0 "${last_status}"
+
+# The second pane runs an agent and never reports. Nothing anywhere knows
+# which conversation it holds, which is exactly the case M3 removes by
+# supplying ids at launch.
+capture open_agent_pane "${lost_id}"
+check "the silent agent pane is running" 0 "${last_status}"
+lost_window="$(window_of "${lost_id}")"
+
+# Saved before the pre-flight is asked, for the same reason as scenario 7:
+# reboot-check answers out of the save file, so asking it first would have
+# it report every pane as unsaved and exit 1 for a reason that has nothing
+# to do with the one this scenario is about.
+capture force_save
+check "a save was written" 0 "${last_status}"
+
+capture in_pane "${kept_pane}" canopy reboot-check
+check "reboot-check exits 1 when a pane cannot be brought back" 1 "${last_status}"
+check_contains "reboot-check names the pane that will lose its conversation" \
+  "main:${lost_window}." "${last_output}"
+check_contains "reboot-check says why that pane is at risk" \
+  "no session id" "${last_output}"
+# The failing pane must not drag the healthy one down with it: one pane
+# that cannot be brought back is not a reason to stop promising the others.
+check_contains "reboot-check still says the reporting pane will resume" \
+  "${kept_id}" "${last_output}"
+
+simulate_reboot
+
+assert_resumed "${kept_id}"
+
+# The silent pane comes back as a pane, and comes back without its
+# conversation. Both halves are asserted: a reboot that dropped the window
+# entirely would pass a check that only looked for the absent resume.
+check "the silent agent's window came back" yes \
+  "$(yesno test -n "$(rb list-panes -t "main:${lost_window}" -F '#{pane_id}' 2>/dev/null | head -1)")"
+check "the silent pane did not come back resumed into a conversation" no \
+  "$(yesno grep -q "^resume ${lost_id}\$" "${agent_home}/${lost_id}.transcript")"
+
+# shellcheck disable=SC2310  # killing a server that is already gone is success here
+rb kill-server >/dev/null 2>&1 || :
+rm -f "/tmp/tmux-$(id -u)/${reboot_sock}"
+end_scenario
+
 printf '\nSCENARIOS-COMPLETE %s\n' "${scenario_count}"
 exit "${overall_failed}"

@@ -123,6 +123,22 @@ else
   else
     printf '  bash (both plugins are bash scripts): dormant (bash not found, the layer loads nothing)\n'
   fi
+
+  # ps is the other half of the same story and the nastier half. An absent
+  # bash leaves the plugins unloaded and visibly dormant; a ps that cannot
+  # report a process's parent leaves every plugin loaded and quietly
+  # useless, because canopy recognises an agent pane by asking ps what the
+  # pane's process is running (lib/pane.sh). Where the answer is empty,
+  # reboot-check reports no agent panes on a machine full of them, and the
+  # save strategy records shells. Nothing else would ever say so.
+  #
+  # Probed by running it rather than by looking for the binary: BusyBox
+  # ships a ps that exists and cannot answer this question.
+  if ps -ao ppid,args >/dev/null 2>&1; then
+    printf '  ps (agent panes are recognised through it): yes\n'
+  else
+    printf '  ps (agent panes are recognised through it): dormant (this ps cannot list processes with their parents, so no pane is recognised as an agent)\n'
+  fi
   for plugin_name in $plugin_names; do
     plugin_pin="$(canopy_plugin_pin "$plugin_name" 2>/dev/null || true)"
     plugin_commit="${plugin_pin#* }"

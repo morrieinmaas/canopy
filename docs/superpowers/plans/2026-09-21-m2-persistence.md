@@ -180,11 +180,11 @@ This is an honest boundary, not a shortcut. What the container proves is that ca
 - **Scenario 7, reboot:** in the container, start a tmux server with three panes each running the fake agent with a distinct session id, write a distinguishable line into each transcript, run `canopy reboot-check` and assert exit 0 with all three reported as resuming, force a continuum save, `kill-server` to simulate the reboot, start tmux again so the restore runs, then assert each pane is running the fake agent resumed with **its own** id and that each transcript is intact and belongs to the right pane.
 - **Scenario 8, honest failure:** one pane runs the fake agent with no session id. `reboot-check` must exit 1 and name that pane, and after the simulated reboot that pane restarts without its conversation while the others keep theirs.
 
-- [ ] **Step 1: Write scenario 7 and watch it fail** against the code before Tasks 3 to 7 exist, or against a deliberately broken strategy if it is written last.
-- [ ] **Step 2: Implement the scenario helpers** needed for a simulated reboot inside one container.
-- [ ] **Step 3: Run `test/smoke/run.sh` on both images**, confirm 16 of 16.
-- [ ] **Step 4: Prove the scenario can fail** by tampering with the saved command, and confirm the harness reports it with expected and observed values.
-- [ ] **Step 5: Commit** — `test(smoke): a simulated reboot returns each agent pane to its own conversation`
+- [x] **Step 1: Write scenario 7 and watch it fail** against the code before Tasks 3 to 7 exist, or against a deliberately broken strategy if it is written last.
+- [x] **Step 2: Implement the scenario helpers** needed for a simulated reboot inside one container.
+- [x] **Step 3: Run `test/smoke/run.sh` on both images**, confirm 16 of 16.
+- [x] **Step 4: Prove the scenario can fail** by tampering with the saved command, and confirm the harness reports it with expected and observed values.
+- [x] **Step 5: Commit** — `test(smoke): a simulated reboot returns each agent pane to its own conversation`
 
 ---
 
