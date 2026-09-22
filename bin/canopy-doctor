@@ -151,10 +151,11 @@ fi
 printf '\n'
 
 # --- Load-bearing settings --------------------------------------------------
-# For M1: the tmux version floor, the shipped config validating on a
-# scratch socket, and user.conf being sourced last. Failing any of these is
-# what earns exit 2, not a warning.
-printf 'Load-bearing settings (M1):\n'
+# From M1: the tmux version floor, the shipped config validating on a
+# scratch socket, and user.conf being sourced last. From M2:
+# @continuum-restore, without which a reboot restores nothing. Failing any
+# of these is what earns exit 2, not a warning.
+printf 'Load-bearing settings:\n'
 
 if canopy_tmux_version_ok; then
   printf '  tmux version floor (>= 3.4): ok\n'
@@ -200,6 +201,25 @@ else
     while IFS= read -r line; do
       printf '    %s\n' "$line"
     done <"$validate_tmp"
+    load_bearing_failed=1
+  fi
+
+  # @continuum-restore, the setting spec 5.3 hands to doctor, and the one
+  # that decides whether a reboot returns anything at all. continuum
+  # defaults it to off, so a config that fails to set it leaves the rest
+  # of persistence writing save files that nothing ever reads back.
+  #
+  # Read off the same entry point that was just validated, so a user.conf
+  # that turned it off is caught here rather than after somebody's reboot.
+  # shellcheck disable=SC2310  # a state question, so a non-zero return is the answer and not a failure to abort on
+  if restore_option="$(canopy_tmux_loaded_option "$entry_point" @continuum-restore)" &&
+    [ "$restore_option" = "on" ]; then
+    printf '  @continuum-restore is on: ok\n'
+  else
+    printf '  @continuum-restore is on: FAILED (the loaded config leaves it %s)\n' \
+      "${restore_option:-unset}"
+    printf '    nothing would be restored after a reboot; set it back with: set -g @continuum-restore on in %s/user.conf\n' \
+      "$CANOPY_CONFIG"
     load_bearing_failed=1
   fi
 fi

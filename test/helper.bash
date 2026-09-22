@@ -24,6 +24,26 @@ setup_canopy_home() {
   mkdir -p "$HOME"
 }
 
+# hold_off_boot_restore <socket-name>
+# Disarms continuum's boot-time auto restore on a scratch server, and must
+# be called before canopy's plugin layer is sourced into it.
+#
+# 30-plugins.conf sets @continuum-restore on, which is what makes a real
+# machine come back after a reboot. A test server is not a machine that
+# just booted: it already holds the panes the test built, and a restore
+# firing a second later would replace them with whatever the last save
+# holds. On a server with a single pane resurrect does that by killing the
+# pane it found, so the agent under test would be gone mid-assertion.
+#
+# continuum arms the restore only when the server started within
+# @continuum-restore-max-delay seconds, so zero disarms it, and it has to
+# be set first because continuum reads it as it loads. The restore path
+# itself is proven by the reboot scenario in test/smoke, on a server that
+# really did just start.
+hold_off_boot_restore() {
+  tmux -L "$1" set -g @continuum-restore-max-delay 0
+}
+
 # bare_tmux [arg...]
 # tmux with no CANOPY_* in its environment, the same way lib/tmux.sh runs
 # it and the same way a user's tmux runs. A test that exports those and then

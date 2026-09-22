@@ -157,6 +157,7 @@ wait_for_default_output() {
   # that file has to know the pane resumes despite it.
   sock="cnp-stagger-rc-$$"
   tmux -L "$sock" -f /dev/null new-session -d -s main
+  hold_off_boot_restore "$sock"
   tmux -L "$sock" source-file "$CANOPY_STORE/tmux/conf.d/30-plugins.conf"
   pane="$(tmux -L "$sock" list-panes -a -F '#{pane_id}' | head -1)"
   sock_path="$(tmux -L "$sock" display-message -p '#{socket_path}')"

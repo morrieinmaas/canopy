@@ -34,10 +34,36 @@ canopy_paths
 # unset option is the common case: reporting "unknown" for the machine
 # nobody has configured would make this command useless on most machines.
 canopy_rc_default_interval=15
+canopy_rc_default_restore=off
+canopy_rc_halt_file="${HOME-}/tmux_no_auto_restore"
 
 canopy_rc_option() {
   canopy_rc_raw="$(tmux show -gqv "$1" 2>/dev/null)" || canopy_rc_raw=""
   printf '%s\n' "$canopy_rc_raw"
+}
+
+# canopy_rc_other_tmux_running
+# True when continuum would decide that another tmux server is running.
+#
+# It is continuum's arithmetic, not a better one, because the point is to
+# report the decision continuum will actually make: it counts this user's
+# tmux processes, drops the current server by pid, and calls the rest
+# another server when they outnumber the clients attached here. Counting
+# more cleverly than continuum does would mean reporting a machine as fine
+# that continuum will then refuse to restore.
+canopy_rc_other_tmux_running() {
+  canopy_rc_server_pid="$(tmux display-message -p '#{pid}' 2>/dev/null)" || return 1
+  [ -n "$canopy_rc_server_pid" ] || return 1
+  canopy_rc_clients="$(tmux list-clients 2>/dev/null | wc -l)" || return 1
+  canopy_rc_others="$(ps -u "$(id -u)" -o command,pid 2>/dev/null |
+    awk -v self="$canopy_rc_server_pid" '
+      $1 !~ /^tmux/ { next }
+      $1 == "tmux" && $2 == "source" { next }
+      $NF == self { next }
+      { n++ }
+      END { print n + 0 }
+    ')" || return 1
+  [ "$canopy_rc_others" -gt "$canopy_rc_clients" ]
 }
 
 # canopy_rc_saved_command <session> <window index> <pane index>
@@ -83,6 +109,29 @@ canopy_rc_dir="$(canopy_rc_option @resurrect-dir)"
 [ -n "$canopy_rc_dir" ] || canopy_rc_dir="$CANOPY_STATE/resurrect"
 canopy_rc_save_file="$canopy_rc_dir/last"
 
+# --- whether anything reads the saves back ---------------------------------
+# Answered before a single pane is judged, because it outranks every
+# per-pane verdict. Autosave can be perfect, the save file can hold the
+# right resume command for every pane, and none of it is worth anything
+# when nothing replays the file at boot. continuum defaults
+# @continuum-restore to off, and a stock install that left it there
+# restored nothing at all while this command reported pane after pane as
+# resuming. A confident yes about a disabled restore path is the one
+# answer this command must never give.
+canopy_rc_restore="$(canopy_rc_option @continuum-restore)"
+[ -n "$canopy_rc_restore" ] || canopy_rc_restore="$canopy_rc_default_restore"
+canopy_rc_restore_ok=1
+canopy_rc_restore_why=""
+if [ "$canopy_rc_restore" != "on" ]; then
+  canopy_rc_restore_ok=0
+  canopy_rc_restore_why="@continuum-restore is $canopy_rc_restore, not on, so nothing is restored when the server starts"
+elif [ -f "$canopy_rc_halt_file" ]; then
+  # continuum's own off switch, and it is off switch enough: its restore
+  # script looks for this file before it does anything else.
+  canopy_rc_restore_ok=0
+  canopy_rc_restore_why="$canopy_rc_halt_file exists, and continuum restores nothing while it does"
+fi
+
 # --- the panes -------------------------------------------------------------
 canopy_rc_total=0
 canopy_rc_resuming=0
@@ -104,7 +153,13 @@ while IFS="$canopy_rc_tab" read -r canopy_rc_pane canopy_rc_adapter; do
   canopy_rc_total=$((canopy_rc_total + 1))
 
   # shellcheck disable=SC2310  # every branch here asks a question, so a non-zero return is the answer and not a failure to abort on
-  if [ -z "$canopy_rc_id" ]; then
+  if [ "$canopy_rc_restore_ok" -eq 0 ]; then
+    # Named per pane so the listing still says what is at risk, but never
+    # as "will resume": with the restore path disabled, no pane comes back
+    # however well it was saved.
+    canopy_rc_verdict="will not be restored"
+    canopy_rc_reason="the restore path is disabled, see below"
+  elif [ -z "$canopy_rc_id" ]; then
     canopy_rc_verdict="will restart without its conversation"
     canopy_rc_reason="no session id has been reported for this pane"
   elif ! canopy_rc_resume="$(canopy_adapter_resume_command \
@@ -146,6 +201,24 @@ case "$canopy_rc_interval" in
 esac
 
 printf 'Persistence:\n'
+
+if [ "$canopy_rc_restore_ok" -eq 1 ]; then
+  printf '  continuum restore at server start: on\n'
+else
+  printf '  continuum restore at server start: off\n'
+  canopy_rc_problem "$canopy_rc_restore_why"
+fi
+
+# Not a problem, because it is not a misconfiguration and it is not
+# permanent: continuum refuses to auto restore while another tmux server
+# is running, and whether one is running at the next boot is a different
+# question from whether one is running now. It is said out loud because
+# this is exactly where a developer's machine stops behaving like CI, and
+# a divergence nobody is told about is one nobody debugs.
+# shellcheck disable=SC2310  # a state question, so its non-zero return is the answer and not a failure to abort on
+if canopy_rc_other_tmux_running; then
+  printf '  another tmux server is running, and continuum restores nothing while that is true at boot\n'
+fi
 
 if [ "$canopy_rc_interval_ok" -eq 0 ]; then
   printf '  continuum autosave: off\n'

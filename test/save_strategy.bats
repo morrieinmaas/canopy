@@ -75,6 +75,7 @@ strategy_tmux_start() {
   # it would only make each assertion say so twice. The wrapper has its own
   # file, test/stagger.bats.
   tmux -L "$sock" set -g @canopy_resume_stagger_ms 0
+  hold_off_boot_restore "$sock"
   pane="$(tmux -L "$sock" list-panes -a -F '#{pane_id}' | head -1)"
   sock_path="$(tmux -L "$sock" display-message -p '#{socket_path}')"
   TMUX="$sock_path,0,0"
