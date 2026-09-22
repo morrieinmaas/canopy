@@ -144,6 +144,14 @@ else
   # tty it reports nothing at all on Linux while working perfectly inside
   # the panes canopy actually asks about. Either way round, the check
   # would have described the prober instead of the machine.
+  doctor_ps_parent="$(ps -o ppid= -p "$$" 2>/dev/null | tr -d ' ')" || doctor_ps_parent=""
+  case "$doctor_ps_parent" in
+    '' | *[!0-9]*)
+      printf '  ps (agent panes are recognised through it): dormant (this ps cannot report a process parent, so no pane is recognised as an agent)\n'
+      ;;
+    *) printf '  ps (agent panes are recognised through it): yes\n' ;;
+  esac
+
   # continuum's autosave hook, checked on the server that is actually
   # running rather than on a scratch one.
   #
@@ -171,14 +179,6 @@ else
         ;;
     esac
   fi
-
-  doctor_ps_parent="$(ps -o ppid= -p "$$" 2>/dev/null | tr -d ' ')" || doctor_ps_parent=""
-  case "$doctor_ps_parent" in
-    '' | *[!0-9]*)
-      printf '  ps (agent panes are recognised through it): dormant (this ps cannot report a process parent, so no pane is recognised as an agent)\n'
-      ;;
-    *) printf '  ps (agent panes are recognised through it): yes\n' ;;
-  esac
   for plugin_name in $plugin_names; do
     plugin_pin="$(canopy_plugin_pin "$plugin_name" 2>/dev/null || true)"
     plugin_commit="${plugin_pin#* }"
@@ -428,8 +428,14 @@ else
   # that grew a row without the layer being regenerated is exactly the
   # drift worth reporting, and it is invisible to anything that trusts a
   # stored count.
-  keys_declared="$(grep -cv '^#' "$CANOPY_STORE/tmux/keys.tsv" 2>/dev/null || printf '0')"
-  keys_bound="$(grep -c '^bind ' "$CANOPY_STATE/10-keys.conf" 2>/dev/null || printf '0')"
+  # Counted exactly the way canopy-keys counts, blank rows skipped. grep -cv
+  # '^#' counts them, so one blank separator line in a table that is already
+  # visually grouped put declared one ahead of bound and pinned doctor to
+  # "stale" for good, however often the generator was run. awk also prints a
+  # number and exits 0 on an empty file, where grep -c prints 0 and returns
+  # 1, which under set -e aborted doctor on the line after.
+  keys_declared="$(awk '!/^#/ && NF { n++ } END { print n + 0 }' "$CANOPY_STORE/tmux/keys.tsv" 2>/dev/null)"
+  keys_bound="$(awk '/^bind / { n++ } END { print n + 0 }' "$CANOPY_STATE/10-keys.conf" 2>/dev/null)"
   if [ "$keys_declared" -eq "$keys_bound" ]; then
     printf '  %s keys declared in the table, %s bound in the generated layer\n' \
       "$keys_declared" "$keys_bound"

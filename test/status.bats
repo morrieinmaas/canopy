@@ -118,3 +118,26 @@ teardown() {
   run grep -c '^run-shell' "$CANOPY_STORE/tmux/conf.d/20-status.conf"
   [ "$output" = "0" ]
 }
+
+@test "the prefix can still be sent through after the plugin layer loads" {
+  # tmux-resurrect binds prefix C-s to its save script when it loads, and
+  # it loads after the key layer. With canopy's prefix being C-s that took
+  # the send-prefix binding outright: `prefix C-s` wrote a save file, and
+  # there was no way left to send the prefix to a nested tmux at all,
+  # while keys.tsv went on declaring a prefix-send row that existed
+  # nowhere. 30-plugins moves resurrect's own two keys before it loads.
+  sock="canopy-prefix-$$"
+  tmux -L "$sock" -f /dev/null new-session -d 'sleep 30'
+  hold_off_boot_restore "$sock"
+  tmux -L "$sock" source-file "$CANOPY_STORE/tmux/conf.d/00-core.conf"
+  tmux -L "$sock" source-file "$CANOPY_STATE/10-keys.conf" 2>/dev/null || {
+    canopy-keys
+    tmux -L "$sock" source-file "$CANOPY_STATE/10-keys.conf"
+  }
+  tmux -L "$sock" source-file "$CANOPY_STORE/tmux/conf.d/30-plugins.conf"
+  keys="$(tmux -L "$sock" list-keys -T prefix 2>/dev/null)"
+  kill_tmux_server "$sock"
+  sock=""
+  [[ "$keys" == *"send-prefix"* ]]
+  [[ "$keys" != *"C-s     run-shell"* ]]
+}

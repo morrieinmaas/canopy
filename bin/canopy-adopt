@@ -89,7 +89,10 @@ canopy_ad_draft() {
   # condition failed, POSIX leaves $? at zero, so reading it there would
   # turn every clean pane into an undetermined one.
   canopy_ad_rc=0
-  sh -c "$canopy_ad_cmd" >/dev/null 2>&1 || canopy_ad_rc=$?
+  # </dev/null because this runs inside the loop reading the pane list: a
+  # detect_draft holding a bare `grep` would swallow the remaining panes,
+  # and they would simply never be examined or reported.
+  sh -c "$canopy_ad_cmd" </dev/null >/dev/null 2>&1 || canopy_ad_rc=$?
   case "$canopy_ad_rc" in
     0) printf 'has\n' ;;
     1) printf 'none\n' ;;
@@ -118,6 +121,17 @@ canopy_ad_carries_resume() {
   esac
 }
 
+# canopy_ad_id_is_safe <session id>
+# True when the id holds nothing a shell reads as syntax. Every real id is
+# a uuid; this allows a little more than that and nothing that could end a
+# command and start another.
+canopy_ad_id_is_safe() {
+  case "$1" in
+    '' | *[!A-Za-z0-9._:-]*) return 1 ;;
+    *) return 0 ;;
+  esac
+}
+
 canopy_ad_total=0
 canopy_ad_pinned=0
 canopy_ad_left=0
@@ -141,6 +155,15 @@ while IFS="$canopy_ad_tab" read -r canopy_ad_pane canopy_ad_adapter; do
   if [ -z "$canopy_ad_id" ]; then
     canopy_ad_verdict="skipped"
     canopy_ad_reason="no session id has been reported, so there is nothing to resume"
+  elif ! canopy_ad_id_is_safe "$canopy_ad_id"; then
+    # Checked again here, not only where canopy-agent let it in. This is
+    # the line that hands a string to a shell, and a guard at the far end
+    # of a pipe is one a later caller can route around. Written as a
+    # branch of this chain rather than a case inside the else: the first
+    # attempt set the verdict and then fell through to the branch that
+    # adopts, which overwrote it and ran the command anyway.
+    canopy_ad_verdict="skipped"
+    canopy_ad_reason="the session id holds characters a shell would read as syntax"
   elif ! canopy_ad_resume="$(canopy_adapter_resume_command \
     "$canopy_ad_adapter" "$canopy_ad_id" 2>/dev/null)"; then
     canopy_ad_verdict="skipped"

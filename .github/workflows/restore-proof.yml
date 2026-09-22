@@ -1,8 +1,19 @@
 name: Restore proof
 
 on:
+  # Heavy: two OS runners, and for the smoke run two container images
+  # built from scratch. Running that on every push to every branch
+  # spends minutes to tell us what the same command told us locally a
+  # moment earlier. It runs where the answer is load bearing, on main
+  # and on a pull request, and on demand for anything else.
   push:
+    branches: [main]
   pull_request:
+  workflow_dispatch:
+
+concurrency:
+  group: restore-proof-${{ github.ref }}
+  cancel-in-progress: true
 
 jobs:
   restore-proof:

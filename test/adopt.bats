@@ -289,3 +289,33 @@ resume 22222222-3333-4444-5555-666666666666" ]
   [[ "$output" == *"would adopt"* ]]
   [[ "$(canopy_pane_command "$pane")" == *"fake-agent --session-id bbbbbbbb-cccc-dddd-eeee-ffffffffffff"* ]]
 }
+
+@test "a session id holding shell syntax is refused, not run" {
+  # The one guard in this file that used to fail open. The id reaches
+  # respawn-pane, which hands it to a shell, and it is also written into
+  # resurrect's save file and replayed at boot, so a pane option carrying
+  # $(...) or a semicolon was a command canopy would run twice over.
+  adopt_start
+  adopt_run_agent "$pane" 77777777-1111-2222-3333-444444444444
+  tmux -L "$sock" set -p -t "$pane" @canopy_agent_session 'x; touch /tmp/canopy-pwned-'"$$"
+  tmux -L "$sock" set -p -t "$pane" @canopy_agent_source fake-agent
+  tmux -L "$sock" set -p -t "$pane" @canopy_agent_state idle
+
+  run canopy-adopt --yes
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"shell would read as syntax"* ]]
+  [ ! -e "/tmp/canopy-pwned-$$" ]
+}
+
+@test "canopy agent report refuses a session id holding shell syntax" {
+  adopt_start
+  run in_pane_report "$pane" 'a$(touch /tmp/canopy-pwned2)'
+  [ "$status" -ne 0 ]
+  [ ! -e /tmp/canopy-pwned2 ]
+}
+
+in_pane_report() {
+  sock_path="$(tmux -L "$sock" display-message -p '#{socket_path}')"
+  env TMUX="$sock_path,0,0" TMUX_TMPDIR=/tmp TMUX_PANE="$1" \
+    canopy-agent report idle --source fake-agent --session-id "$2"
+}

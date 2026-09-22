@@ -31,8 +31,10 @@ teardown() {
 
 @test "every row of the table becomes a binding, and nothing else does" {
   canopy-keys
-  table_rows="$(grep -cv '^#' "$CANOPY_STORE/tmux/keys.tsv" | tr -d ' ')"
-  bind_lines="$(grep -c '^bind ' "$CANOPY_STATE/10-keys.conf" | tr -d ' ')"
+  # Counted as the generator counts: blank rows are skipped, so counting
+  # them here would report drift that does not exist.
+  table_rows="$(awk '!/^#/ && NF { n++ } END { print n + 0 }' "$CANOPY_STORE/tmux/keys.tsv")"
+  bind_lines="$(awk '/^bind / { n++ } END { print n + 0 }' "$CANOPY_STATE/10-keys.conf")"
   [ "$table_rows" = "$bind_lines" ]
 }
 

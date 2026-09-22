@@ -195,6 +195,13 @@ canopy_adapter_get() {
     *'{id}'*) ;;
     *) canopy_die "$manifest: resume_template must contain the {id} placeholder, got: $a_resume" ;;
   esac
+  case "$a_draft" in
+    '') ;;
+    *'{pane}'*) ;;
+    *)
+      canopy_die "$manifest: detect_draft must contain the {pane} placeholder, got: $a_draft"
+      ;;
+  esac
   if [ "$a_pin" = yes ]; then
     case "$a_launch" in
       *'{id}'*) ;;
