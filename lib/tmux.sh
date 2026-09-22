@@ -108,7 +108,21 @@ canopy_tmux_validate() {
   # kill-server stops the server and leaves its socket file behind, one per
   # call; that is how roughly 900 of them piled up under /tmp/tmux-<uid>/.
   rm -f "/tmp/tmux-$(id -u)/$sock"
-  if [ "$rc" -ne 0 ]; then
+  # Anything tmux said counts as a failure, even when it exited 0.
+  #
+  # tmux does not report a sourced file's errors through the exit status
+  # as reliably as it looks. A glob source-file returns success as long as
+  # something matched, whatever the matched files contained, and a
+  # `run-shell` anywhere in a layer passes through the command queue and
+  # resets the status of the source-file running it, so every error in
+  # every later layer stops being counted. Both were found here: a status
+  # layer with one `run-shell` in it made `canopy install` accept a config
+  # holding a syntax error, which is the exact failure this function is
+  # the only guard against.
+  #
+  # What tmux does do reliably is print the error, with the file and line.
+  # So the output is the verdict, and the status is only half of it.
+  if [ "$rc" -ne 0 ] || [ -n "$err" ]; then
     printf '%s\n' "$err" >&2
     return 1
   fi

@@ -234,3 +234,33 @@ off' ]
   [ "$output" = "vi
 on" ]
 }
+
+@test "an error in a layer is caught even when an earlier layer ran a shell command" {
+  # The hole this closes, found by a status layer that used `run-shell` to
+  # build two glyphs. A run-shell passes through tmux's command queue and
+  # resets the status of the source-file running it, so every error in
+  # every LATER layer stops being reported and tmux exits 0. This function
+  # is the only thing standing between a broken config and a machine that
+  # loads nothing, and it was returning ok.
+  #
+  # The same applies to a glob source-file, which returns success whenever
+  # anything matched, whatever the matched files held.
+  store_copy="$BATS_TEST_TMPDIR/store"
+  mkdir -p "$store_copy"
+  cp -R "$CANOPY_STORE/tmux" "$store_copy/tmux"
+  printf 'run-shell "true"\n' >"$store_copy/tmux/conf.d/15-runshell.conf"
+  printf 'totally-not-a-real-tmux-command\n' >"$store_copy/tmux/conf.d/98-broken.conf"
+
+  . "$CANOPY_STORE/lib/tmux.sh"
+  entry="$BATS_TEST_TMPDIR/entry.conf"
+  {
+    printf 'set-environment -g CANOPY_STORE "%s"\n' "$store_copy"
+    printf 'set-environment -g CANOPY_STATE "%s"\n' "$CANOPY_STATE"
+    printf 'set-environment -g CANOPY_CONFIG "%s"\n' "$CANOPY_CONFIG"
+    printf 'source-file "%s/tmux/tmux.conf"\n' "$store_copy"
+  } >"$entry"
+
+  run canopy_tmux_validate "$entry"
+  [ "$status" -ne 0 ]
+  [[ "$output" == *"totally-not-a-real-tmux-command"* ]]
+}

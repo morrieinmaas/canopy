@@ -144,6 +144,34 @@ else
   # tty it reports nothing at all on Linux while working perfectly inside
   # the panes canopy actually asks about. Either way round, the check
   # would have described the prober instead of the machine.
+  # continuum's autosave hook, checked on the server that is actually
+  # running rather than on a scratch one.
+  #
+  # continuum prepends `#(continuum_save.sh)` to status-right when the
+  # plugin layer loads, and that interpolation IS the autosave: it fires
+  # on status redraws, so a status-right without it is a server that never
+  # saves. Any config setting status-right after the plugin layer removes
+  # it, which is why canopy's own status layer is numbered 20 and why
+  # user.conf should append with `set -ag`.
+  #
+  # A scratch server cannot answer this: continuum skips installing the
+  # hook whenever another tmux server is running, which is true of every
+  # machine that is using tmux right now. The live server is both the
+  # honest place to ask and the only place the answer matters.
+  if tmux list-sessions >/dev/null 2>&1; then
+    doctor_status_right="$(tmux show -gv status-right 2>/dev/null)" || doctor_status_right=""
+    case "$doctor_status_right" in
+      *continuum_save.sh*)
+        printf '  continuum autosave hook in status-right: present\n'
+        ;;
+      *)
+        printf '  continuum autosave hook in status-right: MISSING, so this server never autosaves\n'
+        printf '    something set status-right after the plugin layer; append instead: set -ag status-right "..."\n'
+        warnings=$((warnings + 1))
+        ;;
+    esac
+  fi
+
   doctor_ps_parent="$(ps -o ppid= -p "$$" 2>/dev/null | tr -d ' ')" || doctor_ps_parent=""
   case "$doctor_ps_parent" in
     '' | *[!0-9]*)
