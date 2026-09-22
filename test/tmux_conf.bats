@@ -198,6 +198,19 @@ core_options() {
   printf '%s' "$value"
 }
 
+@test "extended-keys-format is guarded, because it does not exist before tmux 3.5" {
+  # canopy's floor is 3.4, which Ubuntu still ships, and that tmux rejects
+  # the option outright: "invalid option: extended-keys-format", which
+  # fails validation and rolls back the whole install. The guard has to be
+  # tmux's own %if, not if-shell, because if-shell resets the status of
+  # the source-file running it and hides errors in every later layer.
+  run grep -n -A 1 '^%if .*version.*3\.5' "$CANOPY_STORE/tmux/conf.d/00-core.conf"
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"extended-keys-format"* ]]
+  run grep -c '^set -g extended-keys-format' "$CANOPY_STORE/tmux/conf.d/00-core.conf"
+  [ "$output" = "1" ]
+}
+
 @test "the core layer sends extended keys unconditionally, in the format TUIs expect" {
   # The setting that decides whether keys work at all in nvim, helix and a
   # coding agent. tmux forwards extended keys only for its OWN request
@@ -206,8 +219,15 @@ core_options() {
   # bare `q` to quit a TUI silently does nothing. Sending them always, in
   # CSI-u, is the form the apps actually read.
   run core_options extended-keys extended-keys-format
-  [ "$output" = "always
+  if tmux -V | awk '{ exit ($2 + 0 >= 3.5) ? 0 : 1 }'; then
+    [ "$output" = "always
 csi-u" ]
+  else
+    # Below 3.5 the format option does not exist, and the guard above is
+    # what keeps the config loading at all.
+    [ "$output" = "always
+" ]
+  fi
 }
 
 @test "the core layer lets a TUI's own escape sequences through" {
