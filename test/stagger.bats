@@ -193,3 +193,14 @@ wait_for_default_output() {
   [ "$status" -eq 0 ]
   [[ "$output" == *"will resume"* ]]
 }
+
+@test "a leading zero falls back to the default rather than to octal or an error" {
+  # 0500 is 320 in shell arithmetic, and 0900 is not a number at all:
+  # "value too great for base", which fails the function and silently
+  # drops the stagger from the saved command. A plain 0 still means off.
+  . "$CANOPY_STORE/lib/resume.sh"
+  [ -z "$(canopy_resume_stagger_prefix 12345 0)" ]
+  [ -n "$(canopy_resume_stagger_prefix 12345 0500 2>&1)" ]
+  [[ "$(canopy_resume_stagger_prefix 12345 0900 2>&1)" != *"base"* ]]
+  [[ "$(canopy_resume_stagger_prefix 12345 0900 2>&1)" == "sleep "* ]]
+}

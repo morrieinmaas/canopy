@@ -41,8 +41,18 @@ canopy_status_read_options() {
     2>/dev/null || printf '|||||||||\n'
 }
 
-canopy_status_field() {
-  printf '%s' "$1" | cut -d'|' -f"$2"
+# Split with the shell, not with ten pipelines into cut. Each of those was
+# two processes, twenty in total, to take apart a string this script is
+# already holding, in a script whose entire reason for existing is that a
+# fork per segment per redraw is a defect. read splits it in one go.
+# shellcheck disable=SC2034  # fg is read to keep the fields lined up with the format string, not used here
+canopy_status_split() {
+  IFS='|' read -r canopy_status_bg canopy_status_fg canopy_status_blue \
+    canopy_status_green canopy_status_grey canopy_status_red \
+    canopy_status_pill_l canopy_status_pill_r \
+    canopy_status_want_batt canopy_status_want_net <<EOF
+$1
+EOF
 }
 
 # pill <colour> <text>
@@ -66,7 +76,7 @@ canopy_status_pill() {
 canopy_status_battery() {
   canopy_status_pct=""
   canopy_status_charging=0
-  if [ "$(uname)" = Darwin ]; then
+  if [ "$canopy_status_uname" = Darwin ]; then
     canopy_status_batt="$(pmset -g batt 2>/dev/null)" || return 0
     case "$canopy_status_batt" in
       *InternalBattery*) ;;
@@ -84,8 +94,11 @@ canopy_status_battery() {
     for canopy_status_b in /sys/class/power_supply/BAT*; do
       [ -r "$canopy_status_b/capacity" ] || continue
       canopy_status_pct="$(cat "$canopy_status_b/capacity" 2>/dev/null)" || canopy_status_pct=""
+      # "Not charging" is Linux for plugged in and deliberately not
+      # charging, which a charge threshold does on purpose. Counting it as
+      # charging rendered a battery sitting at 45 percent as a green +45%.
       case "$(cat "$canopy_status_b/status" 2>/dev/null)" in
-        Charging | Full | "Not charging") canopy_status_charging=1 ;;
+        Charging | Full) canopy_status_charging=1 ;;
         *) ;;
       esac
       break
@@ -119,7 +132,7 @@ canopy_status_battery() {
 # `set -ag status-right`.
 canopy_status_net() {
   canopy_status_iface=""
-  if [ "$(uname)" = Darwin ]; then
+  if [ "$canopy_status_uname" = Darwin ]; then
     canopy_status_iface="$(route -n get default 2>/dev/null |
       awk '/interface:/ { print $2; exit }')" || canopy_status_iface=""
   else
@@ -143,16 +156,10 @@ canopy_status_net() {
 
 # --- render ----------------------------------------------------------------
 
-canopy_status_opts="$(canopy_status_read_options)"
-canopy_status_bg="$(canopy_status_field "$canopy_status_opts" 1)"
-canopy_status_blue="$(canopy_status_field "$canopy_status_opts" 3)"
-canopy_status_green="$(canopy_status_field "$canopy_status_opts" 4)"
-canopy_status_grey="$(canopy_status_field "$canopy_status_opts" 5)"
-canopy_status_red="$(canopy_status_field "$canopy_status_opts" 6)"
-canopy_status_pill_l="$(canopy_status_field "$canopy_status_opts" 7)"
-canopy_status_pill_r="$(canopy_status_field "$canopy_status_opts" 8)"
-canopy_status_want_batt="$(canopy_status_field "$canopy_status_opts" 9)"
-canopy_status_want_net="$(canopy_status_field "$canopy_status_opts" 10)"
+canopy_status_split "$(canopy_status_read_options)"
+
+# Asked once, not once per segment.
+canopy_status_uname="$(uname)"
 
 # Unset means on. A machine that has never set these should get the
 # status line the distribution ships, and a person who wants a segment
