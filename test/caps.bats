@@ -3,14 +3,7 @@ load helper
 
 setup() { setup_canopy_env; }
 
-# A minimal PATH that still resolves every tool canopy-caps itself needs
-# (mkdir, sed, cat, printf, dirname, tmux, sh) but excludes the directories
-# that hold every one of the six probed tools on this development machine,
-# so "absent" can be asserted deterministically instead of depending on
-# what happens to be installed on the host running the tests.
-restricted_path() {
-  printf '%s' "$CANOPY_STORE/bin:/opt/nanobrew/prefix/opt/coreutils/libexec/gnubin:/opt/nanobrew/prefix/opt/gnu-sed/libexec/gnubin:/opt/nanobrew/prefix/bin:/usr/bin:/bin"
-}
+# The restricted PATH these tests run under lives in test/helper.bash.
 
 @test "generates 05-caps.conf under CANOPY_STATE" {
   run canopy-caps

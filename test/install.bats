@@ -1,13 +1,7 @@
 #!/usr/bin/env bats
 load helper
 
-# A minimal PATH that still resolves every tool canopy install itself needs
-# (tmux, sh, awk, sort, date, cp, mkdir, chmod, sha256 tool) but excludes the
-# directory that holds mise on this development machine, so "mise absent" can
-# be asserted deterministically. Mirrors caps.bats' restricted_path().
-restricted_path() {
-  printf '%s' "$CANOPY_STORE/bin:/opt/nanobrew/prefix/opt/coreutils/libexec/gnubin:/opt/nanobrew/prefix/opt/gnu-sed/libexec/gnubin:/opt/nanobrew/prefix/opt/gawk/libexec/gnubin:/opt/nanobrew/prefix/bin:/usr/bin:/bin"
-}
+# The restricted PATH these tests install under lives in test/helper.bash.
 
 setup() {
   setup_canopy_env

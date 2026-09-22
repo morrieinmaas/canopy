@@ -1,14 +1,7 @@
 #!/usr/bin/env bats
 load helper
 
-# A minimal PATH that still resolves every tool canopy-doctor itself needs
-# (tmux, sh, awk, grep, printf) but excludes the directories that hold every
-# one of the six probed capability tools on this development machine, so a
-# dormant layer can be asserted deterministically. Mirrors caps.bats'
-# restricted_path().
-restricted_path() {
-  printf '%s' "$CANOPY_STORE/bin:/opt/nanobrew/prefix/opt/coreutils/libexec/gnubin:/opt/nanobrew/prefix/opt/gnu-sed/libexec/gnubin:/opt/nanobrew/prefix/opt/gawk/libexec/gnubin:/opt/nanobrew/prefix/bin:/usr/bin:/bin"
-}
+# The restricted PATH these tests run under lives in test/helper.bash.
 
 setup() {
   setup_canopy_env

@@ -84,3 +84,23 @@ kill_tmux_server() {
   [ -n "$path" ] && rm -f "$path"
   return 0
 }
+
+# restricted_path
+# A minimal PATH that still resolves everything canopy itself needs (tmux,
+# sh, awk, grep, sed) while excluding the directories that hold the six
+# probed capability tools, so a dormant layer can be asserted
+# deterministically.
+#
+# The directory holding tmux is discovered rather than written down. It
+# was written down, three times, as this machine's package manager prefix,
+# which exists nowhere else: on CI that left a PATH with no tmux on it at
+# all, so `canopy install` had nothing to validate the config it had just
+# written with, and failed. It failed only on macOS, because the Linux
+# runner happens to carry a tmux in /usr/bin.
+restricted_path() {
+  local tmux_bin tmux_dir=""
+  if tmux_bin="$(command -v tmux 2>/dev/null)"; then
+    tmux_dir="$(dirname "$tmux_bin")"
+  fi
+  printf '%s' "$CANOPY_STORE/bin${tmux_dir:+:$tmux_dir}:/opt/nanobrew/prefix/opt/coreutils/libexec/gnubin:/opt/nanobrew/prefix/opt/gnu-sed/libexec/gnubin:/opt/nanobrew/prefix/opt/gawk/libexec/gnubin:/opt/nanobrew/prefix/bin:/usr/bin:/bin"
+}
