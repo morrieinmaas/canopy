@@ -141,3 +141,15 @@ teardown() {
   [[ "$keys" == *"send-prefix"* ]]
   [[ "$keys" != *"C-s     run-shell"* ]]
 }
+
+@test "the aggregator splits its options without forking" {
+  # Twenty processes per render, to take apart a string the script already
+  # holds, in the script whose whole premise is that a fork per segment is
+  # a defect.
+  run grep -c 'cut -d' "$CANOPY_STORE/bin/canopy-status"
+  [ "$output" = "0" ]
+  # Counted as invocations, not as mentions: the other two are reads of
+  # the variable this one fills.
+  run grep -c '\$(uname)' "$CANOPY_STORE/bin/canopy-status"
+  [ "$output" = "1" ]
+}

@@ -26,8 +26,14 @@ canopy_resume_stagger_prefix() {
   # Long enough that ten panes come up about a tenth of a second apart,
   # short enough that a single restored pane is not noticeably late.
   bound=1000
+  # A leading zero makes shell arithmetic read the value as octal, so 0500
+  # would be 320 and 0900 is not a number at all: "value too great for
+  # base", which fails the function and silently drops the stagger. Both
+  # fall back to the default instead. Plain 0 still means off, because
+  # that is the documented way to disable the wrapper.
   case "${2-}" in
     '' | *[!0-9]*) ;;
+    0[0-9]*) ;;
     *) bound="$2" ;;
   esac
   [ "$bound" -gt 0 ] || return 0

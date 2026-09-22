@@ -284,3 +284,20 @@ on" ]
   [ "$status" -ne 0 ]
   [[ "$output" == *"totally-not-a-real-tmux-command"* ]]
 }
+
+@test "reloading the config does not grow the appending option lists" {
+  # `prefix r` re-sources the entry point, and 00-core's terminal-features
+  # and update-environment lines append rather than set. Without a guard,
+  # three reloads left the same four features listed three times and TERM
+  # listed six times: harmless to tmux, unreadable to a person, and
+  # unbounded across a session.
+  sock="canopy-test-reload-$$"
+  tmux -L "$sock" -f "$CANOPY_STORE/tmux/tmux.conf" new-session -d
+  tmux -L "$sock" source-file "$CANOPY_STORE/tmux/tmux.conf"
+  tmux -L "$sock" source-file "$CANOPY_STORE/tmux/tmux.conf"
+  features="$(tmux -L "$sock" show -gv terminal-features)"
+  envlist="$(tmux -L "$sock" show -gv update-environment)"
+  kill_tmux_server "$sock"
+  [ "$(printf '%s' "$features" | grep -o 'xterm-ghostty:RGB' | wc -l | tr -d ' ')" = "1" ]
+  [ "$(printf '%s' "$envlist" | grep -o 'TERM_PROGRAM' | wc -l | tr -d ' ')" = "1" ]
+}
