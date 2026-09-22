@@ -69,7 +69,12 @@ delay_ms_of() {
       seconds="${seconds%% &&*}"
       local whole="${seconds%%.*}"
       local frac="${seconds#*.}"
-      printf '%s\n' "$((whole * 1000 + frac))"
+      # 10# because the fraction is printed zero padded to three digits,
+      # and bash reads a leading zero as octal: a delay of 39ms arrives
+      # here as "039" and aborts the test with "value too great for base".
+      # Which delays a run produces depends on the pane pids it happened
+      # to get, so this failed roughly one run in ten and looked random.
+      printf '%s\n' "$((10#$whole * 1000 + 10#$frac))"
       ;;
     *) printf 'none\n' ;;
   esac
