@@ -235,3 +235,33 @@ plugins_dir() { printf '%s' "$CANOPY_STORE/plugins"; }
   [[ "$output" == *"tmux-continuum"*"MISSING"* ]]
   [ "$status" -ne 0 ]
 }
+
+@test "autosave runs every five minutes, not at continuum's fifteen" {
+  # continuum's own default is 15. Five is canopy's, because the window a
+  # save interval leaves open is the window in which a reboot loses a
+  # conversation, and reboot-check can only report what the last save
+  # holds: at fifteen minutes a pane opened twelve minutes ago is
+  # truthfully reported as "not saved yet", which is correct and useless.
+  sock="cnp-plg-int-$$"
+  tmux -L "$sock" -f /dev/null new-session -d
+  tmux -L "$sock" source-file "$CANOPY_STORE/tmux/conf.d/30-plugins.conf"
+  run tmux -L "$sock" show -gv @continuum-save-interval
+  kill_tmux_server "$sock"
+  [ "$status" -eq 0 ]
+  [ "$output" = "5" ]
+}
+
+@test "an nvim pane is saved as a session rather than as a bare editor" {
+  # resurrect can ask nvim to write its own session file and restore it,
+  # which is the difference between a pane that comes back in the editor
+  # and a pane that comes back in the editor with the buffers, splits and
+  # cursor positions it had. The same claim this milestone makes for an
+  # agent pane, for the other program a pane is most likely to be holding.
+  sock="cnp-plg-nvim-$$"
+  tmux -L "$sock" -f /dev/null new-session -d
+  tmux -L "$sock" source-file "$CANOPY_STORE/tmux/conf.d/30-plugins.conf"
+  run tmux -L "$sock" show -gv @resurrect-strategy-nvim
+  kill_tmux_server "$sock"
+  [ "$status" -eq 0 ]
+  [ "$output" = "session" ]
+}
