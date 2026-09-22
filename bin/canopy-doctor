@@ -134,11 +134,23 @@ else
   #
   # Probed by running it rather than by looking for the binary: BusyBox
   # ships a ps that exists and cannot answer this question.
-  if ps -ao ppid,args >/dev/null 2>&1; then
-    printf '  ps (agent panes are recognised through it): yes\n'
-  else
-    printf '  ps (agent panes are recognised through it): dormant (this ps cannot list processes with their parents, so no pane is recognised as an agent)\n'
-  fi
+  #
+  # The question is asked of one known process rather than by running
+  # lib/pane.sh's own `ps -ao ppid,args`, for two reasons found by having
+  # written it that way first. That form exits non-zero on a working
+  # machine, 1 with procps and 2 on macOS, and pane.sh never noticed
+  # because it reads the pipeline's status rather than ps's. And `-a`
+  # lists only processes with a terminal, so run from a script with no
+  # tty it reports nothing at all on Linux while working perfectly inside
+  # the panes canopy actually asks about. Either way round, the check
+  # would have described the prober instead of the machine.
+  doctor_ps_parent="$(ps -o ppid= -p "$$" 2>/dev/null | tr -d ' ')" || doctor_ps_parent=""
+  case "$doctor_ps_parent" in
+    '' | *[!0-9]*)
+      printf '  ps (agent panes are recognised through it): dormant (this ps cannot report a process parent, so no pane is recognised as an agent)\n'
+      ;;
+    *) printf '  ps (agent panes are recognised through it): yes\n' ;;
+  esac
   for plugin_name in $plugin_names; do
     plugin_pin="$(canopy_plugin_pin "$plugin_name" 2>/dev/null || true)"
     plugin_commit="${plugin_pin#* }"
