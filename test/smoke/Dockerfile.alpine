@@ -9,10 +9,17 @@
 #
 # Finding: canopy itself never invokes git. It is here because a canopy
 # install is a checkout, so a user needs git to GET canopy, not to run
-# it. Everything canopy does call is in the BusyBox userland already.
+# it. Everything canopy itself calls is in the BusyBox userland already.
+#
+# procps and bash are different, and neither is a convenience. canopy
+# recognises an agent pane by asking ps what it runs, and BusyBox ps
+# cannot answer that. The vendored resurrect and continuum are
+# #!/usr/bin/env bash scripts, so on a box without bash they never run at
+# all: no autosave, no restore, and nothing anywhere saying so. Both are
+# the reason `canopy doctor` now checks for them by name.
 FROM alpine:latest
 
-RUN apk add --no-cache tmux git
+RUN apk add --no-cache tmux git procps bash
 
 # The repository, copied in exactly as a user would have it checked out.
 # Last, so editing canopy does not invalidate the package layer.

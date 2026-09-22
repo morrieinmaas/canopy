@@ -9,13 +9,20 @@
 #
 # Finding: canopy itself never invokes git. It is here because a canopy
 # install is a checkout, so a user needs git to GET canopy, not to run
-# it. Everything canopy does call (awk, sed, grep, cut, find, sha256sum,
+# it. Most of what canopy does call (awk, sed, grep, cut, find, sha256sum,
 # readlink, cp, mv, date, sort, tail, id, rmdir) is in both base images
 # already.
+#
+# procps is the exception, and it is not optional. canopy recognises an
+# agent pane by asking ps what the pane is running, so without it every
+# M2 command is cheerfully wrong: reboot-check reports no agent panes on a
+# machine full of them, and the save strategy records shells. `canopy
+# doctor` now says so rather than leaving it to be discovered after a
+# reboot.
 FROM debian:stable-slim
 
 RUN apt-get update \
-  && apt-get install -y --no-install-recommends tmux git \
+  && apt-get install -y --no-install-recommends tmux git procps \
   && rm -rf /var/lib/apt/lists/*
 
 # The repository, copied in exactly as a user would have it checked out.

@@ -257,3 +257,32 @@ interrupt_install() {
   [[ "$output" == *"@continuum-restore"* ]]
   [[ "$output" == *"FAILED"* ]]
 }
+
+@test "doctor names ps as what agent panes are recognised through" {
+  run canopy install
+  [ "$status" -eq 0 ]
+  run canopy-doctor
+  [[ "$output" == *"ps (agent panes are recognised through it): yes"* ]]
+}
+
+@test "doctor says so when this machine's ps cannot answer" {
+  # The failure this exists for is silent by nature. An absent bash leaves
+  # the plugin layer unloaded and visibly dormant; a ps that cannot report
+  # a process's parent leaves every plugin loaded and quietly useless,
+  # because canopy recognises an agent pane by asking ps what the pane is
+  # running. reboot-check then reports no agent panes on a machine full of
+  # them, which is the one answer it must never give.
+  #
+  # BusyBox ships exactly such a ps, so this is a real machine, not a
+  # contrived one: it is what an Alpine box does.
+  fake_bin="$BATS_TEST_TMPDIR/fakebin"
+  mkdir -p "$fake_bin"
+  printf '#!/bin/sh\nexit 1\n' >"$fake_bin/ps"
+  chmod +x "$fake_bin/ps"
+
+  run canopy install
+  [ "$status" -eq 0 ]
+  PATH="$fake_bin:$PATH" run canopy-doctor
+  [[ "$output" == *"ps (agent panes are recognised through it): dormant"* ]]
+  [[ "$output" == *"no pane is recognised as an agent"* ]]
+}
