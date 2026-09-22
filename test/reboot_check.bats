@@ -223,11 +223,16 @@ rc_save() {
 }
 
 @test "a healthy server with a fresh save reports the autosave interval" {
+  # Five, which is canopy's layer talking, not continuum's default of
+  # fifteen. The number is asserted rather than the label because the
+  # interval is the window in which a reboot loses a conversation, so a
+  # silent revert to upstream's default is a real regression in the
+  # promise and not a cosmetic one.
   rc_start
   rc_save
   run canopy-reboot-check
   [ "$status" -eq 0 ]
-  [[ "$output" == *"15 minutes"* ]]
+  [[ "$output" == *"every 5 minutes"* ]]
 }
 
 # --- the restore path ------------------------------------------------------
