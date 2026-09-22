@@ -175,3 +175,62 @@ EOF
   run bare_tmux -L "canopy-option-$$" list-sessions
   [ "$status" -ne 0 ]
 }
+
+# core_options <option>...
+# The values the shipped entry point leaves on a scratch server, one per
+# line, read in a single pass.
+#
+# Every value is collected and the server is killed BEFORE anything is
+# asserted. A failing assertion aborts the test where it stands, so an
+# assertion above the kill leaves the server running, holding bats's
+# stdout open, and the run hangs instead of failing. That is not
+# hypothetical: it is how this file's first draft behaved.
+core_options() {
+  local sock value opt
+  sock="canopy-test-core-$$-${BATS_TEST_NUMBER}"
+  tmux -L "$sock" -f "$CANOPY_STORE/tmux/tmux.conf" new-session -d
+  value=""
+  for opt in "$@"; do
+    value="$value$(tmux -L "$sock" show -gv "$opt" 2>/dev/null)
+"
+  done
+  kill_tmux_server "$sock"
+  printf '%s' "$value"
+}
+
+@test "the core layer sends extended keys unconditionally, in the format TUIs expect" {
+  # The setting that decides whether keys work at all in nvim, helix and a
+  # coding agent. tmux forwards extended keys only for its OWN request
+  # method and ignores the kitty-protocol request those apps send, so
+  # `extended-keys on`, which is forward-on-demand, never triggers and a
+  # bare `q` to quit a TUI silently does nothing. Sending them always, in
+  # CSI-u, is the form the apps actually read.
+  run core_options extended-keys extended-keys-format
+  [ "$output" = "always
+csi-u" ]
+}
+
+@test "the core layer lets a TUI's own escape sequences through" {
+  # Inline images in a file manager or an agent arrive as kitty graphics
+  # sequences. Without passthrough tmux eats them and the app falls back
+  # to pixelated half blocks, which looks like the app's own bug.
+  run core_options allow-passthrough
+  [ "$output" = "on" ]
+}
+
+@test "a window is named for its directory, and a program cannot rename it" {
+  # Two halves of one decision. automatic-rename alone loses to any shell
+  # prompt that sets the terminal title, which is most of them: tmux takes
+  # the OSC title as a rename and then stops auto-renaming that window for
+  # good. allow-rename off is what makes the first line hold.
+  run core_options automatic-rename automatic-rename-format allow-rename
+  [ "$output" = 'on
+#{b:pane_current_path}
+off' ]
+}
+
+@test "the core layer keeps vi mode keys and the system clipboard" {
+  run core_options mode-keys set-clipboard
+  [ "$output" = "vi
+on" ]
+}
