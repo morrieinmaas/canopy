@@ -265,4 +265,6 @@ Back to the [README](../README.md) ·
 [02 Commands](02-commands.md) ·
 [03 The restore guarantee](03-restore-guarantee.md) ·
 [04 Configuration](04-configuration.md) ·
-[05 Troubleshooting](05-troubleshooting.md)
+[05 Troubleshooting](05-troubleshooting.md) ·
+[07 Persistence](07-persistence.md) ·
+[08 Agents](08-agents.md)

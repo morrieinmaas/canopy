@@ -8,7 +8,8 @@ metadata header. `canopy` itself is a dispatcher: it reads those headers to rend
 help, and `exec`s the matching file. `canopy index` writes the same metadata to a TSV
 for later milestones to consume.
 
-M1 ships seven: the dispatcher and six subcommands.
+There are ten: the dispatcher and nine subcommands. M1 shipped the `core` group,
+M2 added the `agent` group.
 
 | Command | Summary | Group |
 |---|---|---|
@@ -19,6 +20,13 @@ M1 ships seven: the dispatcher and six subcommands.
 | [`canopy install`](#canopy-install) | Install canopy, migrating any existing tmux config | core |
 | [`canopy restore`](#canopy-restore) | Roll back transactions canopy recorded | core |
 | [`canopy version`](#canopy-version) | Print the canopy version | core |
+| [`canopy adopt`](#canopy-adopt) | Restart agent panes in place so each one carries its own resume command | agent |
+| [`canopy agent`](#canopy-agent) | Report an agent's state into its pane, and install adapters | agent |
+| [`canopy reboot-check`](#canopy-reboot-check) | Say which agent panes survive a reboot, and why the rest do not | agent |
+
+The three `agent` commands are described in full in
+[07 Persistence](07-persistence.md) and [08 Agents](08-agents.md); their
+reference entries are at the end of this page.
 
 Each subcommand can also be run directly as `canopy-<name>`, provided the store's
 `bin/` is on your `PATH`. The dispatcher adds two things: the lookup, and resolving the
@@ -165,13 +173,15 @@ Layers:
 
 Plugins:
   bash (both plugins are bash scripts): yes
+  ps (agent panes are recognised through it): yes
   tmux-resurrect: pinned cff343cf9e81983d3da0c8562b01616f12e8d548, tree matches
   tmux-continuum: pinned 0698e8f4b17d6454c71bf5212895ec055c578da0, tree matches
 
-Load-bearing settings (M1):
+Load-bearing settings:
   tmux version floor (>= 3.4): ok
   installed entry point: /home/you/.config/tmux/tmux.conf
   entry point loads from a bare environment: ok
+  @continuum-restore is on: ok
   user.conf sourced last: ok
 
 Restore points:
@@ -194,8 +204,8 @@ Sections, and what each one is actually checking:
 | Environment | The tmux version string and the three paths canopy resolved |
 | Capabilities | A direct read of `05-caps.conf`. Doctor never re-probes; run `canopy caps` for that |
 | Layers | The same data, named by feature. M1 ships no gated layer yet, so this says what each capability *will* enable |
-| Plugins | Each vendored plugin's pinned commit from `plugins/VERSIONS`, and whether the tree on disk still matches the digest `plugins/vendor.sh` recorded in `plugins/CHECKSUMS`. Also whether bash, which both plugins need, is present at all |
-| Load-bearing settings | tmux 3.4 floor; the installed entry point loading from a bare environment; `user.conf` being the last `source-file` in the store's `tmux.conf` |
+| Plugins | Each vendored plugin's pinned commit from `plugins/VERSIONS`, and whether the tree on disk still matches the digest `plugins/vendor.sh` recorded in `plugins/CHECKSUMS`. Also whether `bash`, which both plugins need, is present at all, and whether this machine's `ps` can report a process's parent, which is how an agent pane is recognised. `ps` is probed by running it: BusyBox ships one that exists and cannot answer |
+| Load-bearing settings | tmux 3.4 floor; the installed entry point loading from a bare environment; `@continuum-restore` being on in the config this machine actually loads, without which a reboot restores nothing; `user.conf` being the last `source-file` in the store's `tmux.conf` |
 | Restore points | How many committed points exist, whether the pinned pre-install one is among them, and any transaction interrupted before it committed |
 | Commands | Every `bin/canopy-*` carries a `canopy:summary=` header |
 | Keybindings | Deliberately stubbed. The key table does not exist until M4, so there is nothing to cross-reference `list-keys` against |
@@ -400,6 +410,83 @@ canopy: canopy-version: unknown argument: --short
 | 0 | Version printed |
 | 1 | `VERSION` not found in the store |
 | 1 | Unknown argument |
+
+---
+
+## `canopy adopt`
+
+```
+canopy adopt [--yes|--dry-run]
+```
+
+Restarts an agent pane in place as its own resume command, so the pane's own
+command carries the session id rather than only a tmux pane option.
+
+Dry run is the default; `--dry-run` says so explicitly and means the same. It
+kills and restarts live processes, so every guard fails closed: a pane is
+restarted only when the agent reported a session id, the adapter has a usable
+resume command, the reported state is `idle` or `completed`, and the adapter
+says the pane holds **no** unsent input. Anything else is skipped and named.
+
+A pane already running its resume command counts as adopted, including one you
+started that way yourself, so a second run never kills what the first fixed.
+
+| Exit | Meaning |
+|---|---|
+| 0 | every agent pane now carries its own resume command, or there were none |
+| 1 | at least one pane was left as it was, each named with the reason |
+| 1 | Unknown argument |
+
+Guards, limits and why a Claude Code pane is always skipped:
+[07 Persistence](07-persistence.md#canopy-adopt).
+
+## `canopy agent`
+
+```
+canopy agent report <state> [--source <id>] [--session-id <id>]
+canopy agent install <adapter-id>
+```
+
+`report` writes an agent's state into the pane it is running in, as four tmux
+pane options. It is called by an agent's own hooks, not by hand. The five
+states are `idle`, `working`, `blocked`, `completed` and `exited`. With no
+`$TMUX_PANE`, or a pane that has gone away, it exits 0 and writes nothing: a
+hook that fails is a hook that interrupts your work to report something you
+cannot act on. A state outside the five is a bug in the adapter and is
+reported as one.
+
+`install` puts an adapter's hooks into that agent's own configuration, inside
+a transaction, so `canopy restore` can put the configuration back byte for
+byte. It refuses an adapter with no installer rather than guessing where an
+agent keeps its config.
+
+| Exit | Meaning |
+|---|---|
+| 0 | Reported, or installed |
+| 1 | A state outside the five, a malformed call, or an adapter that cannot be installed |
+| 1 | Unknown argument |
+
+See [08 Agents](08-agents.md).
+
+## `canopy reboot-check`
+
+```
+canopy reboot-check
+```
+
+Says which agent panes will survive a reboot and why the rest will not, read
+off what tmux-resurrect actually saved rather than off what canopy intended to
+save.
+
+| Exit | Meaning |
+|---|---|
+| 0 | every agent pane will resume, or no tmux server is running |
+| 1 | at least one pane will not come back with its conversation |
+| 2 | persistence is misconfigured, and no per-pane verdict is worth giving |
+| 1 | Unknown argument |
+
+Per-pane verdicts and what each one means:
+[07 Persistence](07-persistence.md#canopy-reboot-check).
 
 ---
 
