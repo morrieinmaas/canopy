@@ -18,7 +18,7 @@ setup() { setup_canopy_env; }
 @test "every command that takes no options rejects an unknown argument the same way" {
   # The shape is one message and one exit code across the whole CLI: a
   # typo must not be swallowed by one command and refused by the next.
-  for cmd in adopt caps doctor index install keys reboot-check restore version; do
+  for cmd in adopt caps doctor index install keys reboot-check restore status version; do
     run "canopy-$cmd" --definitely-not-a-flag
     [ "$status" -eq 1 ]
     [ "$output" = "canopy: canopy-$cmd: unknown argument: --definitely-not-a-flag" ]
