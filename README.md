@@ -8,15 +8,16 @@ can be undone.
 
 There is no daemon, no build step, and nothing to compile.
 
-## Status: milestone 1 of six
+## Status: milestones 1 and 2 of six
 
-canopy is being built in six ordered milestones. **Only M1 exists today.** M1 is the
-skeleton, the part whose job is to make everything after it safe to install.
+canopy is being built in six ordered milestones. **M1 and M2 exist today.** M1 is the
+skeleton, the part whose job is to make everything after it safe to install. M2 is
+the wedge: a reboot returns an agent pane to its own conversation.
 
 | M | Delivers | State |
 |---|---|---|
 | **M1** | A machine can adopt canopy and shed it again without a trace | **shipped** |
-| M2 | A reboot returns every agent pane to its own conversation | not started |
+| **M2** | A reboot returns every agent pane to its own conversation | **shipped** |
 | M3 | Agent state is visible across four agents without polling | not started |
 | M4 | Every command is reachable by key, CLI and palette from one definition | not started |
 | M5 | A theme repaints tmux and, where opted in, ghostty and starship | not started |
@@ -29,10 +30,24 @@ What M1 ships:
 - a capability probe that writes tool availability into tmux options
 - a transaction ledger that makes install reversible
 
-What M1 does **not** ship: agent integration, reboot persistence, a command palette,
-key bindings beyond tmux's own, themes, and the worktree layer. If you install canopy
-today expecting agent panes to survive a reboot, what you get is a config loader and
-a reliable way to undo it.
+What M2 adds:
+
+- three commands: `agent`, `reboot-check`, `adopt`
+- tmux-resurrect and tmux-continuum vendored at pinned commits, no plugin manager
+- a save-command strategy that rewrites an agent pane's saved command into the
+  command that resumes **that pane's** conversation
+- an adapter contract, and one adapter, for Claude Code
+- `canopy reboot-check`, which answers "is it safe to reboot?" from what was
+  actually saved rather than from what canopy meant to save
+
+What is **not** shipped: adapters beyond Claude Code, a command palette, key
+bindings beyond tmux's own, themes, the worktree layer, and autostart. Nothing
+starts a tmux server at login, so a restore happens when you next start tmux, not
+at boot.
+
+Persistence needs `bash` and a `ps` that can report a process's parent. Without
+either, it does nothing at all, and `canopy doctor` says so. See
+[docs/07-persistence.md](docs/07-persistence.md).
 
 ## The guarantee
 
@@ -54,8 +69,8 @@ How the guarantee is enforced:
 | Check | What it does | Where |
 |---|---|---|
 | Restore proof | Three scenarios: a home with real configs, an empty home, a symlinked `tmux.conf` pointing outside `$HOME`. Records hashes and a full `find` listing before install, restores, and diffs both. | `test/restore-proof.sh`, run in CI on Ubuntu and macOS |
-| Container acceptance | Six scenarios inside Debian (`/bin/sh` is dash) and Alpine (BusyBox userland), from a bare environment with no `CANOPY_*` set. Covers a virgin box, an existing config, a symlinked config, a dangling symlink, an interrupted install, and two user accounts on one machine. | `test/smoke/run.sh`, run in CI on Linux |
-| Unit suite | 136 bats tests over the libraries and every command. | `test/*.bats`, run in CI on Ubuntu and macOS |
+| Container acceptance | Eight scenarios inside Debian (`/bin/sh` is dash) and Alpine (BusyBox userland), from a bare environment with no `CANOPY_*` set. Covers a virgin box, an existing config, a symlinked config, a dangling symlink, an interrupted install, two user accounts on one machine, and a simulated reboot that must return three panes to their own three conversations. | `test/smoke/run.sh`, run in CI on Linux |
+| Unit suite | 276 bats tests over the libraries and every command. | `test/*.bats`, run in CI on Ubuntu and macOS |
 
 A restore promise that is not in CI stops being true around version three.
 
@@ -105,7 +120,15 @@ backed up their current bytes.
 |---|---|
 | tmux | 3.4 or newer |
 | shell | any POSIX shell (`dash`, `ash`, `bash`, `ksh`) |
+| for persistence only | `bash`, and a `ps` that reports a process's parent |
 | everything else | nothing |
+
+The two persistence requirements are not optional where persistence is wanted, and
+canopy installs neither. The vendored resurrect and continuum are bash scripts, so
+without `bash` the plugin layer loads nothing. canopy recognises an agent pane by
+asking `ps` what the pane is running, so a `ps` that cannot answer, BusyBox ships
+one, means no pane is ever recognised as an agent. `canopy doctor` reports both, and
+probes `ps` by running it rather than by looking for the binary.
 
 canopy calls only standard userland utilities (`awk`, `sed`, `grep`, `cut`, `cp`,
 `mv`, `rm`, `mkdir`, `rmdir`, `chmod`, `touch`, `date`, `sort`, `tail`, `id`, `env`,
@@ -127,6 +150,8 @@ Every path canopy reads or writes, and nothing else:
 | `~/.config/mise/conf.d/canopy.toml` | Written only if `mise` is installed or that directory already exists. Declares `fzf`, `gum` and `starship` as tools. | yes |
 | `~/.local/state/canopy/05-caps.conf` | Generated capability flags. Did not exist before canopy. | n/a |
 | `~/.local/state/canopy/commands.tsv` | Generated command index. Did not exist before canopy. | n/a |
+| `~/.local/state/canopy/resurrect/` | tmux-resurrect's save files. Did not exist before canopy. | n/a |
+| `~/.claude/settings.json` | Only on `canopy agent install claude-code`, and only merged, never replaced. Recorded in a transaction first. | yes |
 | `~/.local/state/canopy/backups/` | Restore points. Kept forever. | n/a |
 | `/tmp/canopy-<uid>` or `$XDG_RUNTIME_DIR/canopy` | Scratch files, created mode 0700. canopy refuses to use it if anyone else owns it or can write to it. | n/a |
 
@@ -148,6 +173,8 @@ overridden directly with `CANOPY_CONFIG`, `CANOPY_STATE`, `CANOPY_RUNTIME` and
 | [04 Configuration](docs/04-configuration.md) | The `conf.d` layer order, `user.conf`, and the capability model |
 | [05 Troubleshooting](docs/05-troubleshooting.md) | Symptoms and what to do about them |
 | [06 Contributing and testing](docs/06-contributing-and-testing.md) | Running the three suites, and the rule every verification follows |
+| [07 Persistence](docs/07-persistence.md) | What survives a reboot, the chain that makes it work, `reboot-check`, `adopt`, and how to verify with a real agent |
+| [08 Agents](docs/08-agents.md) | Adapters, installing the Claude Code one, capability tiers, and what state reporting costs |
 
 The full product design lives in
 [docs/superpowers/specs/2026-09-17-canopy-design.md](docs/superpowers/specs/2026-09-17-canopy-design.md).

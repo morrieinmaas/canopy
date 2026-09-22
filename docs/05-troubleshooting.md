@@ -69,7 +69,7 @@ put the clone's `bin/` on your `PATH`.
 
 ## `canopy doctor` exits 2
 
-Exit 2 means a load-bearing check failed. One of three:
+Exit 2 means a load-bearing check failed. One of four:
 
 ### `tmux version floor (>= 3.4): FAILED`
 
@@ -93,6 +93,24 @@ Note what "bare environment" means. Doctor starts tmux with only `HOME`, `PATH` 
 `TMUX_TMPDIR` set, on a throwaway socket, so it sees what a freshly started tmux
 sees, not what your interactive shell has. A config that works in your shell but
 fails here is relying on a variable nothing sets for the tmux server.
+
+### `@continuum-restore is on: FAILED`
+
+The config your machine actually loads leaves continuum's restore off, so a reboot
+would replay nothing: every save canopy writes would be read by no one. canopy's own
+layer sets it on, so something after that turned it off, and the only thing sourced
+later is your `user.conf`. Put it back with:
+
+```
+set -g @continuum-restore on
+```
+
+in `~/.config/canopy/user.conf`, or remove whatever unset it there.
+
+This is read off the entry point your tmux loads rather than off canopy's layer
+files, precisely so that a `user.conf` override is caught here instead of after a
+reboot. It is not checked at all when the entry point does not load, because a
+config tmux refused has no loaded value to report.
 
 ### `user.conf sourced last: FAILED`
 
@@ -220,6 +238,75 @@ implemented yet. See the milestone table in the [README](../README.md#status-mil
 
 ---
 
+## My agent panes came back empty after a reboot
+
+The panes are there, the agents are running, but each one started a fresh
+conversation instead of continuing the one it had.
+
+Run `canopy reboot-check` **before** the next reboot rather than guessing. It
+reads what was actually saved and names, per pane, why a pane will not come
+back. In order of how often each cause is the real one:
+
+1. **No session id was reported for the pane.** The agent's hooks are not
+   installed, or are not firing. Check with
+   `tmux display-message -p '#{@canopy_agent_session}'` inside the pane: empty
+   means nothing has reported. `canopy agent install claude-code` installs the
+   hooks; they fire on the agent's next start, not retroactively.
+2. **The pane was not in the last save.** `reboot-check` says `not saved yet`.
+   continuum's default autosave interval is 15 minutes, and a save rides on a
+   status-line redraw, so a server nothing is attached to may not save at all.
+3. **The restore path is off.** `reboot-check` says
+   `continuum restore at server start: off` and refuses to give a per-pane
+   verdict. canopy sets `@continuum-restore on`; something in your
+   `user.conf` turned it back off, because `user.conf` is sourced last and
+   wins. `canopy doctor` exits 2 for this.
+4. **Another tmux server was running at boot.** continuum refuses to restore
+   while one is. `reboot-check` says so when it sees one.
+
+## `canopy reboot-check` says there are no agent panes, but there are
+
+Almost always this machine's `ps`. canopy recognises an agent pane by asking
+`ps` what the pane's process is running; where `ps` cannot answer, no pane is
+ever recognised as an agent, every save records a shell, and this command
+reports a machine full of agents as empty.
+
+```sh
+canopy doctor | grep '^  ps'
+```
+
+`dormant` there means exactly this. A BusyBox `ps` cannot answer, and many
+slim container images ship no `ps` at all. Install your distribution's
+`procps`. canopy will not install it for you.
+
+The other possibility is that the agent in the pane has no adapter, so canopy
+has nothing to match its command against. Only Claude Code ships today.
+
+## `canopy adopt` skips every pane
+
+Read the reason it printed against each one; `adopt` never skips silently.
+
+The most common reason is not a fault: **a Claude Code pane is always
+skipped.** Claude Code exposes no way to ask whether a pane is holding a
+message somebody typed and has not sent, so its adapter leaves `detect_draft`
+empty, which means "undetermined", which `adopt` treats exactly like "yes,
+there is unsent input". Restarting such a pane would destroy a draft that
+exists in no file anywhere, so it fails closed instead.
+
+`the agent is mid task` means the agent last reported `working` or `blocked`.
+Wait for it to finish. `no session id has been reported` means there is
+nothing to resume, and nothing `adopt` can do: minting a fresh id would pin
+the pane by throwing away the conversation it currently holds.
+
+## Persistence does nothing at all, and doctor mentions bash
+
+Both vendored plugins are `#!/usr/bin/env bash` scripts. Without `bash` the
+plugin layer loads nothing: no key binding, no autosave, no restore. This is
+the normal state of an Alpine or other BusyBox userland, and `canopy doctor`
+reports it under **Plugins** as dormant.
+
+Install `bash`. canopy will not install it for you, and it deliberately does
+not rewrite upstream's scripts.
+
 ## Something is wrong and I do not trust any of this
 
 The state canopy keeps is three things, and you can inspect all of them with `cat`:
@@ -236,4 +323,6 @@ Nothing canopy did is hidden from it.
 
 ---
 
-Next: [06 Contributing and testing](06-contributing-and-testing.md)
+Next: [06 Contributing and testing](06-contributing-and-testing.md) ·
+[07 Persistence](07-persistence.md) ·
+[08 Agents](08-agents.md)

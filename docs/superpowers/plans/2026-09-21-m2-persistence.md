@@ -1,6 +1,6 @@
 # canopy M2 — Persistence — Implementation Plan
 
-> **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development to implement this plan task by task. Steps use checkbox (`- [ ]`) syntax for tracking.
+> **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development to implement this plan task by task. Steps use checkbox (`- [x]`) syntax for tracking.
 
 **Goal:** A reboot returns every agent pane to its own conversation, and `canopy reboot-check` says so truthfully beforehand.
 
@@ -199,9 +199,9 @@ This is an honest boundary, not a shortcut. What the container proves is that ca
 - `docs/08-agents.md` explains the adapter contract, how to install the Claude Code adapter, and the capability tiers, marking the three M3 adapters as planned.
 - The spec's M2 rows move from planned to implemented; nothing else changes status.
 
-- [ ] **Step 1: Write the pages**, verifying every command and flag against the code rather than the spec.
-- [ ] **Step 2: Update the README's status and roadmap** so M2 is described as it actually is.
-- [ ] **Step 3: Commit** — `docs: persistence and the agent adapter contract`
+- [x] **Step 1: Write the pages**, verifying every command and flag against the code rather than the spec.
+- [x] **Step 2: Update the README's status and roadmap** so M2 is described as it actually is.
+- [x] **Step 3: Commit** — `docs: persistence and the agent adapter contract`
 
 ---
 
