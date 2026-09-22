@@ -145,3 +145,33 @@ EOF
   kill_tmux_server "$sock"
   [ "$output" = "x" ]
 }
+
+@test "canopy_tmux_loaded_option reads the value the config actually loads" {
+  . "$CANOPY_STORE/lib/tmux.sh"
+  conf="$BATS_TEST_TMPDIR/sets.conf"
+  printf 'set -g @canopy_probe loaded\n' >"$conf"
+  run canopy_tmux_loaded_option "$conf" @canopy_probe
+  [ "$status" -eq 0 ]
+  [ "$output" = "loaded" ]
+}
+
+@test "canopy_tmux_loaded_option gives up on a config that does not load, and leaves no server running" {
+  # The regression this pins is a deadlock, not a wrong answer. Asking a
+  # scratch server for an option in the same command chain that sources
+  # the config leaves the client waiting when the source fails, while the
+  # scratch session holds the reader's pipe open, so the kill-server that
+  # would end it cannot run until the session's own sleep expires. It once
+  # held a CI run open for ten minutes after every test had passed.
+  #
+  # A return of this bug shows up as this test never finishing, and as the
+  # surviving server the last assertion looks for.
+  . "$CANOPY_STORE/lib/tmux.sh"
+  broken="$BATS_TEST_TMPDIR/broken.conf"
+  printf 'this-is-not-a-tmux-command\n' >"$broken"
+
+  run canopy_tmux_loaded_option "$broken" @canopy_probe
+  [ "$status" -ne 0 ]
+
+  run bare_tmux -L "canopy-option-$$" list-sessions
+  [ "$status" -ne 0 ]
+}

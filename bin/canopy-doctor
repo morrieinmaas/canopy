@@ -194,8 +194,10 @@ if [ -z "$entry_point" ]; then
   warnings=$((warnings + 1))
 else
   printf '  installed entry point: %s\n' "$entry_point"
+  entry_point_loads=0
   if canopy_tmux_validate "$entry_point" >"$validate_tmp" 2>&1; then
     printf '  entry point loads from a bare environment: ok\n'
+    entry_point_loads=1
   else
     printf '  entry point loads from a bare environment: FAILED\n'
     while IFS= read -r line; do
@@ -211,8 +213,15 @@ else
   #
   # Read off the same entry point that was just validated, so a user.conf
   # that turned it off is caught here rather than after somebody's reboot.
+  #
+  # Only asked when that entry point actually loaded. A config tmux
+  # refused has no loaded value to report, so asking would add a second
+  # failure line for one cause and point the reader at the wrong file: the
+  # setting is not missing, the config it lives in never ran.
   # shellcheck disable=SC2310  # a state question, so a non-zero return is the answer and not a failure to abort on
-  if restore_option="$(canopy_tmux_loaded_option "$entry_point" @continuum-restore)" &&
+  if [ "$entry_point_loads" -eq 0 ]; then
+    printf '  @continuum-restore is on: not checked, the entry point does not load\n'
+  elif restore_option="$(canopy_tmux_loaded_option "$entry_point" @continuum-restore)" &&
     [ "$restore_option" = "on" ]; then
     printf '  @continuum-restore is on: ok\n'
   else

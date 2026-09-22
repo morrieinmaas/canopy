@@ -1,4 +1,5 @@
 # shellcheck shell=sh
+# shellcheck disable=SC2154  # CANOPY_RUNTIME is exported by lib/env.sh's canopy_paths
 
 # canopy_tmux_version_ok
 # True (status 0) if the installed tmux is at least the floor version
@@ -125,20 +126,45 @@ canopy_tmux_validate() {
 # $CANOPY_CONFIG/user.conf, which the entry point sources last precisely so
 # the user's file wins, and a check that only read the store would report
 # OK on the one machine where the setting is off.
+#
+# Sourcing and asking are two invocations, not one chain, and the output
+# of each goes to a file rather than into a command substitution. Both are
+# load bearing, for the same reason as the note above canopy_tmux_validate:
+# a chain that ends in `show` leaves the client waiting when an earlier
+# `source-file` fails, and because the scratch session is still holding the
+# reader's pipe, the kill-server on the next line cannot run until the
+# session's own `sleep 600` expires. That deadlock is not theoretical: it
+# hung a CI run for ten minutes after every test had already passed.
+#
+# Split this way, the risky half is exactly the shape canopy_tmux_validate
+# has always used, and `show` only ever runs against a server whose config
+# already loaded, where it answers and exits.
 canopy_tmux_loaded_option() {
   conf="$1"
   option="$2"
   [ -f "$conf" ] || return 1
   tmux_bin="$(command -v tmux)" || return 1
+  canopy_runtime_ensure || return 1
   sock="canopy-option-$$"
-  value="$(canopy_tmux_bare "$tmux_bin" -L "$sock" -f /dev/null \
+  out="$CANOPY_RUNTIME/loaded-option.$$"
+  rm -f "$out"
+
+  rc=0
+  canopy_tmux_bare "$tmux_bin" -L "$sock" -f /dev/null \
     new-session -d 'sleep 600' \; \
     set -g @continuum-restore-max-delay 0 \; \
-    source-file "$conf" \; \
-    show -gqv "$option" 2>/dev/null)"
-  rc=$?
+    source-file "$conf" >"$out" 2>&1 || rc=$?
+  if [ "$rc" -eq 0 ]; then
+    canopy_tmux_bare "$tmux_bin" -L "$sock" \
+      show -gqv "$option" >"$out" 2>/dev/null || rc=$?
+  fi
   canopy_tmux_bare "$tmux_bin" -L "$sock" kill-server >/dev/null 2>&1
   rm -f "/tmp/tmux-$(id -u)/$sock"
-  [ "$rc" -eq 0 ] || return 1
+  if [ "$rc" -ne 0 ]; then
+    rm -f "$out"
+    return 1
+  fi
+  value="$(cat "$out" 2>/dev/null)" || value=""
+  rm -f "$out"
   printf '%s\n' "$value"
 }
