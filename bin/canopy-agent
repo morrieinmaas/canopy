@@ -75,6 +75,23 @@ canopy_agent_report() {
     *) ;;
   esac
 
+  # The session id ends up inside a command that a shell runs, twice over:
+  # `canopy adopt` hands it to respawn-pane, and the save strategy writes
+  # it into resurrect's save file, which is replayed at boot. Neither is a
+  # place for whatever an agent's hook happened to put in a JSON field, so
+  # the character set is fixed here, at the one door the value comes in
+  # through. Every real id is a uuid; this allows a little more than that
+  # and nothing a shell reads as syntax.
+  if [ "$have_session" -eq 1 ]; then
+    case "$session_id" in
+      '') ;;
+      *[!A-Za-z0-9._:-]*)
+        canopy_die "canopy-agent: a session id may hold only letters, digits, dot, underscore, colon and dash"
+        ;;
+      *) ;;
+    esac
+  fi
+
   pane="${TMUX_PANE-}"
   [ -n "$pane" ] || exit 0
 

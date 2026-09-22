@@ -120,9 +120,29 @@ canopy_tmux_validate() {
   # holding a syntax error, which is the exact failure this function is
   # the only guard against.
   #
-  # What tmux does do reliably is print the error, with the file and line.
-  # So the output is the verdict, and the status is only half of it.
-  if [ "$rc" -ne 0 ] || [ -n "$err" ]; then
+  # What tmux does do reliably is PRINT the error. So the output is the
+  # other half of the verdict, but only the part of it that looks like an
+  # error: source-file also prints the ordinary output of every command it
+  # runs, on the same stream. Treating any output as failure rejected a
+  # user.conf holding `run-shell "echo hi"`, which is how people load a
+  # plugin by hand, and refused to install a config that loads perfectly.
+  # Splitting the streams does not help; tmux writes both to stdout.
+  #
+  # The shapes below are all of tmux's own, confirmed by producing each:
+  #
+  #   conf:12: unknown command: nonsense     a file and line, for syntax
+  #   invalid option: not-an-option          no file or line
+  #   unknown value: bogus                   no file or line
+  #
+  # The middle one is why matching only "file:line:" is not enough: that
+  # is precisely the shape tmux 3.4 produced for extended-keys-format, the
+  # error that would have shipped an unusable config to every 3.4 machine.
+  if [ "$rc" -ne 0 ]; then
+    printf '%s\n' "$err" >&2
+    return 1
+  fi
+  if printf '%s\n' "$err" |
+    grep -qE '(^|[^[:alnum:]])(invalid|unknown|ambiguous) (option|value|command|key)|:[0-9]+: '; then
     printf '%s\n' "$err" >&2
     return 1
   fi

@@ -1,8 +1,15 @@
 name: CI
 
 on:
+  # Cheap enough to run on every push: it is the check most likely to
+  # catch something, and it is the one whose answer is wanted fastest.
   push:
   pull_request:
+  workflow_dispatch:
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
 
 jobs:
   test:

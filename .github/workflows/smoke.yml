@@ -1,13 +1,24 @@
 name: Smoke
 
 on:
+  # Heavy: two OS runners, and for the smoke run two container images
+  # built from scratch. Running that on every push to every branch
+  # spends minutes to tell us what the same command told us locally a
+  # moment earlier. It runs where the answer is load bearing, on main
+  # and on a pull request, and on demand for anything else.
   push:
+    branches: [main]
   pull_request:
+  workflow_dispatch:
 
 # Deliberately its own workflow rather than a step in CI: a smoke failure
 # means the shipped artifact does not work on a real machine, which is a
 # different thing from a lint or unit failure and should be readable as
 # such from the checks list without opening a log.
+concurrency:
+  group: smoke-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
   smoke:
     # Linux only. The scenarios run inside Linux containers, and the

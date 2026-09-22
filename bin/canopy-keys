@@ -52,10 +52,15 @@ if [ "$canopy_keys_print" -eq 1 ]; then
   exit 0
 fi
 
-canopy_runtime_ensure
 canopy_keys_out="$CANOPY_STATE/10-keys.conf"
-canopy_keys_tmp="$CANOPY_RUNTIME/10-keys.conf.$$"
 mkdir -p "$CANOPY_STATE"
+# Beside the target, not in the runtime dir. CANOPY_RUNTIME is a tmpfs on
+# Linux while CANOPY_STATE is under $HOME, and `mv` across filesystems is
+# copy-then-unlink, so a tmux sourcing the layer mid-write could read a
+# half-written file: exactly what moving it into place is meant to
+# prevent. canopy-caps already does it this way.
+canopy_keys_tmp="$canopy_keys_out.tmp.$$"
+trap 'rm -f "$canopy_keys_tmp"' EXIT
 
 # A malformed row is refused rather than emitted. tmux would take a
 # half-written bind line and either fail the whole layer or, worse, bind
