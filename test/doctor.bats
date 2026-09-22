@@ -284,5 +284,5 @@ interrupt_install() {
   [ "$status" -eq 0 ]
   PATH="$fake_bin:$PATH" run canopy-doctor
   [[ "$output" == *"ps (agent panes are recognised through it): dormant"* ]]
-  [[ "$output" == *"no pane is recognised as an agent"* ]]
+  [[ "$output" == *"cannot report a process parent"* ]]
 }
