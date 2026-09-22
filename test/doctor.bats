@@ -243,3 +243,24 @@ interrupt_install() {
   [ "$status" -eq 0 ]
   [[ "$output" != *"INCOMPLETE"* ]]
 }
+
+@test "exits 2 when the config this machine loads leaves continuum's restore off" {
+  # Spec 5.3 assigns @continuum-restore to doctor, and continuum defaults
+  # it to off. With it off nothing is restored after a reboot, so every
+  # other part of persistence writes save files that nobody reads.
+  #
+  # Asserted against the config the entry point actually loads, not
+  # against the store's own layer: user.conf is sourced last, so it is
+  # also the way a setting gets turned off without anyone noticing.
+  run canopy install
+  [ "$status" -eq 0 ]
+  printf 'set -g @continuum-restore off\n' >>"$CANOPY_CONFIG/user.conf"
+  run canopy-caps
+  [ "$status" -eq 0 ]
+  run canopy-index
+  [ "$status" -eq 0 ]
+  run canopy-doctor
+  [ "$status" -eq 2 ]
+  [[ "$output" == *"@continuum-restore"* ]]
+  [[ "$output" == *"FAILED"* ]]
+}

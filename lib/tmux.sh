@@ -81,6 +81,15 @@ canopy_tmux_bare() {
 # enough to get its write in. Nothing validation does needs a shell, so it
 # no longer starts one. The 600 seconds are slack, not a wait: the server
 # is killed a moment later, on every path.
+#
+# @continuum-restore-max-delay is zeroed before the config is sourced, and
+# that line is load bearing. canopy's plugin layer turns continuum's
+# restore on, and continuum arms it for any server that started in the
+# last few seconds, which every scratch server here did. Left armed, a
+# validation run on a machine with no other tmux server would restore the
+# user's saved session onto a throwaway socket and start every agent in it
+# for the second before the socket is killed. Zero means continuum does
+# not consider this server freshly booted, which is the truth.
 canopy_tmux_validate() {
   conf="$1"
   if [ ! -f "$conf" ]; then
@@ -92,7 +101,7 @@ canopy_tmux_validate() {
     return 1
   fi
   sock="canopy-verify-$$"
-  err="$(canopy_tmux_bare "$tmux_bin" -L "$sock" -f /dev/null new-session -d 'sleep 600' \; source-file "$conf" 2>&1)"
+  err="$(canopy_tmux_bare "$tmux_bin" -L "$sock" -f /dev/null new-session -d 'sleep 600' \; set -g @continuum-restore-max-delay 0 \; source-file "$conf" 2>&1)"
   rc=$?
   canopy_tmux_bare "$tmux_bin" -L "$sock" kill-server >/dev/null 2>&1
   # kill-server stops the server and leaves its socket file behind, one per
@@ -103,4 +112,33 @@ canopy_tmux_validate() {
     return 1
   fi
   return 0
+}
+
+# canopy_tmux_loaded_option <conf> <option>
+# The value <option> holds once tmux has loaded <conf>, read off a
+# throwaway server started the same bare way canopy_tmux_validate starts
+# one, including the same reason for zeroing @continuum-restore-max-delay.
+# Prints nothing and returns non-zero when the server cannot be started.
+#
+# Asked of the config the machine actually loads, never of the store's own
+# layer files. A setting the shipped layer makes can be unmade by
+# $CANOPY_CONFIG/user.conf, which the entry point sources last precisely so
+# the user's file wins, and a check that only read the store would report
+# OK on the one machine where the setting is off.
+canopy_tmux_loaded_option() {
+  conf="$1"
+  option="$2"
+  [ -f "$conf" ] || return 1
+  tmux_bin="$(command -v tmux)" || return 1
+  sock="canopy-option-$$"
+  value="$(canopy_tmux_bare "$tmux_bin" -L "$sock" -f /dev/null \
+    new-session -d 'sleep 600' \; \
+    set -g @continuum-restore-max-delay 0 \; \
+    source-file "$conf" \; \
+    show -gqv "$option" 2>/dev/null)"
+  rc=$?
+  canopy_tmux_bare "$tmux_bin" -L "$sock" kill-server >/dev/null 2>&1
+  rm -f "/tmp/tmux-$(id -u)/$sock"
+  [ "$rc" -eq 0 ] || return 1
+  printf '%s\n' "$value"
 }

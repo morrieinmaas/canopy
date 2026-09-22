@@ -52,6 +52,7 @@ teardown() {
 rc_start() {
   sock="cnp-reboot-$$-${BATS_TEST_NUMBER}"
   tmux -L "$sock" -f /dev/null new-session -d -s main
+  hold_off_boot_restore "$sock"
   tmux -L "$sock" source-file "$CANOPY_STORE/tmux/conf.d/30-plugins.conf"
   pane="$(tmux -L "$sock" list-panes -a -F '#{pane_id}' | head -1)"
   sock_path="$(tmux -L "$sock" display-message -p '#{socket_path}')"
@@ -227,4 +228,68 @@ rc_save() {
   run canopy-reboot-check
   [ "$status" -eq 0 ]
   [[ "$output" == *"15 minutes"* ]]
+}
+
+# --- the restore path ------------------------------------------------------
+# Autosave is only half of persistence. The other half is whether anything
+# reads the save file back when the machine comes up, and continuum
+# defaults that to off. A pre-flight that answers "is it safe to reboot"
+# per pane while the restore path is disabled is a confident yes about a
+# machine that would restore nothing at all.
+
+@test "the shipped plugin layer leaves continuum's restore on" {
+  rc_start
+  [ "$(tmux -L "$sock" show -gv @continuum-restore)" = "on" ]
+}
+
+@test "continuum's restore turned off is exit 2, naming the setting" {
+  rc_start
+  rc_run_agent "$pane" 1111-2222
+  rc_report "$pane" 1111-2222
+  rc_save
+  tmux -L "$sock" set -g @continuum-restore off
+  run canopy-reboot-check
+  [ "$status" -eq 2 ]
+  [[ "$output" == *"@continuum-restore"* ]]
+}
+
+@test "a disabled restore path is never reported as a pane that will resume" {
+  # The whole point of the exit 2 above. This pane's resume command is in
+  # the last save, so every per-pane check passes and the old verdict was
+  # "will resume" on a machine where nothing would be restored.
+  rc_start
+  rc_run_agent "$pane" 1111-2222
+  rc_report "$pane" 1111-2222
+  rc_save
+  tmux -L "$sock" set -g @continuum-restore off
+  run canopy-reboot-check
+  [ "$status" -eq 2 ]
+  [[ "$output" != *"will resume"* ]]
+}
+
+@test "continuum's halt file is exit 2, naming the file" {
+  # continuum's own documented off switch, and it is off switch enough:
+  # the restore script checks for this file before it does anything.
+  rc_start
+  rc_run_agent "$pane" 1111-2222
+  rc_report "$pane" 1111-2222
+  rc_save
+  : >"$HOME/tmux_no_auto_restore"
+  run canopy-reboot-check
+  [ "$status" -eq 2 ]
+  [[ "$output" == *"tmux_no_auto_restore"* ]]
+}
+
+@test "a second tmux server is reported, because continuum will not restore past one" {
+  # A developer desktop with a second server behaves differently from CI,
+  # where the server under test is the only one. Silent divergence between
+  # what CI proves and what a real machine does is what this line exists
+  # to say out loud.
+  rc_start
+  rc_save
+  other="cnp-reboot-other-$$-${BATS_TEST_NUMBER}"
+  tmux -L "$other" -f /dev/null new-session -d
+  run canopy-reboot-check
+  kill_tmux_server "$other"
+  [[ "$output" == *"another tmux server"* ]]
 }
