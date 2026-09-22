@@ -43,11 +43,11 @@ This is an honest boundary, not a shortcut. What the container proves is that ca
 - Produces: `plugins/VERSIONS` — one line per plugin, `<name> <upstream-url> <commit-sha>`. `doctor` reads it and reports each plugin's pinned commit and whether the tree on disk matches.
 - `plugins/vendor.sh <name>` re-vendors one plugin at the pinned commit, for updating later.
 
-- [ ] **Step 1: Write the failing test** — `test/plugins.bats` asserts `plugins/VERSIONS` exists with both plugins, that each named directory exists and is not a git submodule or a symlink, and that loading `30-plugins.conf` on a scratch socket defines a resurrect key binding.
-- [ ] **Step 2: Run it, observe failure.**
-- [ ] **Step 3: Vendor both plugins** by copying the upstream trees at a chosen commit, excluding their `.git`. Record the commit in `plugins/VERSIONS`. `30-plugins.conf` sources them by absolute path derived from the store, never by a plugin-manager call.
-- [ ] **Step 4: Teach doctor** to report the pinned commits and flag a modified vendored tree.
-- [ ] **Step 5: Run tests, lint, commit** — `feat(plugins): vendor resurrect and continuum at pinned commits`
+- [x] **Step 1: Write the failing test** — `test/plugins.bats` asserts `plugins/VERSIONS` exists with both plugins, that each named directory exists and is not a git submodule or a symlink, and that loading `30-plugins.conf` on a scratch socket defines a resurrect key binding.
+- [x] **Step 2: Run it, observe failure.**
+- [x] **Step 3: Vendor both plugins** by copying the upstream trees at a chosen commit, excluding their `.git`. Record the commit in `plugins/VERSIONS`. `30-plugins.conf` sources them by absolute path derived from the store, never by a plugin-manager call.
+- [x] **Step 4: Teach doctor** to report the pinned commits and flag a modified vendored tree.
+- [x] **Step 5: Run tests, lint, commit** — `feat(plugins): vendor resurrect and continuum at pinned commits`
 
 ---
 
@@ -67,11 +67,11 @@ This is an honest boundary, not a shortcut. What the container proves is that ca
 - Produces: `canopy_adapter_get <id> <key>` in `lib/adapter.sh`, plus `canopy_adapter_list`.
 - `test/fixtures/fake-agent` accepts `--session-id <uuid>` or `--resume <uuid>`, appends a line to `$FAKE_AGENT_HOME/<uuid>.transcript`, and stays alive until killed.
 
-- [ ] **Step 1: Write the failing tests** — reading each manifest key, rejecting a manifest with an unknown key, and the fake agent appending to the transcript named for the id it was given.
-- [ ] **Step 2: Run, observe failure.**
-- [ ] **Step 3: Implement** `lib/adapter.sh` and the fixture.
-- [ ] **Step 4: Write `docs/adapters/contract.md`**, the five keys and what each means, so M3's three further adapters have one document to conform to.
-- [ ] **Step 5: Tests, lint, commit** — `feat(lib): adapter contract, with a fake agent to test it`
+- [x] **Step 1: Write the failing tests** — reading each manifest key, rejecting a manifest with an unknown key, and the fake agent appending to the transcript named for the id it was given.
+- [x] **Step 2: Run, observe failure.**
+- [x] **Step 3: Implement** `lib/adapter.sh` and the fixture.
+- [x] **Step 4: Write `docs/adapters/contract.md`**, the five keys and what each means, so M3's three further adapters have one document to conform to.
+- [x] **Step 5: Tests, lint, commit** — `feat(lib): adapter contract, with a fake agent to test it`
 
 ---
 
@@ -87,11 +87,11 @@ This is an honest boundary, not a shortcut. What the container proves is that ca
 - Reads the current value first and returns without writing when unchanged, so a chatty hook costs one `tmux show`.
 - `canopy agent install <adapter-id>` installs the adapter into that agent's own configuration, as a transaction so `restore` undoes it.
 
-- [ ] **Step 1: Write the failing tests** — a report writes all four options; an unchanged state does not rewrite; no `TMUX_PANE` exits 0 and writes nothing; an invalid state is rejected.
-- [ ] **Step 2: Run, observe failure.**
-- [ ] **Step 3: Implement** `bin/canopy-agent` with a metadata header, and the Claude Code adapter files mapping its documented hook events to the five states.
-- [ ] **Step 4: Make `canopy agent install` transactional**, reusing `lib/manifest.sh`, so installing an adapter is as reversible as installing canopy.
-- [ ] **Step 5: Tests, lint, commit** — `feat(bin): agent state reporting, and the Claude Code adapter`
+- [x] **Step 1: Write the failing tests** — a report writes all four options; an unchanged state does not rewrite; no `TMUX_PANE` exits 0 and writes nothing; an invalid state is rejected.
+- [x] **Step 2: Run, observe failure.**
+- [x] **Step 3: Implement** `bin/canopy-agent` with a metadata header, and the Claude Code adapter files mapping its documented hook events to the five states.
+- [x] **Step 4: Make `canopy agent install` transactional**, reusing `lib/manifest.sh`, so installing an adapter is as reversible as installing canopy.
+- [x] **Step 5: Tests, lint, commit** — `feat(bin): agent state reporting, and the Claude Code adapter`
 
 ---
 
@@ -106,10 +106,10 @@ This is an honest boundary, not a shortcut. What the container proves is that ca
 - resurrect calls a save-command strategy with a pane's pid and expects the command to record for that pane. canopy's strategy maps pid to pane id, reads `@canopy_agent_session` and `@canopy_agent_source`, looks up the adapter's `resume_template`, and prints the resumed command. For a pane with no agent session it prints what resurrect would have printed, unchanged.
 - If resurrect resolves strategies only from inside its own tree, `vendor.sh` applies a **recorded** patch so re-vendoring re-applies it deterministically. Record the patch in `plugins/patches/`.
 
-- [ ] **Step 1: Write the failing test** — a pane running the fake agent with a session option produces `fake-agent --resume <uuid>`; a plain shell pane is unchanged; an agent pane whose adapter is unknown is unchanged rather than mangled.
-- [ ] **Step 2: Run, observe failure.**
-- [ ] **Step 3: Implement**, including the vendor patch if needed.
-- [ ] **Step 4: Tests, lint, commit** — `feat(plugins): save agent panes as their own resume command`
+- [x] **Step 1: Write the failing test** — a pane running the fake agent with a session option produces `fake-agent --resume <uuid>`; a plain shell pane is unchanged; an agent pane whose adapter is unknown is unchanged rather than mangled.
+- [x] **Step 2: Run, observe failure.**
+- [x] **Step 3: Implement**, including the vendor patch if needed.
+- [x] **Step 4: Tests, lint, commit** — `feat(plugins): save agent panes as their own resume command`
 
 ---
 
@@ -123,10 +123,10 @@ This is an honest boundary, not a shortcut. What the container proves is that ca
 - Lists every pane running a known adapter's `command`. Per pane: session name, window, pane, adapter, and a verdict of `will resume`, `will restart without its conversation`, or `not saved yet`, each with the reason.
 - Exit 0 when every agent pane will resume, 1 when any will not, 2 when persistence itself is misconfigured, for example continuum's autosave hook missing from `status-right` or `status-interval` at zero.
 
-- [ ] **Step 1: Write the failing tests** — one pane with a session id reports `will resume`; one without reports `will restart without its conversation` and exits 1; removing continuum's hook from `status-right` yields exit 2 naming that setting.
-- [ ] **Step 2: Run, observe failure.**
-- [ ] **Step 3: Implement.**
-- [ ] **Step 4: Tests, lint, commit** — `feat(bin): reboot-check, a truthful pre-flight for persistence`
+- [x] **Step 1: Write the failing tests** — one pane with a session id reports `will resume`; one without reports `will restart without its conversation` and exits 1; removing continuum's hook from `status-right` yields exit 2 naming that setting.
+- [x] **Step 2: Run, observe failure.**
+- [x] **Step 3: Implement.**
+- [x] **Step 4: Tests, lint, commit** — `feat(bin): reboot-check, a truthful pre-flight for persistence`
 
 ---
 
@@ -146,10 +146,10 @@ This is an honest boundary, not a shortcut. What the container proves is that ca
   - fail closed: when it cannot tell, skip and say so
 - Never touches a pane that is not running a known adapter's command.
 
-- [ ] **Step 1: Write the failing tests** — dry run changes nothing; a pane with unsent input is skipped and named; a pane whose state cannot be determined is skipped; `--yes` restarts a clean pane with the right resume command.
-- [ ] **Step 2: Run, observe failure.**
-- [ ] **Step 3: Implement.**
-- [ ] **Step 4: Tests, lint, commit** — `feat(bin): adopt, with guards that fail closed`
+- [x] **Step 1: Write the failing tests** — dry run changes nothing; a pane with unsent input is skipped and named; a pane whose state cannot be determined is skipped; `--yes` restarts a clean pane with the right resume command.
+- [x] **Step 2: Run, observe failure.**
+- [x] **Step 3: Implement.**
+- [x] **Step 4: Tests, lint, commit** — `feat(bin): adopt, with guards that fail closed`
 
 ---
 
@@ -163,10 +163,10 @@ This is an honest boundary, not a shortcut. What the container proves is that ca
 - Restoring ten agent panes at once starts ten agents at once. The emitted resume command is wrapped so each pane waits a small, bounded, configurable delay before starting, default on, controlled by `@canopy_resume_stagger_ms`.
 - Setting the option to `0` disables it exactly, with no wrapper emitted.
 
-- [ ] **Step 1: Write the failing test** — the emitted command contains the wrapper by default, contains no wrapper at `0`, and the delay is bounded by the option's value.
-- [ ] **Step 2: Run, observe failure.**
-- [ ] **Step 3: Implement.**
-- [ ] **Step 4: Tests, lint, commit** — `feat(plugins): stagger agent resumes so a reboot is not a thundering herd`
+- [x] **Step 1: Write the failing test** — the emitted command contains the wrapper by default, contains no wrapper at `0`, and the delay is bounded by the option's value.
+- [x] **Step 2: Run, observe failure.**
+- [x] **Step 3: Implement.**
+- [x] **Step 4: Tests, lint, commit** — `feat(plugins): stagger agent resumes so a reboot is not a thundering herd`
 
 ---
 

@@ -73,22 +73,29 @@ canopy_adapter_list() {
 # return a correct value out of a manifest that is wrong three lines
 # lower, and the consumer that eventually trips over that line would be
 # debugging the wrong file.
-# canopy_adapter_expand <template> <id>
-# The one place the {id} placeholder is substituted. Every template key in
-# the contract carries it, and more than one caller needs the same answer:
-# the save strategy writes a pane's resume command, and reboot-check has to
-# work out what that command would have been to tell whether the save on
-# disk actually holds it. The same rule written out beside each caller is a
-# rule that drifts, and this project has paid for that already.
+# canopy_adapter_expand <template> <value> [placeholder]
+# The one place a contract placeholder is substituted. Every template key
+# in the contract carries one, and more than one caller needs the same
+# answer: the save strategy writes a pane's resume command, and
+# reboot-check has to work out what that command would have been to tell
+# whether the save on disk actually holds it. The same rule written out
+# beside each caller is a rule that drifts, and this project has paid for
+# that already.
+#
+# The placeholder defaults to {id} because that is what every template key
+# but one carries. detect_draft is the one, and it carries {pane}, so
+# `canopy adopt` passes it rather than growing a second copy of this loop.
 canopy_adapter_expand() {
-  local out rest
+  local out rest ph
+  ph="${3-}"
+  [ -n "$ph" ] || ph='{id}'
   out=""
   rest="$1"
   while :; do
     case "$rest" in
-      *'{id}'*)
-        out="$out${rest%%"{id}"*}$2"
-        rest="${rest#*"{id}"}"
+      *"$ph"*)
+        out="$out${rest%%"$ph"*}$2"
+        rest="${rest#*"$ph"}"
         ;;
       *)
         out="$out$rest"

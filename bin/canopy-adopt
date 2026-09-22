@@ -1,0 +1,236 @@
+#!/bin/sh
+# canopy:summary=Restart agent panes in place so each one carries its own resume command
+# canopy:group=agent
+# canopy:args=[--yes|--dry-run]
+# canopy:examples=canopy adopt --yes
+set -eu
+
+: "${CANOPY_STORE:=$(cd "$(dirname "$0")/.." && pwd)}"
+# shellcheck source=../lib/env.sh
+# shellcheck disable=SC1091
+. "$CANOPY_STORE/lib/env.sh"
+# shellcheck source=../lib/adapter.sh
+# shellcheck disable=SC1091
+. "$CANOPY_STORE/lib/adapter.sh"
+# shellcheck source=../lib/pane.sh
+# shellcheck disable=SC1091
+. "$CANOPY_STORE/lib/pane.sh"
+canopy_paths
+
+# This command kills live processes. Everything below is arranged around
+# that one fact.
+#
+# A pane running an agent it was started by hand carries its conversation
+# nowhere durable: the session id lives in a tmux pane option, which is
+# gone the moment the pane is replaced, and the pane's own command says
+# only `agent`. Adoption restarts the pane as `agent --resume <id>`, so the
+# id is in the pane's command, where it survives anything that forgets the
+# option.
+#
+# What adoption cannot do is invent the id. A pane that never reported one
+# holds a conversation nothing can name, and minting a fresh id would pin
+# the pane by throwing that conversation away. So such a pane is reported
+# and left alone; spec section 11 has M3 supplying ids at launch, which is
+# what actually removes the case.
+#
+# Every guard fails closed. The cost of skipping a pane that was fine is
+# that somebody runs the command again. The cost of the other mistake is
+# somebody's half-typed message, and the images pasted into it that exist
+# in no file anywhere.
+
+canopy_ad_act=0
+canopy_ad_mode_given=0
+for canopy_ad_arg in "$@"; do
+  case "$canopy_ad_arg" in
+    --yes)
+      canopy_ad_act=1
+      canopy_ad_mode_given=1
+      ;;
+    --dry-run)
+      canopy_ad_act=0
+      canopy_ad_mode_given=1
+      ;;
+    *) canopy_die "canopy-adopt: unknown argument: $canopy_ad_arg" ;;
+  esac
+done
+[ "$canopy_ad_mode_given" -eq 1 ] || canopy_ad_act=0
+
+printf 'canopy adopt\n'
+printf '============\n\n'
+
+if ! tmux list-panes -a -F '#{pane_id}' >/dev/null 2>&1; then
+  printf 'No tmux server is running, so there is no pane to adopt.\n'
+  exit 0
+fi
+
+canopy_ad_tab="$(printf '\t')"
+canopy_ad_newline='
+'
+
+# canopy_ad_draft <adapter> <pane>
+# has | none | unknown, per the three outcomes in the adapter contract.
+#
+# Anything that is not a clean "no draft" is unknown, including an adapter
+# that declines to answer by leaving detect_draft empty. The command is run
+# through a shell because a manifest value is a shell command by
+# definition; it is the adapter's own line, from the adapter directory,
+# and lib/adapter.sh never expands it while merely reading the manifest.
+canopy_ad_draft() {
+  canopy_ad_tmpl="$(canopy_adapter_get "$1" detect_draft 2>/dev/null)" || {
+    printf 'unknown\n'
+    return 0
+  }
+  [ -n "$canopy_ad_tmpl" ] || {
+    printf 'unknown\n'
+    return 0
+  }
+  canopy_ad_cmd="$(canopy_adapter_expand "$canopy_ad_tmpl" "$2" '{pane}')"
+  # The status is captured rather than branched on: after an `if` whose
+  # condition failed, POSIX leaves $? at zero, so reading it there would
+  # turn every clean pane into an undetermined one.
+  canopy_ad_rc=0
+  sh -c "$canopy_ad_cmd" >/dev/null 2>&1 || canopy_ad_rc=$?
+  case "$canopy_ad_rc" in
+    0) printf 'has\n' ;;
+    1) printf 'none\n' ;;
+    *) printf 'unknown\n' ;;
+  esac
+}
+
+# canopy_ad_carries_resume <pane> <resume command>
+# True when the pane is already running the command adoption would give
+# it, so there is nothing to do and nothing to kill.
+#
+# Compared on the tail rather than the whole string, and with quotes
+# stripped, because the same command reaches this test in three shapes:
+# tmux stores a respawned pane's start command quoted, a pane the user
+# started by hand reports the interpreter and an absolute path ahead of
+# the command, and a pane adopted by an earlier run reports it bare. A
+# user who typed the resume command themselves is as adopted as one this
+# command restarted, which is why the tail is the right question.
+canopy_ad_carries_resume() {
+  canopy_ad_have="$(canopy_pane_command "$1" 2>/dev/null | tr -d "\"'")" || return 1
+  [ -n "$canopy_ad_have" ] || return 1
+  canopy_ad_want="$(printf '%s' "$2" | tr -d "\"'")"
+  case "$canopy_ad_have" in
+    *"$canopy_ad_want") return 0 ;;
+    *) return 1 ;;
+  esac
+}
+
+canopy_ad_total=0
+canopy_ad_pinned=0
+canopy_ad_left=0
+canopy_ad_report=""
+
+while IFS="$canopy_ad_tab" read -r canopy_ad_pane canopy_ad_adapter; do
+  [ -n "$canopy_ad_pane" ] || continue
+  canopy_ad_info="$(tmux display-message -p -t "$canopy_ad_pane" \
+    "#{session_name}:#{window_index}.#{pane_index}$canopy_ad_tab#{@canopy_agent_session}$canopy_ad_tab#{@canopy_agent_state}" \
+    2>/dev/null)" || continue
+
+  canopy_ad_where="${canopy_ad_info%%"$canopy_ad_tab"*}"
+  canopy_ad_rest="${canopy_ad_info#*"$canopy_ad_tab"}"
+  canopy_ad_id="${canopy_ad_rest%%"$canopy_ad_tab"*}"
+  canopy_ad_state="${canopy_ad_rest#*"$canopy_ad_tab"}"
+
+  canopy_ad_total=$((canopy_ad_total + 1))
+  canopy_ad_done=0
+
+  # shellcheck disable=SC2310  # every branch here asks a question, so a non-zero return is the answer and not a failure to abort on
+  if [ -z "$canopy_ad_id" ]; then
+    canopy_ad_verdict="skipped"
+    canopy_ad_reason="no session id has been reported, so there is nothing to resume"
+  elif ! canopy_ad_resume="$(canopy_adapter_resume_command \
+    "$canopy_ad_adapter" "$canopy_ad_id" 2>/dev/null)"; then
+    canopy_ad_verdict="skipped"
+    canopy_ad_reason="the $canopy_ad_adapter adapter has no usable resume command"
+  elif canopy_ad_carries_resume "$canopy_ad_pane" "$canopy_ad_resume"; then
+    # Idempotence, and it is a safety property: a second run must not kill
+    # the pane the first run just fixed.
+    canopy_ad_verdict="already adopted"
+    canopy_ad_reason="the pane already runs its own resume command"
+    canopy_ad_done=1
+  else
+    case "$canopy_ad_resume" in
+      *[[:cntrl:]]*)
+        canopy_ad_verdict="skipped"
+        canopy_ad_reason="the resume command holds control characters, which is not a command this will run"
+        ;;
+      *)
+        case "$canopy_ad_state" in
+          idle | completed)
+            case "$(canopy_ad_draft "$canopy_ad_adapter" "$canopy_ad_pane")" in
+              none)
+                if [ "$canopy_ad_act" -eq 1 ]; then
+                  if tmux respawn-pane -k -t "$canopy_ad_pane" "$canopy_ad_resume" 2>/dev/null; then
+                    canopy_ad_verdict="adopted"
+                    canopy_ad_reason="now runs: $canopy_ad_resume"
+                    canopy_ad_done=1
+                  else
+                    canopy_ad_verdict="skipped"
+                    canopy_ad_reason="the pane could not be restarted"
+                  fi
+                else
+                  canopy_ad_verdict="would adopt"
+                  canopy_ad_reason="would run: $canopy_ad_resume"
+                fi
+                ;;
+              has)
+                canopy_ad_verdict="skipped"
+                canopy_ad_reason="the pane is holding unsent input"
+                ;;
+              *)
+                canopy_ad_verdict="skipped"
+                canopy_ad_reason="whether the pane holds unsent input could not be determined"
+                ;;
+            esac
+            ;;
+          working | blocked)
+            canopy_ad_verdict="skipped"
+            canopy_ad_reason="the agent is mid task ($canopy_ad_state)"
+            ;;
+          exited)
+            canopy_ad_verdict="skipped"
+            canopy_ad_reason="the agent has exited, so there is nothing running to adopt"
+            ;;
+          '')
+            canopy_ad_verdict="skipped"
+            canopy_ad_reason="the agent has not reported what it is doing"
+            ;;
+          *)
+            canopy_ad_verdict="skipped"
+            canopy_ad_reason="the agent reported an unknown state: $canopy_ad_state"
+            ;;
+        esac
+        ;;
+    esac
+  fi
+
+  if [ "$canopy_ad_done" -eq 1 ]; then
+    canopy_ad_pinned=$((canopy_ad_pinned + 1))
+  else
+    canopy_ad_left=$((canopy_ad_left + 1))
+  fi
+
+  canopy_ad_report="$canopy_ad_report  $canopy_ad_where  $canopy_ad_adapter: $canopy_ad_verdict, $canopy_ad_reason$canopy_ad_newline"
+done <<EOF
+$(canopy_pane_agent_panes)
+EOF
+
+printf 'Agent panes:\n'
+if [ "$canopy_ad_total" -eq 0 ]; then
+  printf '  no agent panes are open, so there is nothing to adopt\n\n'
+  exit 0
+fi
+printf '%s\n' "$canopy_ad_report"
+
+if [ "$canopy_ad_act" -eq 0 ] && [ "$canopy_ad_left" -gt 0 ]; then
+  printf 'This was a dry run and nothing was changed. Run canopy adopt --yes to act.\n'
+fi
+
+printf '%d of %d agent panes carry their own resume command.\n' \
+  "$canopy_ad_pinned" "$canopy_ad_total"
+
+[ "$canopy_ad_left" -eq 0 ] || exit 1
+exit 0
