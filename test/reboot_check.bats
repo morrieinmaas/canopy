@@ -298,3 +298,38 @@ rc_save() {
   kill_tmux_server "$other"
   [[ "$output" == *"another tmux server"* ]]
 }
+
+@test "a restored pane is recognised by the command it is running, not only by its option" {
+  # The bug this pins. resurrect saves no user pane options, so a pane
+  # brought back as `agent --resume <id>` has an empty
+  # @canopy_agent_session, and reading only that option made this command
+  # report "no session id has been reported" about a pane it had just
+  # restored correctly. The id is still there, in the command.
+  rc_start
+  tmux -L "$sock" send-keys -t "$pane" \
+    "fake-agent --resume dddddddd-1111-2222-3333-444444444444" Enter
+  rc_wait_for_command "$pane" -- resume
+  # Deliberately NOT reported: this is a pane as it comes back from a
+  # restore, carrying its command and nothing else.
+  [ -z "$(tmux -L "$sock" display-message -p -t "$pane" '#{@canopy_agent_session}')" ]
+  rc_save
+
+  run canopy-reboot-check
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"will resume"* ]]
+  [[ "$output" == *"dddddddd-1111-2222-3333-444444444444"* ]]
+  [[ "$output" == *"read from the command the pane is running"* ]]
+}
+
+@test "a pane running something that is not a resume command is still not resumable" {
+  # The other half: reading the id off the command must not turn every
+  # agent pane into a resumable one. A pane launched fresh has an id in
+  # its command too, after --session-id, and that is a conversation
+  # nothing has saved yet.
+  rc_start
+  rc_run_agent "$pane" eeeeeeee-1111-2222-3333-444444444444
+  rc_save
+  run canopy-reboot-check
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"no session id has been reported"* ]]
+}

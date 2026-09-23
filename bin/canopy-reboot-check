@@ -150,6 +150,20 @@ while IFS="$canopy_rc_tab" read -r canopy_rc_pane canopy_rc_adapter; do
   canopy_rc_index="${canopy_rc_rest%%"$canopy_rc_tab"*}"
   canopy_rc_id="${canopy_rc_rest#*"$canopy_rc_tab"}"
 
+  # A pane restored from a save comes back running its own resume command
+  # and carrying no pane options, because resurrect saves none. Reading
+  # only the option made this command report "no session id has been
+  # reported" about panes it had just correctly restored, which is the one
+  # kind of answer it exists not to give. The id is still there, in the
+  # command the pane is running.
+  canopy_rc_recovered=0
+  if [ -z "$canopy_rc_id" ]; then
+    canopy_rc_id="$(canopy_adapter_id_from_command "$canopy_rc_adapter" \
+      "$(canopy_pane_command "$canopy_rc_pane" 2>/dev/null)" 2>/dev/null)" ||
+      canopy_rc_id=""
+    [ -z "$canopy_rc_id" ] || canopy_rc_recovered=1
+  fi
+
   canopy_rc_total=$((canopy_rc_total + 1))
 
   # shellcheck disable=SC2310  # every branch here asks a question, so a non-zero return is the answer and not a failure to abort on
@@ -172,7 +186,11 @@ while IFS="$canopy_rc_tab" read -r canopy_rc_pane canopy_rc_adapter; do
     canopy_rc_reason="the last save does not have this pane"
   elif [ "$(canopy_resume_stagger_strip "$canopy_rc_saved")" = "$canopy_rc_resume" ]; then
     canopy_rc_verdict="will resume"
-    canopy_rc_reason="the last save resumes $canopy_rc_id"
+    if [ "$canopy_rc_recovered" -eq 1 ]; then
+      canopy_rc_reason="the last save resumes $canopy_rc_id, read from the command the pane is running"
+    else
+      canopy_rc_reason="the last save resumes $canopy_rc_id"
+    fi
     canopy_rc_resuming=$((canopy_rc_resuming + 1))
   else
     canopy_rc_verdict="will restart without its conversation"
