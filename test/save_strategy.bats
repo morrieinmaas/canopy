@@ -352,3 +352,29 @@ MANIFEST
   [ "$status" -eq 0 ]
   [[ "$output" == *":$expected"* ]]
 }
+
+@test "a restored pane is saved with its resume command, and the stagger put back" {
+  # Before, the lookup gave up on a pane with no session option and
+  # resurrect's own strategy saved the running command verbatim. Right by
+  # luck, and without the stagger, so the reboot after that started every
+  # agent in the same second.
+  install_fake_adapter
+  strategy_tmux_start
+  tmux -L "$sock" send-keys -t "$pane" \
+    "fake-agent --resume ffffffff-1111-2222-3333-444444444444" Enter
+  i=0
+  while [ "$i" -lt 50 ]; do
+    case "$(canopy_pane_command "$pane")" in
+      *"--resume"*) break ;;
+      *) ;;
+    esac
+    sleep 0.1
+    i=$((i + 1))
+  done
+  [ -z "$(tmux -L "$sock" display-message -p -t "$pane" '#{@canopy_agent_session}')" ]
+  tmux -L "$sock" set -g @canopy_resume_stagger_ms 400
+
+  run "$strategy" "$(pane_pid_of "$pane")"
+  [ "$status" -eq 0 ]
+  [[ "$output" == "sleep "*" && fake-agent --resume ffffffff-1111-2222-3333-444444444444" ]]
+}

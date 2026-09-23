@@ -98,10 +98,6 @@ canopy_save_resume_command() {
 $panes
 EOF
 
-  # No session id means no conversation to resume, whatever else the pane
-  # may be running. That is most panes, and they all end up here.
-  [ -n "$session" ] || return 1
-
   # A session id with no source beside it: the three options are written by
   # more than one caller, and a hook that reports only a state leaves the
   # source empty. The pane is still resumable, so ask the same lookup every
@@ -112,6 +108,21 @@ EOF
     adapter="$(canopy_pane_adapter "$pane" 2>/dev/null)" || return 1
   fi
   [ -n "$adapter" ] || return 1
+
+  # A pane restored from a save carries no pane options, because resurrect
+  # saves none, so the id has to be read back out of the command the pane
+  # is running. Without this the lookup gave up here and resurrect's own
+  # strategy fell in behind it, saving the running command verbatim:
+  # right by luck, and stripped of the stagger wrapper, so the reboot
+  # after that started every agent in the same second.
+  if [ -z "$session" ]; then
+    session="$(canopy_adapter_id_from_command "$adapter" \
+      "$(canopy_pane_command "$pane" 2>/dev/null)" 2>/dev/null)" || session=""
+  fi
+
+  # No session id anywhere means no conversation to resume, whatever else
+  # the pane may be running. That is most panes, and they all end up here.
+  [ -n "$session" ] || return 1
 
   out="$(canopy_adapter_resume_command "$adapter" "$session" 2>/dev/null)" || return 1
 

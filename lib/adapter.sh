@@ -106,6 +106,53 @@ canopy_adapter_expand() {
   printf '%s\n' "$out"
 }
 
+# canopy_adapter_id_from_command <adapter-id> <command>
+# The session id carried by a command that resumes one, or 1 when the
+# command is not that adapter's resume command.
+#
+# The reverse of canopy_adapter_resume_command, and it exists because a
+# restored pane knows its own id while tmux does not. resurrect saves no
+# user pane options, so a pane brought back as `agent --resume <id>` comes
+# back with @canopy_agent_session empty, and every caller that reads only
+# that option concludes the pane has no conversation. reboot-check said
+# exactly that about panes it had just restored correctly.
+#
+# The id is read back out of the command the pane is running, which is the
+# one place it still exists, and then held to the same character set the
+# reporter enforces: this string comes from a process command line, and it
+# goes on to be handed to a shell.
+canopy_adapter_id_from_command() {
+  local template pre suf rest
+  [ -n "${2-}" ] || return 1
+  template="$(canopy_adapter_get "$1" resume_template)" || return 1
+  case "$template" in
+    *'{id}'*) ;;
+    *) return 1 ;;
+  esac
+  pre="${template%%\{id\}*}"
+  suf="${template#*\{id\}}"
+
+  case "$2" in
+    *"$pre"*) ;;
+    *) return 1 ;;
+  esac
+  rest="${2#*"$pre"}"
+  if [ -n "$suf" ]; then
+    case "$rest" in
+      *"$suf"*) rest="${rest%%"$suf"*}" ;;
+      *) return 1 ;;
+    esac
+  fi
+  # An id never contains a space, so anything after one belongs to the
+  # command rather than to the id.
+  rest="${rest%% *}"
+  case "$rest" in
+    '' | *[!A-Za-z0-9._:-]*) return 1 ;;
+    *) ;;
+  esac
+  printf '%s\n' "$rest"
+}
+
 # canopy_adapter_resume_command <adapter-id> <session-id>
 # The command that puts a pane back into the conversation it was in.
 # An empty session id fails rather than producing a resume command with
