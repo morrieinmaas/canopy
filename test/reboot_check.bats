@@ -120,14 +120,50 @@ rc_save() {
   [[ "$output" == *"11111111-2222-3333-4444-555555555555"* ]]
 }
 
-@test "a pane that has reported no session id will restart without its conversation" {
+@test "a pane launched with its own id is resumable even though nothing reported it" {
+  # This test used to assert the opposite, and the opposite was wrong. An
+  # agent that takes a caller chosen id carries that id in the command it
+  # is running, whether or not a hook ever reported it, so there is no
+  # honest way to call the pane idless. Reading only the resume form is how
+  # canopy came to look at sixteen live panes, every one with its uuid in
+  # plain sight, and report that not one of them had a session id.
+  #
+  # And it resumes, because the id being readable is what lets the save
+  # strategy write a resume command for a pane that was never reported:
+  # the pane runs the launch form, the save holds the resume form. That is
+  # the whole path a machine full of hand-started agents needs, and it is
+  # the difference between sixteen conversations surviving a reboot and
+  # none of them.
   rc_start
   rc_run_agent "$pane" 66666666-7777-8888-9999-000000000000
   rc_save
   run canopy-reboot-check
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"will resume"* ]]
+  [[ "$output" == *"66666666-7777-8888-9999-000000000000"* ]]
+  [[ "$output" != *"no session id"* ]]
+}
+
+@test "a pane whose agent cannot be handed an id has no session id anywhere" {
+  # The genuine idless case, and the only one left: an adapter that cannot
+  # pin an id at launch has an empty launch_template, so there is nothing
+  # in the pane's command to read back and nothing reported either.
+  rc_start
+  awk -F'\t' '{ print }' /dev/null || true
+  manifest="$CANOPY_CONFIG/adapters/fake-agent/manifest"
+  tmp="$BATS_TEST_TMPDIR/m"
+  awk '
+    /^can_pin_at_launch=/ { print "can_pin_at_launch=no"; next }
+    /^launch_template=/   { print "launch_template="; next }
+    { print }
+  ' "$manifest" >"$tmp"
+  mv "$tmp" "$manifest"
+
+  rc_run_agent "$pane" 77777777-8888-9999-aaaa-bbbbbbbbbbbb
+  rc_save
+  run canopy-reboot-check
   [ "$status" -eq 1 ]
-  [[ "$output" == *"will restart without its conversation"* ]]
-  [[ "$output" == *"no session id"* ]]
+  [[ "$output" == *"no session id has been reported"* ]]
 }
 
 @test "a pane that appeared after the last save is not saved yet" {
@@ -321,15 +357,14 @@ rc_save() {
   [[ "$output" == *"read from the command the pane is running"* ]]
 }
 
-@test "a pane running something that is not a resume command is still not resumable" {
-  # The other half: reading the id off the command must not turn every
-  # agent pane into a resumable one. A pane launched fresh has an id in
-  # its command too, after --session-id, and that is a conversation
-  # nothing has saved yet.
+@test "the id is read from the launch form as well as the resume form" {
+  # Both forms carry it, and a pane is running whichever one started it:
+  # the resume command after a restore, the launch command before one.
+  # Reading only the resume form left every freshly launched pane looking
+  # idless, which on a real machine meant all of them.
   rc_start
   rc_run_agent "$pane" eeeeeeee-1111-2222-3333-444444444444
   rc_save
   run canopy-reboot-check
-  [ "$status" -eq 1 ]
-  [[ "$output" == *"no session id has been reported"* ]]
+  [[ "$output" == *"eeeeeeee-1111-2222-3333-444444444444"* ]]
 }

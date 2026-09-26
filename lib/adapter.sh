@@ -122,13 +122,36 @@ canopy_adapter_expand() {
 # reporter enforces: this string comes from a process command line, and it
 # goes on to be handed to a shell.
 canopy_adapter_id_from_command() {
-  local template pre suf rest
+  local template pre suf rest key
   [ -n "${2-}" ] || return 1
-  template="$(canopy_adapter_get "$1" resume_template)" || return 1
-  case "$template" in
-    *'{id}'*) ;;
-    *) return 1 ;;
-  esac
+  # Both templates, resume first.
+  #
+  # A pane carries its id in whichever form started it. One resumed from a
+  # save is running the resume command; one an agent launched fresh is
+  # running the launch command, and for an agent that takes a caller
+  # chosen id that command holds the id just as plainly. Reading only the
+  # resume form meant canopy looked at sixteen live panes, each with its
+  # uuid visible in its own command line, and reported that not one of
+  # them had a session id.
+  for key in resume_template launch_template; do
+    template="$(canopy_adapter_get "$1" "$key" 2>/dev/null)" || continue
+    case "$template" in
+      *'{id}'*) ;;
+      *) continue ;;
+    esac
+    if rest="$(canopy_adapter_id_from_template "$template" "$2")"; then
+      printf '%s\n' "$rest"
+      return 0
+    fi
+  done
+  return 1
+}
+
+# canopy_adapter_id_from_template <template> <command>
+# The id <command> carries, per one template, or 1 when it carries none.
+canopy_adapter_id_from_template() {
+  local template pre suf rest
+  template="$1"
   pre="${template%%\{id\}*}"
   suf="${template#*\{id\}}"
 

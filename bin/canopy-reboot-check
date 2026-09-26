@@ -106,7 +106,26 @@ canopy_rc_problem() {
 # resurrect itself reads. A machine whose user pointed it elsewhere must be
 # told about the saves it actually has.
 canopy_rc_dir="$(canopy_rc_option @resurrect-dir)"
-[ -n "$canopy_rc_dir" ] || canopy_rc_dir="$CANOPY_STATE/resurrect"
+# Unset means resurrect's own default, not canopy's state directory.
+#
+# canopy's plugin layer sets @resurrect-dir, so on a machine running
+# canopy the option is always there and this branch never runs. Where it
+# does run is the one case that matters most for getting it right: a
+# machine that has NOT switched yet, being asked what a reboot would cost
+# before anything changes. Falling back to canopy's own directory there
+# looked in a folder resurrect had never written to and reported every
+# pane as "not saved yet", on a machine with a perfectly good save file
+# sitting in resurrect's default location.
+#
+# The two branches are resurrect's, copied from its helpers.sh: the old
+# ~/.tmux/resurrect when that directory exists, the XDG path otherwise.
+if [ -z "$canopy_rc_dir" ]; then
+  if [ -d "$HOME/.tmux/resurrect" ]; then
+    canopy_rc_dir="$HOME/.tmux/resurrect"
+  else
+    canopy_rc_dir="${XDG_DATA_HOME:-$HOME/.local/share}/tmux/resurrect"
+  fi
+fi
 canopy_rc_save_file="$canopy_rc_dir/last"
 
 # --- whether anything reads the saves back ---------------------------------
