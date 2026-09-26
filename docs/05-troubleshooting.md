@@ -67,6 +67,55 @@ put the clone's `bin/` on your `PATH`.
 
 ---
 
+## My TPM plugins stopped loading under canopy
+
+Every plugin key falls back to a tmux default: `prefix s` opens tmux's own
+`choose-tree` instead of the session picker you installed, and `prefix y` copies
+nothing. TPM itself reports no error and exits 0.
+
+`canopy doctor` names it:
+
+```
+  TPM @plugin lines in user.conf: WARNING, TPM cannot see them
+```
+
+TPM does not read tmux options to discover plugins. It **greps config files** for
+`@plugin` lines, and it looks exactly one level below the entry point:
+`/etc/tmux.conf`, your `tmux.conf`, and the files that file sources *directly*
+(`_sourced_files` in `tpm/scripts/helpers/plugin_functions.sh`, which is not
+recursive). Under canopy your `user.conf` is two levels down:
+
+```
+~/.config/tmux/tmux.conf  ->  $CANOPY_STORE/tmux/tmux.conf  ->  user.conf
+```
+
+so `set -g @plugin 'owner/repo'` lines in `user.conf` are invisible to it, nothing
+is installed, and nothing is loaded.
+
+Use `@tpm_plugins` instead. It is TPM's older list form, and the one thing TPM reads
+from a real tmux **option** (`show-option -gqv @tpm_plugins`), so it survives being
+sourced from any depth:
+
+```tmux
+set -g @tpm_plugins '        \
+  tmux-plugins/tpm           \
+  tmux-plugins/tmux-yank     \
+  omerxx/tmux-sessionx       \
+'
+
+run '~/.config/tmux/plugins/tpm/tpm'
+```
+
+Per-plugin settings (`@sessionx-bind` and friends) are unaffected: those really are
+tmux options, and plugins read them at load.
+
+Do not list `tmux-plugins/tmux-resurrect` or `tmux-plugins/tmux-continuum` here.
+canopy vendors both at pinned commits and loads them before `user.conf` is read;
+listing them again gives you two save loops writing one file and two restores racing
+at boot. See [07-persistence.md](07-persistence.md).
+
+---
+
 ## `canopy doctor` exits 2
 
 Exit 2 means a load-bearing check failed. One of four:

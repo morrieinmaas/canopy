@@ -306,6 +306,31 @@ case "$last_source" in
     load_bearing_failed=1
     ;;
 esac
+
+# TPM's plugin list, which is the one thing about canopy that breaks a
+# working config silently. TPM does not read tmux OPTIONS to discover
+# plugins; it GREPS config files for `@plugin` lines, and it looks exactly
+# one level below the entry point: /etc/tmux.conf, the user's tmux.conf, and
+# the files that file sources DIRECTLY. user.conf is two levels down (entry
+# point -> the store's tmux.conf -> here), so `set -g @plugin` lines in it
+# are never seen, TPM installs and loads nothing, and it exits 0 while doing
+# it. Every plugin key then falls back to a tmux default, which is why this
+# reads as a config that works: prefix s opens choose-tree instead of
+# whichever session picker was asked for.
+#
+# @tpm_plugins is TPM's older list form and the one it reads from a real
+# tmux option, so it survives being sourced from any depth.
+#
+# A warning rather than a failure, and only when the lines are there:
+# whether to run TPM at all is the user's business, and canopy vendors what
+# it needs either way.
+if [ -r "$CANOPY_CONFIG/user.conf" ] &&
+  grep -qE '^[[:space:]]*set(-option)?[[:space:]]+-g[[:space:]]+@plugin([[:space:]]|$)' \
+    "$CANOPY_CONFIG/user.conf"; then
+  printf '  TPM @plugin lines in user.conf: WARNING, TPM cannot see them\n'
+  printf '    it greps one level below the entry point and user.conf is two, so it loads nothing\n'
+  printf "    declare them in one option instead: set -g @tpm_plugins 'owner/repo owner/repo'\n"
+fi
 printf '\n'
 
 # --- Restore points ----------------------------------------------------

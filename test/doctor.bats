@@ -24,6 +24,28 @@ setup() {
   [ "$status" -eq 0 ]
 }
 
+@test "TPM @plugin lines in user.conf are warned about, and do not fail doctor" {
+  run canopy install
+  [ "$status" -eq 0 ]
+  run canopy-caps
+  [ "$status" -eq 0 ]
+  run canopy-index
+  [ "$status" -eq 0 ]
+
+  # Silent until there is something to say.
+  run canopy-doctor
+  [ "$status" -eq 0 ]
+  [[ "$output" != *"TPM"* ]]
+
+  # TPM greps one level below the entry point; user.conf is two, so these
+  # lines load nothing and TPM says nothing about it.
+  printf "set -g @plugin 'owner/some-tmux-plugin'\n" >>"$CANOPY_CONFIG/user.conf"
+  run canopy-doctor
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"TPM cannot see them"* ]]
+  [[ "$output" == *"@tpm_plugins"* ]]
+}
+
 @test "exits 2 when the store the entry point points at is made invalid" {
   # The real store is read-only by convention; copy it so a broken conf.d
   # fragment can be planted without touching the checked-out tree. The
