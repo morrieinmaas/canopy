@@ -61,6 +61,13 @@ Reload after editing:
 tmux source-file ~/.config/tmux/tmux.conf
 ```
 
+One thing does not work the way it looks: TPM plugin lists. `set -g @plugin
+'owner/repo'` in this file loads nothing, because TPM finds plugins by grepping
+config files one level below the entry point and this file is two levels down. Use
+`set -g @tpm_plugins '...'`, which TPM reads from a real tmux option. `canopy doctor`
+warns when it sees `@plugin` lines here; the full explanation is in
+[05-troubleshooting.md](05-troubleshooting.md#my-tpm-plugins-stopped-loading-under-canopy).
+
 `user.conf` survives uninstall unless you remove `~/.config/canopy` yourself. If you
 put other files in that directory, `canopy restore --all` leaves the directory alone,
 because it removes a directory only with `rmdir` and only if canopy created it.
