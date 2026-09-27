@@ -23,6 +23,47 @@ fi
 warnings=0
 load_bearing_failed=0
 
+# doctor_verdict <severity> <label> <text> [detail...]
+#
+# The one place a load-bearing verdict is printed, and the only place
+# load_bearing_failed is set. Each FAILED branch used to set the flag on a
+# line of its own, which meant a branch could print FAILED and still let
+# doctor exit 0: a check that reports a problem and then tells its caller
+# everything is fine. Printing the word and accounting for it are now the
+# same call, so the second cannot be forgotten. A test asserts that FAILED
+# appears nowhere else in this file.
+#
+# severity is ok, info, warn or fail, and never appears in the output: it
+# only decides which counter moves. info is for a line that reports
+# something without judging it, and for a check skipped because an earlier
+# failure already accounts for it.
+#
+# Scope, deliberately: this covers the load-bearing section, whose verdicts
+# all have the shape `label: verdict`. The sections above and below report
+# heterogeneous facts (a version string, a plugin digest, a transaction id)
+# that have no verdict to name, and forcing those through here would mean
+# passing a preformatted string to a function whose whole job is formatting.
+# They still count their own warnings.
+#
+# Details print indented beneath, which is the shape each of these checks
+# already used by hand.
+doctor_verdict() {
+  doctor_severity="$1"
+  doctor_label="$2"
+  doctor_text="$3"
+  shift 3
+  printf '  %s: %s\n' "$doctor_label" "$doctor_text"
+  for doctor_detail in "$@"; do
+    printf '    %s\n' "$doctor_detail"
+  done
+  case "$doctor_severity" in
+    fail) load_bearing_failed=1 ;;
+    warn) warnings=$((warnings + 1)) ;;
+    ok | info) ;;
+    *) canopy_die "canopy-doctor: doctor_verdict: unknown severity: $doctor_severity" ;;
+  esac
+}
+
 printf 'canopy doctor\n'
 printf '=============\n\n'
 
@@ -214,10 +255,10 @@ printf '\n'
 printf 'Load-bearing settings:\n'
 
 if canopy_tmux_version_ok; then
-  printf '  tmux version floor (>= 3.4): ok\n'
+  doctor_verdict ok "tmux version floor (>= 3.4)" "ok"
 else
-  printf '  tmux version floor (>= 3.4): FAILED (found: %s)\n' "${tmux_raw:-not found}"
-  load_bearing_failed=1
+  doctor_verdict fail "tmux version floor (>= 3.4)" \
+    "FAILED (found: ${tmux_raw:-not found})"
 fi
 
 # What gets validated is the entry point tmux actually loads on this
@@ -246,20 +287,22 @@ if [ -z "$entry_point" ]; then
   # honestly validate in its place. Reported as a warning rather than
   # silence: "canopy doctor: OK" on a machine with no canopy on it is the
   # same lie in a smaller costume.
-  printf '  installed entry point: none, canopy is not installed (run: canopy install)\n'
-  warnings=$((warnings + 1))
+  doctor_verdict warn "installed entry point" \
+    "none, canopy is not installed (run: canopy install)"
 else
-  printf '  installed entry point: %s\n' "$entry_point"
+  doctor_verdict info "installed entry point" "$entry_point"
   entry_point_loads=0
   if canopy_tmux_validate "$entry_point" >"$validate_tmp" 2>&1; then
-    printf '  entry point loads from a bare environment: ok\n'
+    doctor_verdict ok "entry point loads from a bare environment" "ok"
     entry_point_loads=1
   else
-    printf '  entry point loads from a bare environment: FAILED\n'
+    # The detail lines are tmux's own error text, however many lines of it
+    # there are, so they are read from the file rather than passed as
+    # arguments.
+    doctor_verdict fail "entry point loads from a bare environment" "FAILED"
     while IFS= read -r line; do
       printf '    %s\n' "$line"
     done <"$validate_tmp"
-    load_bearing_failed=1
   fi
 
   # @continuum-restore, the setting spec 5.3 hands to doctor, and the one
@@ -276,16 +319,15 @@ else
   # setting is not missing, the config it lives in never ran.
   # shellcheck disable=SC2310  # a state question, so a non-zero return is the answer and not a failure to abort on
   if [ "$entry_point_loads" -eq 0 ]; then
-    printf '  @continuum-restore is on: not checked, the entry point does not load\n'
+    doctor_verdict info "@continuum-restore is on" \
+      "not checked, the entry point does not load"
   elif restore_option="$(canopy_tmux_loaded_option "$entry_point" @continuum-restore)" &&
     [ "$restore_option" = "on" ]; then
-    printf '  @continuum-restore is on: ok\n'
+    doctor_verdict ok "@continuum-restore is on" "ok"
   else
-    printf '  @continuum-restore is on: FAILED (the loaded config leaves it %s)\n' \
-      "${restore_option:-unset}"
-    printf '    nothing would be restored after a reboot; set it back with: set -g @continuum-restore on in %s/user.conf\n' \
-      "$CANOPY_CONFIG"
-    load_bearing_failed=1
+    doctor_verdict fail "@continuum-restore is on" \
+      "FAILED (the loaded config leaves it ${restore_option:-unset})" \
+      "nothing would be restored after a reboot; set it back with: set -g @continuum-restore on in $CANOPY_CONFIG/user.conf"
   fi
 fi
 rm -f "$validate_tmp"
@@ -299,11 +341,11 @@ last_source="$(grep '^source-file' "$CANOPY_STORE/tmux/tmux.conf" | tail -n 1)"
 # shellcheck disable=SC2016
 case "$last_source" in
   *'$CANOPY_CONFIG/user.conf'*)
-    printf '  user.conf sourced last: ok\n'
+    doctor_verdict ok "user.conf sourced last" "ok"
     ;;
   *)
-    printf '  user.conf sourced last: FAILED (last source-file line: %s)\n' "$last_source"
-    load_bearing_failed=1
+    doctor_verdict fail "user.conf sourced last" \
+      "FAILED (last source-file line: $last_source)"
     ;;
 esac
 
@@ -327,9 +369,10 @@ esac
 if [ -r "$CANOPY_CONFIG/user.conf" ] &&
   grep -qE '^[[:space:]]*set(-option)?[[:space:]]+-g[[:space:]]+@plugin([[:space:]]|$)' \
     "$CANOPY_CONFIG/user.conf"; then
-  printf '  TPM @plugin lines in user.conf: WARNING, TPM cannot see them\n'
-  printf '    it greps one level below the entry point and user.conf is two, so it loads nothing\n'
-  printf "    declare them in one option instead: set -g @tpm_plugins 'owner/repo owner/repo'\n"
+  doctor_verdict warn "TPM @plugin lines in user.conf" \
+    "WARNING, TPM cannot see them" \
+    "it greps one level below the entry point and user.conf is two, so it loads nothing" \
+    "declare them in one option instead: set -g @tpm_plugins 'owner/repo owner/repo'"
 fi
 printf '\n'
 

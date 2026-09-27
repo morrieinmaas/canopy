@@ -24,7 +24,7 @@ setup() {
   [ "$status" -eq 0 ]
 }
 
-@test "TPM @plugin lines in user.conf are warned about, and do not fail doctor" {
+@test "TPM @plugin lines in user.conf are a warning, not a load-bearing failure" {
   run canopy install
   [ "$status" -eq 0 ]
   run canopy-caps
@@ -39,11 +39,16 @@ setup() {
 
   # TPM greps one level below the entry point; user.conf is two, so these
   # lines load nothing and TPM says nothing about it.
+  #
+  # Exit 1, not 2: the plugins are the user's business and canopy vendors
+  # what it needs either way, so nothing load-bearing is broken. But it is
+  # not exit 0 either, because something the user asked for is not happening.
   printf "set -g @plugin 'owner/some-tmux-plugin'\n" >>"$CANOPY_CONFIG/user.conf"
   run canopy-doctor
-  [ "$status" -eq 0 ]
+  [ "$status" -eq 1 ]
   [[ "$output" == *"TPM cannot see them"* ]]
   [[ "$output" == *"@tpm_plugins"* ]]
+  [[ "$output" == *"warning(s)"* ]]
 }
 
 @test "exits 2 when the store the entry point points at is made invalid" {
@@ -336,4 +341,41 @@ interrupt_install() {
   PATH="$fake_bin:$PATH" run canopy-doctor
   [[ "$output" == *"ps (agent panes are recognised through it): dormant"* ]]
   [[ "$output" == *"cannot report a process parent"* ]]
+}
+
+@test "no load-bearing verdict is printed outside doctor_verdict" {
+  # The property the helper exists for. A branch that printed FAILED itself
+  # would have to remember load_bearing_failed=1 on its own line, and one
+  # that forgot would make doctor report a failure and exit 0. Enforced by
+  # reading the source, because there is no way to test a branch that has
+  # not been written yet.
+  src="$CANOPY_STORE/bin/canopy-doctor"
+
+  # FAILED reaches the output only as an argument to doctor_verdict, or from
+  # the final summary line that reports the exit code.
+  run awk '
+    # A doctor_verdict call wraps across lines, so its continuations belong
+    # to it: without tracking them, the FAILED text on line two of a call
+    # reads as a bare printf.
+    {
+      if (in_call) {
+        if ($0 !~ /\\$/) in_call = 0
+        next
+      }
+      if ($0 ~ /doctor_verdict/) {
+        if ($0 ~ /\\$/) in_call = 1
+        next
+      }
+    }
+    /^[[:space:]]*#/ { next }
+    /canopy doctor: FAILED, a load-bearing check did not pass/ { next }
+    /FAILED/ { print FILENAME ":" FNR ": " $0; found = 1 }
+    END { if (found) exit 1 }
+  ' "$src"
+  [ "$status" -eq 0 ] || printf '%s\n' "$output"
+  [ "$status" -eq 0 ]
+
+  # And the flag is set in exactly one place: inside the helper.
+  run grep -c 'load_bearing_failed=1' "$src"
+  [ "$output" -eq 1 ]
 }
