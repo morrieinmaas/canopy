@@ -1,0 +1,79 @@
+name: Bug report
+description: Something canopy does is wrong, or something it promises does not happen
+labels: [bug]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Three of the fields below answer most canopy questions before anyone
+        has to guess: `canopy doctor`, your tmux version and your OS. canopy is
+        a configuration distribution, so almost every surprise comes from what
+        a particular machine has rather than from the code in isolation.
+
+  - type: textarea
+    id: doctor
+    attributes:
+      label: canopy doctor
+      description: >-
+        The whole output, please, not just the last line. Every line of it is
+        a check, and the dormant ones often explain the failing one. Nothing
+        it prints is a secret, but do redact a path if yours says something
+        you would rather not publish.
+      render: text
+      placeholder: |
+        $ canopy doctor
+    validations:
+      required: true
+
+  - type: input
+    id: tmux
+    attributes:
+      label: tmux version
+      description: Output of `tmux -V`. canopy's floor is 3.4.
+      placeholder: tmux 3.5a
+    validations:
+      required: true
+
+  - type: input
+    id: os
+    attributes:
+      label: OS and shell
+      description: >-
+        Distribution or macOS version, and what `/bin/sh` actually is
+        (`ls -l /bin/sh` answers it on Linux). dash, ash and bash differ in
+        ways that matter here.
+      placeholder: Arch Linux, /bin/sh is bash 5.3
+    validations:
+      required: true
+
+  - type: textarea
+    id: what-happened
+    attributes:
+      label: What happened, and what you expected instead
+      description: >-
+        If it involves a reboot or a restore, `canopy reboot-check` before and
+        the pane contents after are worth more than a description of either.
+    validations:
+      required: true
+
+  - type: textarea
+    id: steps
+    attributes:
+      label: Steps to reproduce
+      placeholder: |
+        1. canopy install
+        2. ...
+    validations:
+      required: false
+
+  - type: textarea
+    id: user-conf
+    attributes:
+      label: Your user.conf
+      description: >-
+        `~/.config/canopy/user.conf`, if it has anything in it. It is sourced
+        last and wins over every canopy default, so it is the first place a
+        surprising setting comes from.
+      render: tmux
+    validations:
+      required: false

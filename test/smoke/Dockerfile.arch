@@ -1,0 +1,44 @@
+# Arch is rolling, so it has the newest tmux, the newest coreutils and the
+# newest git of the four images. It is where a deprecation or a changed
+# default shows up first, months before a stable distro carries it, and it
+# is the Linux platform canopy is most often installed on.
+#
+# BASE is a build arg because the official archlinux image is amd64 only.
+# On an arm64 host, building the default under emulation makes qemu-user
+# prefix every process in `ps` output with /usr/bin/qemu-x86_64-static,
+# which breaks the command-name matching scenarios 6 to 8 depend on: they
+# fail for an environment reason that has nothing to do with canopy. Build
+# an arm64 Arch instead and they pass:
+#
+#   CANOPY_SMOKE_BASE_ARCH=lopsided/archlinux:devel test/smoke/run.sh arch
+ARG BASE=archlinux:base
+FROM ${BASE}
+
+# Two container-specific fixes, neither of them about canopy.
+#
+# DisableSandbox: pacman 7 isolates its own work with Landlock, which is
+# unavailable inside a default container runtime, and the install fails
+# before it starts. Inserted into [options] rather than appended, because an
+# option appended to the end of pacman.conf lands inside whichever repo
+# section comes last, where it means nothing.
+#
+# The nobody account: scenario 6 runs a second, unprivileged install as uid
+# 65534 to prove two accounts on one machine do not fight over the shared
+# runtime directory. Arch ships nobody with an expiry date already in the
+# past, so `su nobody` refuses before canopy is even reached. Unexpiring it
+# is a property of this image, not of anything canopy does.
+RUN sed -i '/^\[options\]/a DisableSandbox' /etc/pacman.conf \
+  && pacman -Sy --noconfirm --needed tmux git procps-ng diffutils \
+  && pacman -Scc --noconfirm \
+  && usermod --expiredate '' nobody
+
+# The repository, copied in exactly as a user would have it checked out.
+# Last, so editing canopy does not invalidate the package layer.
+COPY . /canopy
+
+# How a user puts canopy on their PATH. Deliberately not a symlink into
+# /usr/local/bin: canopy derives its store from "$(dirname "$0")/..", so a
+# symlinked entry would resolve the store to /usr/local.
+ENV PATH="/canopy/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
+
+CMD ["/canopy/test/smoke/scenarios.sh"]

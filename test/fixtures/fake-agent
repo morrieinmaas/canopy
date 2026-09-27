@@ -17,16 +17,28 @@ set -eu
 
 usage() {
   printf 'usage: fake-agent (--session-id|--resume) <id>\n' >&2
+  printf '       fake-agent --anonymous\n' >&2
   exit 2
 }
 
-[ "$#" -eq 2 ] || usage
-case "$1" in
-  --session-id) mode=launch ;;
-  --resume) mode=resume ;;
-  *) usage ;;
-esac
-id="$2"
+# --anonymous is the case that cannot be brought back, and it is not a
+# hypothetical: an agent started as a bare command, with no id anywhere on
+# its command line, is what Claude Code looks like until it reports. canopy
+# can recover an id from a pane's command when the launch form carries one,
+# so a pane launched WITH an id is resumable even if it never reports. This
+# mode is how a test gets a pane where there is genuinely nothing to find.
+if [ "$#" -eq 1 ] && [ "$1" = "--anonymous" ]; then
+  mode=launch
+  id=anonymous
+else
+  [ "$#" -eq 2 ] || usage
+  case "$1" in
+    --session-id) mode=launch ;;
+    --resume) mode=resume ;;
+    *) usage ;;
+  esac
+  id="$2"
+fi
 case "$id" in
   '' | */* | .*) usage ;;
   *) ;;

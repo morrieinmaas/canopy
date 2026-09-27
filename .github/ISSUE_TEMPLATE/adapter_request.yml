@@ -1,0 +1,70 @@
+name: Adapter request
+description: You want canopy to recognise and resume a coding agent it does not know yet
+labels: [adapter]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        An adapter is a small file of key=value lines, not code. What canopy
+        needs to know about an agent is in
+        [docs/adapters/contract.md](../blob/main/docs/adapters/contract.md),
+        and the answers below are exactly the six keys it asks for.
+
+        If the agent cannot resume a specific conversation from the command
+        line, say so: that is the one answer that means no adapter is possible
+        yet, and it is worth recording rather than discovering twice.
+
+  - type: input
+    id: agent
+    attributes:
+      label: Which agent
+      placeholder: some-agent, https://example.com/some-agent
+    validations:
+      required: true
+
+  - type: input
+    id: command
+    attributes:
+      label: The command a pane runs
+      description: The bare executable name, as `ps` would report it.
+      placeholder: some-agent
+    validations:
+      required: true
+
+  - type: input
+    id: resume
+    attributes:
+      label: How it resumes one conversation
+      description: >-
+        The exact command line, with the conversation id marked as {id}. Empty
+        if it cannot.
+      placeholder: some-agent --resume {id}
+    validations:
+      required: true
+
+  - type: dropdown
+    id: pin
+    attributes:
+      label: Can the id be chosen at launch?
+      description: >-
+        Whether you can tell it which id to use when starting it, rather than
+        reading back an id it picked. An agent that can be pinned is resumable
+        from the moment its pane starts; one that cannot is only resumable
+        once it has written its id down somewhere canopy can find.
+      options:
+        - "yes, it takes an id at launch"
+        - "no, it assigns its own"
+        - "not sure"
+    validations:
+      required: true
+
+  - type: textarea
+    id: draft
+    attributes:
+      label: Can it say whether a pane is holding unsent input?
+      description: >-
+        If there is a way to ask, give the command. If there is not, say so:
+        canopy then treats such a pane as untouchable rather than guessing,
+        because guessing wrong costs somebody a message they typed.
+    validations:
+      required: false

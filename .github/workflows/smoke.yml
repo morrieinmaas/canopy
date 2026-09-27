@@ -1,11 +1,11 @@
 name: Smoke
 
 on:
-  # Heavy: two OS runners, and for the smoke run two container images
-  # built from scratch. Running that on every push to every branch
-  # spends minutes to tell us what the same command told us locally a
-  # moment earlier. It runs where the answer is load bearing, on main
-  # and on a pull request, and on demand for anything else.
+  # Heavy: four container images built from scratch, one job each.
+  # Running that on every push to every branch spends minutes to tell us
+  # what the same command told us locally a moment earlier. It runs where
+  # the answer is load bearing, on main and on a pull request, and on
+  # demand for anything else.
   push:
     branches: [main]
   pull_request:
@@ -25,10 +25,22 @@ jobs:
     # hosted macOS runners have no container daemon.
     runs-on: ubuntu-latest
     timeout-minutes: 20
+    # One job per image rather than one job running all four. The images
+    # are independent, so serialising them only lengthens the wall clock,
+    # and a red check that already names the image is worth more in the
+    # checks list than one that says "smoke" and needs a log opened.
+    #
+    # fail-fast is off for the same reason: "arch fails, the other three
+    # pass" is a different diagnosis from "everything fails", and stopping
+    # at the first failure hides which one it was.
+    strategy:
+      fail-fast: false
+      matrix:
+        image: [debian, alpine, fedora, arch]
     steps:
       - uses: actions/checkout@v4
       # No mise, and nothing from this repo's mise.toml. The point of this
       # job is that canopy works for someone who has only what the base
       # image ships.
       - name: container acceptance scenarios
-        run: sh test/smoke/run.sh
+        run: sh test/smoke/run.sh ${{ matrix.image }}

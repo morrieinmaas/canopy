@@ -43,6 +43,7 @@ The repo declares its tools in `mise.toml`:
 ```toml
 [tools]
 bats = "latest"
+jq = "latest"
 shellcheck = "0.11.0"
 shfmt = "latest"
 tmux = "latest"
@@ -57,23 +58,40 @@ in CI. Bump the pin deliberately, run `test/lint.sh`, and commit the result.
 mise install
 ```
 
-Prefix commands with `mise exec --` if the tools are not already on your `PATH`.
+Nothing in there is needed to *use* canopy, which runs on `sh` and `tmux` alone. It is
+for working on it.
+
+`mise.toml` also declares the tasks, which is how the same string a contributor types
+is the string CI runs:
+
+```sh
+mise run lint     # shellcheck and shfmt over every shipped script
+mise run test     # the bats suite
+mise run proof    # install, mutate, restore, compare hashes
+mise run smoke    # container acceptance scenarios (needs docker or podman)
+mise run check    # lint, test and proof together
+mise run vendor tmux-resurrect   # re-vendor a pinned plugin
+```
+
+`mise run test test/doctor.bats` runs one file and `mise run smoke arch` one image:
+both tasks template their argument rather than appending it, so naming a target
+replaces the default instead of running the default and then the target.
 
 ## The three suites
 
 | Suite | Command | Runs where | Covers |
 |---|---|---|---|
-| Unit | `mise exec -- bats test/` | macOS and Ubuntu in CI | Libraries and every command, with conveniences |
-| Restore proof | `mise exec -- sh test/restore-proof.sh` | macOS and Ubuntu in CI | The headline guarantee, three scenarios |
-| Container acceptance | `sh test/smoke/run.sh` | Linux in CI | Six scenarios, in two userlands, from a bare environment |
+| Unit | `mise run test` | macOS and Ubuntu in CI | Libraries and every command, with conveniences |
+| Restore proof | `mise run proof` | macOS and Ubuntu in CI | The headline guarantee, three scenarios |
+| Container acceptance | `mise run smoke` | Linux in CI, one job per image | Eight scenarios, in four userlands, from a bare environment |
 
 ### Unit suite
 
 ```sh
-mise exec -- bats test/
+mise run test
 ```
 
-136 tests. Each one gets its own `$HOME`, `$XDG_CONFIG_HOME` and `CANOPY_*` under
+Over 330 tests. Each one gets its own `$HOME`, `$XDG_CONFIG_HOME` and `CANOPY_*` under
 `$BATS_TEST_TMPDIR`, via `setup_canopy_env` and `setup_canopy_home` in
 `test/helper.bash`. Never the real `$HOME`, and never the default tmux socket: every
 tmux invocation in the suite carries `-L <scratch-socket>` and cleans up after itself.
@@ -81,13 +99,13 @@ tmux invocation in the suite carries `-L <scratch-socket>` and cleans up after i
 To run one file:
 
 ```sh
-mise exec -- bats test/restore.bats
+mise run test test/restore.bats
 ```
 
 ### Restore proof
 
 ```sh
-mise exec -- sh test/restore-proof.sh
+mise run proof
 ```
 
 Three scenarios, each covering a leak class the others structurally cannot see:
@@ -107,12 +125,12 @@ It runs entirely inside a `mktemp -d` scratch tree and never touches your real `
 ### Container acceptance
 
 ```sh
-sh test/smoke/run.sh                # both images
-sh test/smoke/run.sh debian         # one image
+mise run smoke                      # all four images
+mise run smoke debian               # one image
 DOCKER=podman sh test/smoke/run.sh  # another container CLI
 ```
 
-Needs a container daemon. Builds two images and runs six scenarios in each, then
+Needs a container daemon. Builds four images and runs every scenario in each, then
 prints one matrix:
 
 ```
@@ -129,15 +147,62 @@ alpine    1     PASS    virgin machine
 12 scenario result(s), 0 failed
 ```
 
-The two images are chosen for what they catch:
+Each image is here for something specific it catches:
 
-| Image | `/bin/sh` | Userland | Catches |
+| Image | `/bin/sh` | Userland | Here for |
 |---|---|---|---|
 | `debian:stable-slim` | dash | GNU | A bashism that bash on macOS and bats accept |
 | `alpine:latest` | BusyBox ash | BusyBox | A GNU-only flag in `find`, `grep`, `sed`, `cp`, `date` or `stat` |
+| `fedora:latest` | bash | GNU | The RPM half of the world, and one of the two Linux platforms canopy is installed on |
+| `archlinux:base` | bash | GNU | Rolling, so the newest tmux, coreutils and git: where a changed default shows up first |
 
-canopy is developed on macOS with GNU coreutils on the `PATH`, so neither risk was
-tested anywhere before this harness existed. Scenario 6 is the one a single-user
+The first two are the portability net. The last two are the "does it work where it is
+actually used" check, and they are the reason the matrix is not a claim about Linux in
+general made from two Debian-family images.
+
+canopy is developed on macOS with GNU coreutils on the `PATH`, so neither of the first
+two risks was tested anywhere before this harness existed.
+
+### Emulation can fail these scenarios, and it looks like a canopy bug
+
+An image of the wrong architecture for the host runs under emulation, and some
+emulated setups have `ps` report the emulator rather than the process:
+
+```
+$ ps -o args= -p $!
+/usr/bin/qemu-x86_64-static /bin/sleep sleep 30
+```
+
+canopy recognises an agent pane by the command name `ps` reports, so where that
+happens **no pane is ever recognised as an agent**. `canopy reboot-check` says "no
+agent panes are open" on a machine full of them, and the reboot scenarios fail with
+nothing wrong in canopy at all. `canopy doctor` still says `ps: yes`, because `ps`
+reports a parent perfectly well; it is the command name that is rewritten.
+
+It is not universal. An amd64 `alpine` image on an arm64 host showed the prefix and
+failed scenarios 7 and 8; an amd64 `archlinux` image on the same host reported the
+command cleanly and passed everything. Treat a mismatch as the first thing to rule
+out, not as a guaranteed failure.
+
+`run.sh` compares each built image's architecture against the host's and warns loudly
+when they differ, because this is easy to hit by accident: a container CLI reuses an
+image already in local storage rather than re-resolving it, so one stale
+`alpine:latest` of the wrong architecture is enough.
+
+```sh
+podman pull --platform linux/arm64 alpine:latest   # or docker
+```
+
+The official Arch image is a case where it cannot be avoided: it is amd64 only. On an
+arm64 host, build an arm64 Arch instead:
+
+```sh
+CANOPY_SMOKE_BASE_ARCH=lopsided/archlinux:devel mise run smoke arch
+```
+
+`CANOPY_SMOKE_BASE_<IMAGE>` works for any of the four, and each Dockerfile takes its
+base as a build arg. CI runs on amd64 runners, where all four resolve natively and
+none of this applies. Scenario 6 is the one a single-user
 laptop cannot express at all, and it found a real bug: the runtime directory fell back
 to a plain `/tmp/canopy`, which belonged to whichever account created it first, so the
 next user's `canopy doctor` reported a healthy install as a load-bearing failure.
@@ -154,7 +219,7 @@ crash partway through is caught by the missing sentinel.
 ## Lint
 
 ```sh
-mise exec -- sh test/lint.sh
+mise run lint
 ```
 
 `test/lint.sh` is the one definition of what gets linted and how: it runs shellcheck
@@ -164,6 +229,9 @@ exactly what the runner lints. `.shellcheckrc` sets `shell=sh` and `enable=all`,
 `SC2250` and `SC2312` disabled. Both tools must be clean; `mise exec -- shfmt -w bin
 lib test/smoke` applies the formatting.
 
+`mise run check` runs lint, the unit suite and the restore proof in that order, which
+is everything CI runs bar the containers.
+
 Files that are not POSIX sh carry a directive. `lib/*.sh` start with
 `# shellcheck shell=sh` because they are sourced, not executed.
 
@@ -171,9 +239,15 @@ Files that are not POSIX sh carry a directive. `lib/*.sh` start with
 
 | Workflow | Jobs |
 |---|---|
-| `.github/workflows/ci.yml` | `sh test/lint.sh`, `bats test/`, on ubuntu-latest and macos-latest |
+| `.github/workflows/ci.yml` | `mise run lint`, `mise run test`, on ubuntu-latest and macos-latest |
 | `.github/workflows/restore-proof.yml` | `sh test/restore-proof.sh`, on ubuntu-latest and macos-latest |
-| `.github/workflows/smoke.yml` | `sh test/smoke/run.sh`, ubuntu-latest only, 20-minute timeout |
+| `.github/workflows/smoke.yml` | `sh test/smoke/run.sh <image>`, one job per image, ubuntu-latest only, 20-minute timeout each |
+
+CI runs the task names rather than the commands behind them, so `mise run lint` locally
+and the `lint` step in CI cannot drift apart. The restore proof is the deliberate
+exception: it installs a system tmux from the OS package manager instead of the version
+mise pins, because that job's question is whether the guarantee holds against the tmux
+a user actually has.
 
 Smoke is its own workflow rather than a step in CI on purpose. A smoke failure means
 the shipped artifact does not work on a real machine, which is a different thing from

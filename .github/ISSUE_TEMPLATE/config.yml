@@ -1,0 +1,10 @@
+blank_issues_enabled: true
+contact_links:
+  - name: Question about using canopy
+    url: https://github.com/morrieinmaas/canopy/blob/main/docs/05-troubleshooting.md
+    about: >-
+      Symptoms and what to do about them, including nothing loaded, doctor
+      exiting 2, TPM plugins not loading, and agent panes coming back empty.
+  - name: Code of conduct
+    url: https://github.com/morrieinmaas/canopy/blob/main/CODE_OF_CONDUCT.md
+    about: How this project expects people to behave, and how to report someone who does not.
