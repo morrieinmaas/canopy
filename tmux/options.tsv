@@ -1,0 +1,55 @@
+# canopy's options table. Every tmux option canopy sets, with the value it
+# ships, in one place, so that "what can I change, and what is it now?" has an
+# answer that is not "read four layer files".
+#
+# `canopy config` reads this and prints each option's live value against the
+# default below. docs/04-configuration.md cites it. A test asserts that every
+# `set -g @...` in the shipped layers appears here with the same default and
+# the same source, so a layer edited without this file is a failing test
+# rather than a stale doc.
+#
+# Format: tab-separated, five columns.
+#
+#   name         the tmux option, @ included
+#   default      the value canopy ships. `-` means the empty string
+#   source       where that default comes from, which decides what an unset
+#                option means:
+#                  layer      a conf.d layer sets it, so unset means the
+#                             layer did not load, and `canopy config` says so
+#                  code       the default lives in a script, so unset is
+#                             normal and is not flagged
+#                  generated  computed at load from what is on the machine,
+#                             so there is no fixed value to compare against
+#   group        what it is about, and how `canopy config` groups its output.
+#                `internal` is hidden unless --all is passed
+#   description  one line, for somebody who does not already know
+#
+# Not here, because they are per-machine facts rather than settings: the
+# @canopy_has_<tool> family and @canopy_tmux_version, both written by
+# `canopy caps` from what it finds on the machine. See the capability model in
+# docs/04-configuration.md.
+#
+# name	default	source	group	description
+@canopy_status_battery	on	layer	status	Draw the battery pill. Any value but `off` is on; a machine with no battery draws nothing either way
+@canopy_status_net	on	layer	status	Draw the network pill. Any value but `off` is on
+@pill_l		layer	status	Left end-cap glyph for a status pill, U+E0B6. A machine without a nerd font sets this and @pill_r to empty in user.conf, and every segment renders as plain text with no caps
+@pill_r		layer	status	Right end-cap glyph for a status pill, U+E0B4
+@theme_bg	#fbf1c7	layer	theme	Background, used as the text colour inside a filled pill
+@theme_fg	#3c3836	layer	theme	Foreground, the status line's default text colour
+@theme_blue	#458588	layer	theme	The session pill
+@theme_yellow	#b57614	layer	theme	The current window's pill
+@theme_green	#79740e	layer	theme	The clock pill
+@theme_grey	#a89984	layer	theme	Inactive windows and the date pill
+@theme_muted	#7c6f64	layer	theme	Window names that are not current
+@theme_red	#cc241d	layer	theme	Anything wrong: a low battery, a disconnected network
+@continuum-restore	on	layer	persistence	Restore the last save when a new server starts. Upstream continuum defaults this to off, which is why canopy sets it: without it every save is written and none is ever read
+@continuum-save-interval	5	layer	persistence	Minutes between automatic saves. 0 stops autosaving entirely
+@resurrect-dir	$CANOPY_STATE/resurrect	layer	persistence	Where save files are written. Moving it to an empty directory is how a reboot silently comes back with nothing
+@resurrect-save	M-s	layer	persistence	Key that saves now. Moved off resurrect's own C-s, which would take canopy's prefix
+@resurrect-restore	M-r	layer	persistence	Key that restores the last save over this server
+@resurrect-strategy-nvim	session	layer	persistence	Restore a Neovim pane from its Session.vim rather than as a bare editor
+@resurrect-save-command-strategy	../../strategies/canopy_save_command	layer	persistence	canopy's save strategy, as a path relative to resurrect's own strategies directory. This is what rewrites an agent pane's saved command into the one that resumes its conversation
+@resurrect-processes	from installed adapters	generated	persistence	Which saved commands resurrect is allowed to replay. Computed at load from the adapters on disk, because an adapter is a file a user adds rather than a name canopy knows in advance
+@canopy_resume_stagger_ms	1000	code	persistence	Upper bound in milliseconds on the wait put in front of each restored agent command, so ten panes do not launch ten agents at once. 0 turns it off. The default is in lib/resume.sh rather than a layer, because a save has nobody to report a bad value to
+@canopy_test_marker	shipped-default	layer	internal	Carries no behaviour. It is the probe that proves the core layer loaded and that user.conf overrides it
+@canopy_core_appended	1	layer	internal	Set once the core layer has appended its terminal settings, so re-sourcing the config does not append them a second time

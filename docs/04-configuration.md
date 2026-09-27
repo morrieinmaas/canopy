@@ -77,6 +77,52 @@ warns when it sees `@plugin` lines here; the full explanation is in
 put other files in that directory, `canopy restore --all` leaves the directory alone,
 because it removes a directory only with `rmdir` and only if canopy created it.
 
+## Every option canopy sets
+
+They are declared in one file,
+[`tmux/options.tsv`](https://github.com/morrieinmaas/canopy/blob/main/tmux/options.tsv),
+and `canopy config` prints each one's live value against the value canopy ships:
+
+```sh
+canopy config            # live against default, `*` marks a difference
+canopy config --defaults # the defaults alone, without asking tmux
+canopy config --all      # including the internal group
+```
+
+| Option | Default | About |
+|---|---|---|
+| `@canopy_status_battery` | `on` | Draw the battery pill. Any value but `off` is on |
+| `@canopy_status_net` | `on` | Draw the network pill. Any value but `off` is on |
+| `@pill_l` | `` | Left end-cap glyph for a pill, U+E0B6 |
+| `@pill_r` | `` | Right end-cap glyph, U+E0B4 |
+| `@theme_bg` | `#fbf1c7` | Text colour inside a filled pill |
+| `@theme_fg` | `#3c3836` | The status line's default text colour |
+| `@theme_blue` | `#458588` | The session pill |
+| `@theme_yellow` | `#b57614` | The current window's pill |
+| `@theme_green` | `#79740e` | The clock pill |
+| `@theme_grey` | `#a89984` | Inactive windows and the date pill |
+| `@theme_muted` | `#7c6f64` | Window names that are not current |
+| `@theme_red` | `#cc241d` | Anything wrong: a low battery, a disconnected network |
+| `@continuum-restore` | `on` | Restore the last save when a new server starts. Upstream defaults this off, which is why canopy sets it |
+| `@continuum-save-interval` | `5` | Minutes between automatic saves. `0` stops autosaving |
+| `@resurrect-dir` | `$CANOPY_STATE/resurrect` | Where save files go. Moving it to an empty directory is how a reboot comes back with nothing |
+| `@resurrect-save` | `M-s` | Save now |
+| `@resurrect-restore` | `M-r` | Restore the last save over this server |
+| `@resurrect-strategy-nvim` | `session` | Restore a Neovim pane from its `Session.vim` |
+| `@resurrect-save-command-strategy` | `../../strategies/canopy_save_command` | canopy's save strategy, relative to resurrect's own strategies directory |
+| `@resurrect-processes` | generated | Which saved commands resurrect may replay, computed at load from the adapters on disk |
+| `@canopy_resume_stagger_ms` | `1000` | Upper bound in ms on the wait in front of each restored agent command. `0` turns it off |
+
+The table in the repository carries a description and a *source* per option, and
+the source is the part that matters when something looks wrong: an option whose
+default comes from a layer, but which reads as unset, means that layer did not
+load. One whose default lives in code is normally unset and that is fine. See
+[02-commands.md](02-commands.md#canopy-config).
+
+Not in the table, because they are facts about a machine rather than settings:
+the `@canopy_has_<tool>` family and `@canopy_tmux_version`, both written by
+`canopy caps`. Those are the capability model below.
+
 ## The key table
 
 Every binding canopy ships is declared in one tab-separated file,
@@ -105,14 +151,13 @@ sourced last they win over anything in it. Rebinding one of canopy's keys is a
 ## The status line
 
 `20-status.conf` draws the status line, and every colour in it is read from an
-option rather than written into the format string: `@theme_bg`, `@theme_fg`,
-`@theme_blue`, `@theme_yellow`, `@theme_green`, `@theme_grey`, `@theme_muted`,
-`@theme_red`, plus `@pill_l` and `@pill_r` for the pill end-caps. Set those in
-`user.conf` and the whole bar repaints. That is the seam M5's theme layer is built
-on.
+option rather than written into the format string: the `@theme_*` family above,
+plus `@pill_l` and `@pill_r` for the pill end-caps. Set those in `user.conf` and
+the whole bar repaints. That is the seam M5's theme layer is built on.
 
-`@pill_l` and `@pill_r` default to the empty string, so a terminal without a
-powerline font renders plain text rather than replacement glyphs.
+`@pill_l` and `@pill_r` ship as the two round powerline caps, U+E0B6 and U+E0B4.
+On a machine without a nerd font, set both to empty in `user.conf` and every
+segment renders as plain text with no caps.
 
 The right-hand end is one `#()` call into `canopy status`, never one per segment: a
 status line that forks four processes every `status-interval` is a defect rather

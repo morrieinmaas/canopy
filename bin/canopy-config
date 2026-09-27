@@ -1,0 +1,148 @@
+#!/bin/sh
+# canopy:summary=List every option canopy sets, with its live value and its default
+# canopy:group=core
+# canopy:args=[--all] [--defaults]
+# canopy:examples=canopy config
+# shellcheck disable=SC2154,SC2153  # CANOPY_STORE/CANOPY_STATE/CANOPY_CONFIG are exported by lib/env.sh's canopy_paths
+set -eu
+
+: "${CANOPY_STORE:=$(cd "$(dirname "$0")/.." && pwd)}"
+# shellcheck source=../lib/env.sh
+# shellcheck disable=SC1091
+. "$CANOPY_STORE/lib/env.sh"
+canopy_paths
+
+# The answer to "what can I change, and what is it now?".
+#
+# The options are declared once, in tmux/options.tsv, and read from there
+# rather than from a list kept in this file. A second list would go stale the
+# first time a layer changed, which is the exact failure this command exists
+# to stop happening to a reader.
+#
+# Live values come from ONE tmux call rather than one per option. Two dozen
+# options asked separately is two dozen forks, for a command somebody runs
+# while wondering why their status bar looks wrong.
+
+canopy_cf_all=0
+canopy_cf_defaults=0
+for canopy_cf_arg in "$@"; do
+  case "$canopy_cf_arg" in
+    --all) canopy_cf_all=1 ;;
+    --defaults) canopy_cf_defaults=1 ;;
+    --list) ;; # a synonym for the default behaviour, accepted rather than refused
+    *) canopy_die "canopy-config: unknown argument: $canopy_cf_arg" ;;
+  esac
+done
+
+canopy_cf_table="$CANOPY_STORE/tmux/options.tsv"
+[ -f "$canopy_cf_table" ] ||
+  canopy_die "canopy-config: no options table at $canopy_cf_table"
+
+canopy_runtime_ensure
+canopy_cf_rows="$CANOPY_RUNTIME/config-rows"
+canopy_cf_values="$CANOPY_RUNTIME/config-values"
+
+# The rows this run will print, filtered first, so the tmux format string is
+# built from exactly what gets shown and the two stay in step by position.
+awk -F'\t' -v all="$canopy_cf_all" '
+  /^#/ { next }
+  NF == 0 { next }
+  NF != 5 {
+    printf "canopy-config: %s line %d: expected 5 tab separated columns, got %d\n", FILENAME, NR, NF > "/dev/stderr"
+    bad = 1
+    next
+  }
+  $3 != "layer" && $3 != "code" && $3 != "generated" {
+    printf "canopy-config: %s line %d: source must be layer, code or generated, not %s\n", FILENAME, NR, $3 > "/dev/stderr"
+    bad = 1
+    next
+  }
+  $4 == "internal" && all == 0 { next }
+  { print }
+  END { if (bad) exit 1 }
+' "$canopy_cf_table" >"$canopy_cf_rows"
+
+# A machine with no server running is a normal case for this command: you ran
+# it to find out what to put in user.conf before starting tmux. So a failure
+# here is not an error, every live value simply reads as unknown.
+canopy_cf_live=1
+if [ "$canopy_cf_defaults" -eq 1 ]; then
+  canopy_cf_live=0
+else
+  canopy_cf_format="$(awk -F'\t' '{ printf "#{%s}\t", $1 }' "$canopy_cf_rows")"
+  tmux display-message -p "$canopy_cf_format" >"$canopy_cf_values" 2>/dev/null ||
+    canopy_cf_live=0
+fi
+[ "$canopy_cf_live" -eq 1 ] || : >"$canopy_cf_values"
+
+awk -F'\t' \
+  -v live="$canopy_cf_live" \
+  -v valuefile="$canopy_cf_values" \
+  -v state="$CANOPY_STATE" \
+  -v store="$CANOPY_STORE" \
+  -v userconf="$CANOPY_CONFIG/user.conf" '
+  BEGIN {
+    if (live) {
+      getline valueline < valuefile
+      split(valueline, value, "\t")
+    }
+  }
+  # One default in the table is written with a tmux variable in it, because
+  # that is how the layer sets it. Expanded by hand rather than with gsub,
+  # whose replacement string treats & specially: a path is the last place to
+  # want that surprise.
+  function expand(v,   i, tok) {
+    tok = "$CANOPY_STATE"
+    i = index(v, tok)
+    if (i) return substr(v, 1, i - 1) state substr(v, i + length(tok))
+    tok = "$CANOPY_STORE"
+    i = index(v, tok)
+    if (i) return substr(v, 1, i - 1) store substr(v, i + length(tok))
+    return v
+  }
+  function live_text(v, source) {
+    if (!live) return "?"
+    if (v != "") return v
+    return (source == "code") ? "(unset, default applies)" : "(empty)"
+  }
+  function default_text(v, source) {
+    if (source == "generated") return "(generated: " v ")"
+    return (v == "") ? "(empty)" : v
+  }
+  {
+    def = ($2 == "-") ? "" : expand($2)
+    cur = live ? value[FNR] : ""
+
+    # What an unset option means depends on where its default lives, which is
+    # why the table carries a source column instead of leaving it to a guess:
+    #
+    #   layer      a layer sets it, so unset means that layer did not load.
+    #              Worth flagging: it is a setting that did not take.
+    #   code       the default is in a script and the option is normally
+    #              unset, so unset IS the default being in effect.
+    #   generated  computed at load, so there is no fixed value to compare.
+    mark = " "
+    if (live && $3 == "layer" && cur != def) mark = "*"
+    if (live && $3 == "code" && cur != "" && cur != def) mark = "*"
+    if (mark == "*") changed++
+
+    if ($4 != group) {
+      if (group != "") printf "\n"
+      group = $4
+      printf "%s:\n", group
+    }
+    printf "  %s %-34s %-28s %s\n", mark, $1, live_text(cur, $3), default_text(def, $3)
+  }
+  END {
+    if (!live) {
+      printf "\nNo tmux server answered, so no live value is known.\n"
+    } else if (changed) {
+      printf "\n%d option(s) marked * hold something other than the shipped default.\n", changed
+    } else {
+      printf "\nEvery option holds the shipped default.\n"
+    }
+    printf "Override any of these in %s, which canopy sources last.\n", userconf
+  }
+' "$canopy_cf_rows"
+
+rm -f "$canopy_cf_rows" "$canopy_cf_values"

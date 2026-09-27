@@ -32,7 +32,7 @@ What M1 ships:
 
 What M2 adds:
 
-- five commands: `agent`, `reboot-check`, `adopt`, `keys`, `status`
+- six commands: `agent`, `reboot-check`, `adopt`, `keys`, `status`, `config`
 - tmux-resurrect and tmux-continuum vendored at pinned commits, no plugin manager
 - a save-command strategy that rewrites an agent pane's saved command into the
   command that resumes **that pane's** conversation
@@ -44,6 +44,8 @@ What M2 adds:
   binding exists without a name, a group and a description
 - a status line, `20-status.conf`, drawn by a single `canopy status` aggregator
   rather than one shell per field
+- an options table, `tmux/options.tsv`: every tmux option canopy sets, declared
+  once, with `canopy config` printing each one's live value against its default
 
 What is **not** shipped: adapters beyond Claude Code, a command palette or
 which-key menu over the key table, themes, the worktree layer, and autostart.
@@ -175,7 +177,7 @@ overridden directly with `CANOPY_CONFIG`, `CANOPY_STATE`, `CANOPY_RUNTIME` and
 | [01 Installation and removal](docs/01-installation-and-removal.md) | Installing over an existing config, over a dotfiles symlink, `--dry-run`, and complete removal |
 | [02 Commands](docs/02-commands.md) | Every command, its flags, its output and its exit codes |
 | [03 The restore guarantee](docs/03-restore-guarantee.md) | The transaction model, restore points, the two rollback classes, and the `restore.sh` escape hatch |
-| [04 Configuration](docs/04-configuration.md) | The `conf.d` layer order, `user.conf`, the key table, the status line, and the capability model |
+| [04 Configuration](docs/04-configuration.md) | The `conf.d` layer order, `user.conf`, every option canopy sets, the key table, the status line, and the capability model |
 | [05 Troubleshooting](docs/05-troubleshooting.md) | Symptoms and what to do about them |
 | [06 Contributing and testing](docs/06-contributing-and-testing.md) | Running the three suites, and the rule every verification follows |
 | [07 Persistence](docs/07-persistence.md) | What survives a reboot, the chain that makes it work, `reboot-check`, `adopt`, and how to verify with a real agent |
@@ -188,6 +190,14 @@ that does not exist yet carries an explicit `[planned, M<n>]` marker, and its op
 section explains the convention, so a sentence with no marker describes what the code
 does today. Where the design and the code disagree anyway, the code is what your
 machine runs.
+
+## Contributing
+
+Bug reports, patches and adapters for other agents are all welcome.
+[CONTRIBUTING.md](CONTRIBUTING.md) is the short version: `mise install`, then
+`mise run check`. [docs/06](docs/06-contributing-and-testing.md) is the long one,
+including the three test suites and the rule every change follows. By taking part
+you agree to the [Code of Conduct](CODE_OF_CONDUCT.md).
 
 ## License
 
