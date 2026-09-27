@@ -395,7 +395,7 @@ Prints the contents of the store's `VERSION` file and nothing else.
 
 ```
 $ canopy version
-0.0.0-dev
+0.1.0
 ```
 
 It takes no arguments either, and refuses one it does not recognise:
