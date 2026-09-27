@@ -413,6 +413,81 @@ canopy: canopy-version: unknown argument: --short
 
 ---
 
+## `canopy config`
+
+```
+canopy config [--all] [--defaults]
+```
+
+Prints every tmux option canopy sets, grouped, with the value your tmux holds
+right now beside the value canopy ships. A `*` in the left margin marks the ones
+that differ.
+
+```
+$ canopy config
+status:
+    @canopy_status_battery             on                           on
+    @canopy_status_net                 on                           on
+  * @pill_l                                                     
+  * @pill_r                                                     
+
+theme:
+  * @theme_bg                          #faf6f0                      #fbf1c7
+    @theme_red                         #cc241d                      #cc241d
+
+persistence:
+    @continuum-restore                 on                           on
+    @resurrect-dir                     /home/you/.local/state/canopy/resurrect
+    @resurrect-processes               claude "~^sleep [0-9.]* && claude" (generated: from installed adapters)
+  * @canopy_resume_stagger_ms          (unset, default applies)     1000
+
+9 option(s) marked * hold something other than the shipped default.
+Override any of these in /home/you/.config/canopy/user.conf, which canopy sources last.
+```
+
+| Flag | Effect |
+|---|---|
+| `--all` | Include the `internal` group, which is hidden by default: options that carry no setting, only a fact canopy needs to remember about itself |
+| `--defaults` | Print the table without consulting tmux at all. Every live value reads `?` |
+
+The options are declared once, in
+[`tmux/options.tsv`](https://github.com/morrieinmaas/canopy/blob/main/tmux/options.tsv),
+and read from there rather than from a list inside the command, so the two
+cannot disagree. A test asserts that every `set -g @…` in the shipped layers
+appears in that table with the same default, which is what keeps it honest as
+the layers change.
+
+**What an unset option means depends on where its default lives**, and that is
+the one part of this output worth knowing. The table records a source per option:
+
+| Source | Unset means | Marked? |
+|---|---|---|
+| `layer` | A `conf.d` layer sets it, so unset means that layer did not load | Yes, that is a setting which did not take |
+| `code` | The default is in a script, and the option is normally unset | No, unset is the default being in effect |
+| `generated` | Computed at load from what is on the machine, so there is no fixed value to compare | Never |
+
+`@canopy_resume_stagger_ms` is the `code` one: its default lives in
+`lib/resume.sh` because it is read from inside a save, which has nobody to
+report a bad value to.
+
+Live values come from a single `tmux display-message` call rather than one per
+option. Two dozen options asked separately is two dozen processes, for a command
+somebody runs while wondering why their status bar looks wrong.
+
+No tmux server running is a normal case here, not an error: you may well be
+reading this to decide what to put in `user.conf` before starting tmux at all.
+The command says so and prints the defaults. It does not start a server to
+answer.
+
+| Exit | Meaning |
+|---|---|
+| 0 | Table printed, with or without live values |
+| 1 | No options table in the store |
+| 1 | A table row has other than five columns, or an unknown source |
+| 1 | Unknown argument |
+
+---
+
 ## `canopy keys`
 
 ```
