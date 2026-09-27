@@ -413,6 +413,100 @@ canopy: canopy-version: unknown argument: --short
 
 ---
 
+## `canopy keys`
+
+```
+canopy keys [--print]
+```
+
+Reads the key table, `$CANOPY_STORE/tmux/keys.tsv`, and writes
+`$CANOPY_STATE/10-keys.conf`, the layer tmux sources for every binding canopy
+ships. Prints nothing. `--print` writes nothing and prints the table as a
+cheatsheet, grouped, to stdout.
+
+The table is tab-separated, six columns, and is the single declaration of every
+binding canopy ships:
+
+```
+# name	key	flags	command	group	description
+split-right	|	-	split-window -h -c "#{pane_current_path}"	pane	Split to the right, in the directory this pane is in
+pane-wider-left	H	-r	resize-pane -L 5	pane	Grow the pane leftwards, repeatable
+```
+
+`flags` is `-` for none, or tmux's own bind flags; `-r` makes the binding
+repeatable. `group` is what a menu would group the row under. `description` is
+written for somebody who does not already know what the key does.
+
+The point of the table is that there are no orphan keys. A binding that exists
+only as a `bind` line somewhere has no name, no group and no description, so it
+can never appear in a cheatsheet, a palette or a which-key menu, and the table
+quietly stops being the truth. Everything canopy binds goes through here, and
+M4's surfaces read this same file rather than a second copy of it.
+
+Two things are deliberately not in the table. `prefix` itself, because it is an
+option rather than a binding and belongs to `00-core.conf`; and any binding a
+user adds, which belongs in `user.conf` and is theirs.
+
+`canopy install` runs this for you. After editing the table, regenerate and
+reload:
+
+```sh
+canopy keys && tmux source-file ~/.config/tmux/tmux.conf
+```
+
+`canopy doctor` compares the table's row count against the generated layer and
+reports a layer that was not regenerated after the table grew.
+
+| Exit | Meaning |
+|---|---|
+| 0 | Layer written, or table printed |
+| 1 | No key table in the store |
+| 1 | A row has other than six columns, or an empty column |
+| 1 | Two rows declare the same key, or the same name |
+| 1 | Unknown argument |
+
+---
+
+## `canopy status`
+
+```
+canopy status [--plain]
+```
+
+Renders the right-hand end of the status line and prints it, styled with tmux
+format escapes. `--plain` prints the same segments with no styling, which is what
+to use when checking it by eye.
+
+It exists to be the *only* `#()` call in the status line. A status line with four
+`#()` segments forks four processes every `status-interval`, forever, on every
+machine; this is one process that renders all of them, and it reads everything it
+needs from tmux in a single `display-message` call rather than once per segment.
+Everything else in `20-status.conf` is a pure `#{...}` token, which costs nothing.
+
+Segments render right to left: network, battery, date, clock. A segment with
+nothing to say prints nothing at all, so its pill disappears rather than showing a
+placeholder.
+
+Two options gate the two segments that can be unwanted, and both default to on:
+
+```tmux
+set -g @canopy_status_battery off   # a desktop has no battery worth a pill
+set -g @canopy_status_net off
+```
+
+Colour is data: every colour comes from an `@theme_*` option
+(`@theme_bg`, `@theme_fg`, `@theme_blue`, `@theme_green`, `@theme_grey`,
+`@theme_red`) and the pill glyphs from `@pill_l` and `@pill_r`. Set those in
+`user.conf` and the whole line repaints, without touching this command. M5's theme
+layer is built on exactly that.
+
+| Exit | Meaning |
+|---|---|
+| 0 | Rendered |
+| 1 | Unknown argument |
+
+---
+
 ## `canopy adopt`
 
 ```

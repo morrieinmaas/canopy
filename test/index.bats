@@ -81,3 +81,24 @@ EOF
   [ "$output" = "canopy: canopy-index: unknown argument: --print" ]
   [ ! -f "$CANOPY_STATE/commands.tsv" ]
 }
+
+@test "every command has a section in docs/02-commands.md" {
+  # This drifted once: `keys` and `status` shipped with no entry, and the
+  # README still said no keys were bound at all. A command nobody documented
+  # is a command nobody can use, so the doc is part of shipping one.
+  doc="$CANOPY_STORE/docs/02-commands.md"
+  [ -f "$doc" ]
+
+  missing=""
+  for cmd in "$CANOPY_STORE"/bin/canopy-*; do
+    name="${cmd##*/canopy-}"
+    grep -qF "## \`canopy $name\`" "$doc" || missing="$missing $name"
+  done
+  # The dispatcher itself, documented as plain `canopy`.
+  grep -qF '## `canopy`' "$doc" || missing="$missing canopy"
+
+  [ -z "$missing" ] || {
+    printf 'undocumented commands:%s\n' "$missing"
+    false
+  }
+}

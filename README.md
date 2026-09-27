@@ -32,18 +32,23 @@ What M1 ships:
 
 What M2 adds:
 
-- three commands: `agent`, `reboot-check`, `adopt`
+- five commands: `agent`, `reboot-check`, `adopt`, `keys`, `status`
 - tmux-resurrect and tmux-continuum vendored at pinned commits, no plugin manager
 - a save-command strategy that rewrites an agent pane's saved command into the
   command that resumes **that pane's** conversation
 - an adapter contract, and one adapter, for Claude Code
 - `canopy reboot-check`, which answers "is it safe to reboot?" from what was
   actually saved rather than from what canopy meant to save
+- a key table, `tmux/keys.tsv`: every binding canopy ships declared in one
+  six-column file, with `canopy keys` generating the tmux layer from it, so no
+  binding exists without a name, a group and a description
+- a status line, `20-status.conf`, drawn by a single `canopy status` aggregator
+  rather than one shell per field
 
-What is **not** shipped: adapters beyond Claude Code, a command palette, key
-bindings beyond tmux's own, themes, the worktree layer, and autostart. Nothing
-starts a tmux server at login, so a restore happens when you next start tmux, not
-at boot.
+What is **not** shipped: adapters beyond Claude Code, a command palette or
+which-key menu over the key table, themes, the worktree layer, and autostart.
+Nothing starts a tmux server at login, so a restore happens when you next start
+tmux, not at boot.
 
 Persistence needs `bash` and a `ps` that can report a process's parent. Without
 either, it does nothing at all, and `canopy doctor` says so. See
@@ -170,7 +175,7 @@ overridden directly with `CANOPY_CONFIG`, `CANOPY_STATE`, `CANOPY_RUNTIME` and
 | [01 Installation and removal](docs/01-installation-and-removal.md) | Installing over an existing config, over a dotfiles symlink, `--dry-run`, and complete removal |
 | [02 Commands](docs/02-commands.md) | Every command, its flags, its output and its exit codes |
 | [03 The restore guarantee](docs/03-restore-guarantee.md) | The transaction model, restore points, the two rollback classes, and the `restore.sh` escape hatch |
-| [04 Configuration](docs/04-configuration.md) | The `conf.d` layer order, `user.conf`, and the capability model |
+| [04 Configuration](docs/04-configuration.md) | The `conf.d` layer order, `user.conf`, the key table, the status line, and the capability model |
 | [05 Troubleshooting](docs/05-troubleshooting.md) | Symptoms and what to do about them |
 | [06 Contributing and testing](docs/06-contributing-and-testing.md) | Running the three suites, and the rule every verification follows |
 | [07 Persistence](docs/07-persistence.md) | What survives a reboot, the chain that makes it work, `reboot-check`, `adopt`, and how to verify with a real agent |
@@ -183,3 +188,14 @@ that does not exist yet carries an explicit `[planned, M<n>]` marker, and its op
 section explains the convention, so a sentence with no marker describes what the code
 does today. Where the design and the code disagree anyway, the code is what your
 machine runs.
+
+## License
+
+canopy is licensed under the Apache License, Version 2.0. See [LICENSE](LICENSE).
+
+`plugins/tmux-resurrect` and `plugins/tmux-continuum` are not canopy's code. They
+are Bruno Sutic's, vendored verbatim at the commits recorded in
+[plugins/VERSIONS](plugins/VERSIONS) and distributed under the MIT License, whose
+text ships next to each of them. [NOTICE](NOTICE) lists both, and
+[plugins/README.md](plugins/README.md) explains why they are copied into the tree
+rather than fetched at install time.

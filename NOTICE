@@ -1,0 +1,27 @@
+canopy
+Copyright 2026 morrieinmaas
+
+This product includes software developed as part of the canopy project,
+licensed under the Apache License, Version 2.0 (see LICENSE).
+
+--------------------------------------------------------------------------
+Third-party components
+--------------------------------------------------------------------------
+
+canopy vendors two tmux plugins as ordinary files in plugins/, copied from
+upstream at the commits recorded in plugins/VERSIONS. Both are the work of
+Bruno Sutic and are distributed under the MIT License. Their license texts
+are kept alongside the code they cover and are reproduced in full there:
+
+  plugins/tmux-resurrect/   Copyright (C) 2014 Bruno Sutic
+                            https://github.com/tmux-plugins/tmux-resurrect
+                            MIT, see plugins/tmux-resurrect/LICENSE.md
+
+  plugins/tmux-continuum/   Copyright (C) Bruno Sutic
+                            https://github.com/tmux-plugins/tmux-continuum
+                            MIT, see plugins/tmux-continuum/LICENSE.md
+
+canopy modifies neither. plugins/vendor.sh copies each tree verbatim at its
+pinned commit and records a checksum in plugins/CHECKSUMS; what canopy adds
+lives outside those directories, in plugins/strategies/. See
+plugins/README.md for why they are vendored rather than fetched.
