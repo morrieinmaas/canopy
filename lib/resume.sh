@@ -13,7 +13,19 @@
 # an `&&`: whoever reads it should need no explanation and no lookup.
 #
 # The functions here are written together because they have to agree about
-# that shape. One emits the wrapper, the other takes it back off.
+# that shape, and there are three of them, in three languages: a printf
+# format that emits the wrapper, a shell glob that takes it back off, and an
+# extended regex that recognises it inside @resurrect-processes. Each has
+# exactly one caller, so none of them checks the others.
+#
+# The regex is the one that can fail silently. Let it drift from the format
+# and canopy keeps writing perfect resume commands while resurrect never
+# replays them: the pane comes back a bare shell, the conversation is gone,
+# and nothing reports anything. What stands between those literals is a
+# test, "the wrapper a save writes matches the pattern the restore list
+# carries" in test/stagger.bats, which matches one against the other with
+# bash's own `=~`, the same operator resurrect matches with. Change any of
+# the three and that test is what tells you the other two still agree.
 
 # canopy_resume_stagger_prefix <pane pid> <@canopy_resume_stagger_ms>
 # Prints the wrapper for that pane, or nothing at all when the option is

@@ -204,3 +204,69 @@ wait_for_default_output() {
   [[ "$(canopy_resume_stagger_prefix 12345 0900 2>&1)" != *"base"* ]]
   [[ "$(canopy_resume_stagger_prefix 12345 0900 2>&1)" == "sleep "* ]]
 }
+
+@test "the wrapper a save writes matches the pattern the restore list carries" {
+  # The wrapper's shape is written three times, in three languages: a printf
+  # format in canopy_resume_stagger_prefix, a shell glob in
+  # canopy_resume_stagger_strip, and an extended regex in
+  # canopy_resume_stagger_pattern, which is what goes into
+  # @resurrect-processes. Each has exactly one caller, so none of them
+  # checks the others.
+  #
+  # The regex is the dangerous one. If it stopped matching what the prefix
+  # emits, canopy would keep writing perfect resume commands and resurrect
+  # would simply never replay them: the pane comes back a bare shell, the
+  # conversation is gone, and nothing anywhere reports a failure. This test
+  # is the only thing standing between those two literals.
+  #
+  # Matched with bash's own `=~` because that is literally what resurrect
+  # uses: `[[ "$pane_full_command" =~ ($match) ]]` in
+  # plugins/tmux-resurrect/scripts/process_restore_helpers.sh.
+  . "$CANOPY_STORE/lib/resume.sh"
+  pattern="$(canopy_resume_stagger_pattern)"
+
+  # Pids chosen to land on both sides of a second: the format is
+  # `sleep <whole>.<milli>`, and a delay under 1000ms gives `sleep 0.123`
+  # while one over gives `sleep 1.023`.
+  for pid in 1 2 7 999 12345 99999 2147483647; do
+    for bound in 1 500 1000 5000; do
+      wrapped="$(canopy_resume_stagger_prefix "$pid" "$bound")fake-agent --resume abc"
+      [[ "$wrapped" =~ ($pattern) ]] || {
+        printf 'pid=%s bound=%s produced %s, which the pattern %s does not match\n' \
+          "$pid" "$bound" "$wrapped" "$pattern"
+        false
+      }
+      # And the glob takes back off exactly what the format put on.
+      [ "$(canopy_resume_stagger_strip "$wrapped")" = "fake-agent --resume abc" ]
+    done
+  done
+}
+
+@test "the restore list's own entry matches a staggered command end to end" {
+  # One level up from the previous test: not the pattern in isolation, but
+  # the entry as canopy_resume_processes_option actually emits it, matched
+  # the way resurrect matches it, including stripping the leading ~ that
+  # marks an entry as a regex rather than a word.
+  . "$CANOPY_STORE/lib/resume.sh"
+  run canopy_resume_processes_option
+  [ "$status" -eq 0 ]
+
+  # resurrect splits the option with `eval set`, then drops the ~.
+  eval "set -- $output"
+  found=0
+  for entry in "$@"; do
+    case "$entry" in
+      '~'*) ;;
+      *) continue ;;
+    esac
+    match="${entry#\~}"
+    case "$match" in
+      *fake-agent) ;;
+      *) continue ;;
+    esac
+    wrapped="$(canopy_resume_stagger_prefix 4242 1000)fake-agent --resume abc"
+    [[ "$wrapped" =~ ($match) ]]
+    found=1
+  done
+  [ "$found" -eq 1 ]
+}
