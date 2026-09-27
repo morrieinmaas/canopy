@@ -74,6 +74,6 @@ body:
         `~/.config/canopy/user.conf`, if it has anything in it. It is sourced
         last and wins over every canopy default, so it is the first place a
         surprising setting comes from.
-      render: tmux
+      render: shell
     validations:
       required: false

@@ -7,7 +7,7 @@ body:
       value: |
         An adapter is a small file of key=value lines, not code. What canopy
         needs to know about an agent is in
-        [docs/adapters/contract.md](../blob/main/docs/adapters/contract.md),
+        [docs/adapters/contract.md](https://github.com/morrieinmaas/canopy/blob/main/docs/adapters/contract.md),
         and the answers below are exactly the six keys it asks for.
 
         If the agent cannot resume a specific conversation from the command
