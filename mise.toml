@@ -12,3 +12,45 @@ jq = "latest"
 shellcheck = "0.11.0"
 shfmt = "latest"
 tmux = "latest"
+
+# Tasks, so the incantation a contributor types and the one CI runs are the
+# same string. They were drifting: docs/06 told a human to run
+# `mise exec -- bats test/` while ci.yml ran `bats test/` under
+# mise-action, and the smoke suite ran a third way.
+#
+# Nothing here is required to USE canopy. canopy needs sh and tmux; mise is
+# for working ON it.
+
+[tasks.test]
+description = "The bats suite: every command, library and layer"
+# The target is declared as a usage arg rather than appended, so `mise run test
+# test/doctor.bats` runs that one file. Appended, it would have run the whole
+# suite and then that file again.
+usage = 'arg "[target]" help="A file or directory of tests" default="test/"'
+run = 'bats "$usage_target"' 
+
+[tasks.lint]
+description = "shellcheck and shfmt over every shipped script"
+run = "sh test/lint.sh"
+
+[tasks.proof]
+description = "The restore proof: install, mutate, restore, compare hashes"
+run = "sh test/restore-proof.sh"
+
+[tasks.smoke]
+description = "Container acceptance scenarios (needs docker or podman)"
+# Unquoted on purpose: with no image named, the variable is empty and must
+# disappear rather than become an empty argument, which run.sh would read as
+# the name of an image called "".
+usage = 'arg "[image]" help="One image: debian, alpine, fedora or arch" default=""'
+# shellcheck disable=SC2086
+run = 'sh test/smoke/run.sh $usage_image' 
+
+[tasks.check]
+description = "What CI runs: lint, then the suite, then the restore proof"
+depends = ["lint", "test", "proof"]
+
+[tasks.vendor]
+description = "Re-vendor a pinned tmux plugin, e.g. mise run vendor tmux-resurrect"
+usage = 'arg "<plugin>" help="A name from plugins/VERSIONS"'
+run = 'sh plugins/vendor.sh "$usage_plugin"' 

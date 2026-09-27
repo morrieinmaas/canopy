@@ -23,6 +23,11 @@ jobs:
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v4
+      # A system tmux from the OS package manager, deliberately, rather
+      # than mise-action and the version mise.toml pins. `mise run proof`
+      # runs this same script for a human; the difference here is which
+      # tmux it runs against, and this job is the one that answers "does
+      # the restore guarantee hold against the tmux a user actually has".
       - name: install tmux (ubuntu)
         if: runner.os == 'Linux'
         run: sudo apt-get update && sudo apt-get install -y tmux

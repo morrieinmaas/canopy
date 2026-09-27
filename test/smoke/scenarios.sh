@@ -608,6 +608,25 @@ wait_for() {
   return 1
 }
 
+# open_anonymous_agent_pane
+# A pane running the agent with no id anywhere: not on its command line, and
+# never reported. This is the only shape canopy genuinely cannot bring back,
+# and it is the shape a real agent has when its launch form takes no id, so
+# it is worth a helper of its own rather than a variation of the one below.
+#
+# Prints the window index, because there is no id to look it up by later.
+# shellcheck disable=SC2317,SC2329  # called through capture()
+# shellcheck disable=SC2310  # a wait is a question, so its non-zero return is the answer and not a reason to abort
+open_anonymous_agent_pane() {
+  oaap_pane="$(rb new-window -t main -P -F '#{pane_id}')"
+  [ -n "${oaap_pane}" ] || return 1
+  oaap_window="$(rb display-message -p -t "${oaap_pane}" '#{window_index}')"
+  [ -n "${oaap_window}" ] || return 1
+  rb send-keys -t "${oaap_pane}" "fake-agent --anonymous" Enter
+  wait_for 20 test -f "${agent_home}/anonymous.transcript" || return 1
+  printf '%s\n' "${oaap_window}"
+}
+
 # open_agent_pane <session-id>
 # A pane running the fake agent, started the way a person starts one: by
 # typing it at a shell. The pane's own command is therefore the shell, so
@@ -790,14 +809,14 @@ end_scenario
 # back, and what canopy must do about that is say so beforehand, name the
 # pane, and still bring back every pane that can be brought back.
 
-begin_scenario 8 "a pane with no session id is called out, and costs no other pane"
+begin_scenario 8 "a pane with no id at all is called out, and costs no other pane"
 
 tmux_bin="$(command -v tmux)"
 reboot_sock="canopy-smoke-noid-$$"
 agent_setup
 
 kept_id=44444444-4444-4444-4444-444444444444
-lost_id=55555555-5555-5555-5555-555555555555
+silent_id=55555555-5555-5555-5555-555555555555
 
 capture canopy install
 check "install exits 0" 0 "${last_status}"
@@ -813,12 +832,21 @@ capture in_pane "${kept_pane}" canopy agent report idle \
   --source fake-agent --session-id "${kept_id}"
 check "the reporting agent reported its id" 0 "${last_status}"
 
-# The second pane runs an agent and never reports. Nothing anywhere knows
-# which conversation it holds, which is exactly the case M3 removes by
-# supplying ids at launch.
-capture open_agent_pane "${lost_id}"
+# The second pane runs the agent with an id on its command line and never
+# reports. That used to be the unrecoverable case; it is not any more,
+# because canopy reads the id back out of the command the pane is running
+# when the adapter's launch form carries one. Asserted here so the
+# capability cannot quietly regress: it is what makes a pane resumable from
+# the moment it starts, rather than from its first report.
+capture open_agent_pane "${silent_id}"
 check "the silent agent pane is running" 0 "${last_status}"
-lost_window="$(window_of "${lost_id}")"
+
+# The third pane is the one nothing can save: the agent is running, and
+# there is no id on its command line and none reported. Nothing anywhere
+# knows which conversation it holds.
+capture open_anonymous_agent_pane
+check "the anonymous agent pane is running" 0 "${last_status}"
+anon_window="${last_output}"
 
 # Saved before the pre-flight is asked, for the same reason as scenario 7:
 # reboot-check answers out of the save file, so asking it first would have
@@ -830,25 +858,28 @@ check "a save was written" 0 "${last_status}"
 capture in_pane "${kept_pane}" canopy reboot-check
 check "reboot-check exits 1 when a pane cannot be brought back" 1 "${last_status}"
 check_contains "reboot-check names the pane that will lose its conversation" \
-  "main:${lost_window}." "${last_output}"
+  "main:${anon_window}." "${last_output}"
 check_contains "reboot-check says why that pane is at risk" \
   "no session id" "${last_output}"
-# The failing pane must not drag the healthy one down with it: one pane
+# The failing pane must not drag the healthy ones down with it: one pane
 # that cannot be brought back is not a reason to stop promising the others.
 check_contains "reboot-check still says the reporting pane will resume" \
   "${kept_id}" "${last_output}"
+check_contains "reboot-check promises the silent pane too, from its command line" \
+  "${silent_id}" "${last_output}"
 
 simulate_reboot
 
 assert_resumed "${kept_id}"
+assert_resumed "${silent_id}"
 
-# The silent pane comes back as a pane, and comes back without its
+# The anonymous pane comes back as a pane, and comes back without its
 # conversation. Both halves are asserted: a reboot that dropped the window
 # entirely would pass a check that only looked for the absent resume.
-check "the silent agent's window came back" yes \
-  "$(yesno test -n "$(rb list-panes -t "main:${lost_window}" -F '#{pane_id}' 2>/dev/null | head -1)")"
-check "the silent pane did not come back resumed into a conversation" no \
-  "$(yesno grep -q "^resume ${lost_id}\$" "${agent_home}/${lost_id}.transcript")"
+check "the anonymous agent's window came back" yes \
+  "$(yesno test -n "$(rb list-panes -t "main:${anon_window}" -F '#{pane_id}' 2>/dev/null | head -1)")"
+check "the anonymous pane did not come back resumed into a conversation" no \
+  "$(yesno grep -q "^resume anonymous$" "${agent_home}/anonymous.transcript")"
 
 # shellcheck disable=SC2310  # killing a server that is already gone is success here
 rb kill-server >/dev/null 2>&1 || :

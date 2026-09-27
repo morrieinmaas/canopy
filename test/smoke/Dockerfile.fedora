@@ -1,0 +1,36 @@
+# Fedora is the RPM half of the world, and one of the two Linux platforms
+# canopy is actually installed on (the other is Arch). Its /bin/sh is bash,
+# which makes it the image LEAST likely to catch a bashism: a `local`, a
+# `[[` or a `${var,,}` sails straight through here and only Debian's dash or
+# Alpine's ash will object. That is the point of running all four. This
+# image is not the portability net, it is the "does it work where it is
+# used" check, run against a glibc userland with GNU coreutils and a
+# rolling-ish tmux.
+#
+# Only what canopy genuinely needs is installed, nothing from this repo's
+# mise.toml: a scenario must run the shipped artifact through the same entry
+# path a user does, from a bare environment, and a user does not have the
+# project's toolchain on their PATH.
+#
+# Four packages, and each one is needed for a reason worth naming:
+#   tmux       the thing being configured
+#   git        not called by canopy at all; needed to GET canopy
+#   procps-ng  canopy recognises an agent pane by asking ps what it runs
+#   diffutils  the scenario harness reports a failure as a unified diff,
+#              and Fedora's container images do not ship diff
+FROM fedora:latest
+
+RUN dnf install -y --setopt=install_weak_deps=False \
+      tmux git procps-ng diffutils \
+  && dnf clean all
+
+# The repository, copied in exactly as a user would have it checked out.
+# Last, so editing canopy does not invalidate the package layer.
+COPY . /canopy
+
+# How a user puts canopy on their PATH. Deliberately not a symlink into
+# /usr/local/bin: canopy derives its store from "$(dirname "$0")/..", so a
+# symlinked entry would resolve the store to /usr/local.
+ENV PATH="/canopy/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
+
+CMD ["/canopy/test/smoke/scenarios.sh"]

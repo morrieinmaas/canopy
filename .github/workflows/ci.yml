@@ -19,7 +19,10 @@ jobs:
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v4
+      # mise-action installs the toolchain mise.toml pins, tmux included,
+      # so the tests run against the same tmux on both runners.
       - uses: jdx/mise-action@v2
-      - name: lint
-        run: sh test/lint.sh
-      - run: bats test/
+      # The task names, not the commands behind them. A contributor runs
+      # `mise run lint` and `mise run test` and gets exactly this.
+      - run: mise run lint
+      - run: mise run test
