@@ -1,71 +1,77 @@
 # canopy design
 
-**Date:** 2026-09-17
-**Status:** approved in outline; M1 and M2 built, M3 to M6 not started
+**Date:** 2026-09-17, rewritten 2026-09-27 to describe what was built
+**Status:** M1 and M2 built and accepted. The key table (M4 scope) and the status line
+(M3 scope) were built early, alongside M2. Everything else in M3 to M6 is planned.
 **Scope:** the whole product. v1 target is the full experience, built in ordered milestones (§11).
 
 ## How to read this document
 
-This is a design for the whole product, written before any of it existed. Only
-milestone 1, the skeleton, is built. Most of what follows therefore describes work
-that has not been done, and the design itself has deliberately been left as it was
-written.
+This design was written before any code existed. It has since been rewritten so that
+it describes what canopy is, because the implementation went further than the design
+in several places and somewhere else entirely in a few. Where a decision came out of a
+fix, usually one that verification forced, the commit is named in brackets, so the
+reasoning can be read in full in its message.
 
-So that a reader can tell the two apart, everything not yet implemented now carries an
-explicit marker. **A sentence with no marker describes what the code does today.** The
-markers are:
+**A sentence with no marker describes what the code does today.** The markers are:
 
 | Marker | Where | Means |
 |---|---|---|
 | **Status: planned, M`<n>`.** | first line of a section | nothing in that section is implemented; the sentence after it says what exists instead, when anything does |
-| **Status: partly planned.** | first line of a section | some of the section is built; the markers inside it say which parts are not |
+| **Status: partly built.** | first line of a section | some of the section is built; the markers inside it say which parts are not |
 | **[planned, M`<n>`]** | end of a table row, bullet or sentence | that one item is not implemented. `unscheduled` in place of a milestone number means it is wanted but not assigned to one |
-| **Correction:** | inline | the code deliberately went somewhere else, and this text was wrong rather than merely early |
 
 The milestone number in a marker is the milestone that item belongs to, taken from §11.
 
-Two claims were corrected rather than marked because they are decisions, not pending
-work, and both are in §5.5: restore-point retention, which nothing implements and which
-carries a hazard for whoever does, and post-restore verification, which the code
-deliberately made a warning.
-
-Where this document and the code disagree and the disagreement is not marked, the code
-is what a machine runs. The user-facing documentation of what M1 actually does lives in
-the [README](../../../README.md) and `docs/01` through `docs/06`.
+Where this document and the code disagree, the code is what a machine runs. The
+user-facing manual is the [README](../../../README.md), `docs/01` to `docs/08`, and
+`docs/adapters/contract.md`, which is the authority on the adapter format.
 
 ---
 
 ## 1. What this is
 
-canopy is an opinionated, agent-aware tmux experience: a preconfigured tmux setup,
-a command namespace, themes, and an agent integration layer, distributed as a git
-clone that updates itself.
+canopy is an opinionated, agent-aware tmux distribution written in POSIX shell: a
+preconfigured tmux setup (core options, a key table, a status line), a command
+namespace, vendored session persistence, and an agent adapter layer. It is distributed
+as a git clone and updated by pulling it. Themes **[planned, M5]** and self-update
+**[planned, unscheduled]** do not exist; there is no `canopy update`.
 
-**Status of that sentence: M1 ships the preconfigured tmux setup and the command
-namespace.** Themes **[planned, M5]**, the agent integration layer **[M2 implemented,
-M3 planned]** and self-update **[planned, unscheduled]** do not exist. There is no `canopy
-update` command; canopy is obtained by cloning the repository and is updated by pulling
-it.
+**The wedge: sessions survive reboot with agent conversations intact.** This is built.
+A pane running a coding agent comes back after a reboot running that same
+conversation, resumed by its own session id, rather than a fresh one. tmux-resurrect
+has always restored layout; what canopy adds is that the pane's saved command is
+rewritten at save time into the command that resumes that pane's conversation. fut,
+the closest comparable project, states outright that runtime state is not restored
+after its daemon exits or the machine restarts.
 
-**The wedge: sessions survive reboot with agent conversations intact.**
-**[implemented, M2]** Nobody else ships this. fut, the closest comparable project, states outright that
-runtime state is not restored after its daemon exits or the machine restarts. tmux plus
-resurrect/continuum can do it, and this project makes it work for agent panes, not
-just shells.
+What proves it: container scenarios 7 and 8 (§11) drive a fake agent through a
+simulated reboot and check each pane's transcript for a resume of its own id. Claude
+Code's own `--resume` was verified by hand during design, and on a real machine
+canopy reads the session id off every live Claude pane and matches it to the
+Claude Code adapter (5aaac53).
 
-**Second pillar: agent state as first-class tmux state.** **[planned, M3]** Five
-normalized states pushed from agent hooks into tmux options, rendered with zero I/O in
-the status line.
+**Second pillar: agent state as first-class tmux state.** **Partly built.** Agents
+report one of five normalized states into their own pane through `canopy agent
+report`, which writes four pane options and costs nothing when nothing changed. What
+is not built is everything that makes the state visible: window and session rollups,
+pane-border and status formats, the attention model **[planned, M3]**.
 
 **What canopy is not:**
 
-- Not a multiplexer. tmux is the runtime; we ship configuration, commands, and glue.
-- Not a desktop config manager. Integration with non-tmux apps (ghostty, starship)
-  is opt-in per app and strictly additive. **[planned, M5]** M1 integrates with no
-  non-tmux app at all.
-- Not a plugin manager. Plugins are vendored and pinned. **[implemented, M2]** M1
-  vendored no plugin; M2 vendors resurrect and continuum at pinned commits.
-- Not dependent on any single tool beyond tmux itself: everything else degrades.
+- Not a multiplexer. tmux is the runtime; canopy ships configuration, commands and
+  glue. See §14 for the Rust multiplexer that canopy is the requirements source for.
+- Not a desktop config manager. canopy writes outside tmux's tree in exactly two
+  places: a mise `conf.d` fragment when mise is present, and an agent's own
+  configuration when the user runs `canopy agent install <agent>`. Both are recorded
+  in a transaction and reversible. ghostty and starship integration **[planned, M5]**.
+- Not a plugin manager. resurrect and continuum are vendored at pinned commits and
+  loaded by absolute path; there is no TPM. A user who keeps TPM for their own plugins
+  has to declare them with `@tpm_plugins`, because TPM cannot see `@plugin` lines at
+  the depth canopy sources `user.conf` from (9a243c6).
+- Not dependent on any single tool beyond tmux itself. Everything else degrades, and
+  persistence is the case worth naming: it needs `bash` and a `ps` that can report a
+  process's parent, and without either it does nothing while `canopy doctor` says so.
 
 **Prior art, deliberately not rebuilt:** agent status-bar plugins already exist
 (tmux-agent-indicator, agent-status-tmux, tmux-agent-status, tmux-agent-usage).
@@ -78,37 +84,91 @@ the world needs another status indicator.
 
 | # | Decision | Rationale |
 |---|---|---|
-| D1 | **Core + optional layers.** Core needs tmux ≥ 3.4 and POSIX sh. fzf is strongly recommended (UI surfaces degrade to native `display-menu` without it). Agent, worktree, theme, picker layers activate when their tool is present. **[the optional layers are planned, M3 to M6]** M1 ships the core and the capability probe those layers will guard on; no optional layer file exists yet. | Broad audience without weak defaults. A missing tool changes fidelity, never availability. |
-| D2 | **Clean-room core, port selectively.** athome keeps running its current config untouched until canopy reaches parity. | Avoids holding a daily driver with ~10 live agent panes hostage to a half-finished refactor. |
+| D1 | **Core + optional layers.** Core needs tmux ≥ 3.4 and POSIX sh. Optional layers activate when their tool is present and go dormant, never broken, when it is not. Built: the capability probe (§4.3) and one degrading layer, the plugin layer, which goes dormant without `bash`. The fzf, gum, worktree and theme layers **[planned, M4 to M6]**. | Broad audience without weak defaults. A missing tool changes fidelity, never availability. |
+| D2 | **Clean-room core, port selectively.** The owner's existing tmux config kept running until canopy reached parity. The port then took that config's structural settings and the reasoning behind them (0dbf66b, 8070a22, 2e87036, 1aa91b4) and left everything personal with its owner: launcher keys naming absolute paths to one machine's tools, a VPN readout naming one provider, a pet emoji. The source config has since handed over to canopy. | Avoids holding a daily driver with many live agent panes hostage to a half-finished refactor, and keeps the distribution free of one person's machine. |
 | D3 | **v1 target is the full experience**, decomposed into individually dogfoodable milestones (§11). | Owner's call, made with the scope risk stated. Decomposition is sequencing, not scope-cutting. |
-| D4 | **Distribution: git clone + self-update.** `curl \| bash` clones to `~/.local/share/canopy`; `canopy update` = `git pull` + new timestamped migrations. **[planned, unscheduled]** There is no installer script, no `canopy update` and no migrations; see §4.1 for what distribution looks like today. | No release pipeline, no packaging lag, hacking is editing the clone. Migrations are what make maintenance real once other people run old versions. |
-| D5 | **Pure shell + tmux.** No daemon, no compiled binary, no build step at install. A sidecar process is permitted only behind a measured trigger (rollup cost or hook chatter observed in practice). | The hot path is `tmux set` + `refresh-client -S`, both O(1). Rollups happen per state transition, not per frame. |
-| D6 | **Name: canopy**, CLI `canopy`, alias `cnp`. **[the `cnp` alias is planned, unscheduled]** M1 ships `canopy` only. | Sits beside worktrunk and leaf; the layer above the trunks is where you see every agent at once. |
+| D4 | **Distribution: git clone.** Clone anywhere, put `bin/` on `PATH` (a symlink to `bin/canopy` works), run `canopy install`, update by pulling. A `curl \| bash` installer, `canopy update` and timestamped migrations **[planned, unscheduled]**. | No release pipeline, no packaging lag, hacking is editing the clone. Migrations become necessary once other people run old versions. |
+| D5 | **Pure shell + tmux.** No daemon, no compiled binary, no build step. A sidecar process is permitted only behind a measured trigger. The two recurring costs are measured and small: a state report is one `tmux display-message` and, only on a real transition, one `tmux set` chain; the status line is one process every five seconds, about 67 ms per render after removing twenty forks from it (6ef854a). | The hot paths are O(1) tmux calls. |
+| D6 | **Name: canopy**, CLI `canopy`. The `cnp` alias **[planned, unscheduled]**. | Sits beside worktrunk and leaf; the layer above the trunks is where you see every agent at once. |
+| D7 | **Verify the shipped artifact through the user's entry path, from a bare environment.** | Learned when M1's installed config loaded nothing on a real machine past 93 green tests (§11). |
+| D8 | **Report what is on disk, not what was intended.** `reboot-check` judges a pane by the line resurrect actually saved; `doctor` reads settings off the config the machine actually loads, `user.conf` included; doctor's incomplete-transaction check asks the files, not the ledger (ba3d2c6). | Every check that reported canopy's intention instead of the machine's state said yes at least once when the answer was no. |
 
-**Publishability rule (inherited from athome):** no identity, hostnames, client
-names, or machine specifics in shipped files. Anything personal lives in the user
-config directory, never in the store.
+**Publishability rule:** no identity, hostnames, client names, or machine specifics in
+shipped files. Anything personal lives in the user config directory, never in the
+store. The repository is Apache-2.0; the vendored plugins keep their MIT licences,
+named in `NOTICE`.
 
 ---
 
 ## 3. Verified facts
 
-Everything the design leans on, with how it was checked. Unverified items are marked
-and carry a fallback.
+Everything the design leans on, with how it was checked. Most of the rows below were
+not known when the design was written; they are what building and verifying it found.
+Unverified items are marked and carry a fallback.
+
+### tmux
 
 | Fact | Result | How |
 |---|---|---|
-| tmux `source-file` accepts globs | **yes** (tmux 3.7b) | two fragments loaded from `conf.d/*.conf` on a scratch socket |
+| `source-file` accepts globs | **yes** (tmux 3.7b) | two fragments loaded from `conf.d/*.conf` on a scratch socket |
+| a glob `source-file` returns success whenever anything matched, whatever the matched files held | yes | a layer with a syntax error still loaded "successfully" (1aa91b4) |
+| a `run-shell` or `if-shell` anywhere in a sourced file resets the status of the `source-file` running it, so errors in every later file go uncounted | yes | one decorative `run-shell` made `canopy install` accept a config holding a syntax error (1aa91b4). `%if` is evaluated by the parser and does not do this (b303aae) |
+| a `run-shell` whose command fails fails the `source-file`, and so the whole config load | yes | an unguarded plugin load would stop tmux loading anything on a machine without bash (c5eb8e2) |
+| a detached `tmux -f <conf> new-session -d` exits 0 and prints nothing even when `<conf>` has errors; `source-file <conf>` run as a command reports synchronously | yes | M1, recorded in `lib/tmux.sh` |
+| tmux prints configuration errors on stdout, mixed with ordinary command output, in three shapes: `file:line: …`, `invalid option: …`, `unknown value: …` | yes | each produced by hand (94435f6). Matching only `file:line:` would miss the 3.4 failure below |
+| a command chain ending in `show` never exits when an earlier `source-file` in it fails, and a scratch session holding the reader's pipe turns that into a deadlock | yes | macOS CI sat for nine minutes after every test passed (2907e89) |
+| variables in a `source-file` path are expanded from the tmux **server's** environment, which nothing outside tmux populates | yes | M1's installed config loaded nothing on a real machine (510f803) |
+| tmux 3.4 has no `extended-keys-format`, and rejects the whole config over it | yes | ubuntu:24.04 container running 3.4 (b303aae). The suite's mise-installed tmux was newer and never saw it |
+| programs that request the kitty keyboard protocol (nvim, helix, coding agents) get no extended keys under `extended-keys on`, because tmux forwards them only for its own request method; `always` with `csi-u` is what works | yes | from the config canopy replaced (8070a22). Tradeoff: macOS option-as-alt misbehaves under `always` in some ghostty builds |
+| appending options (`set -as`, `set -ga`) append again on every reload | yes | three reloads listed TERM six times (6ef854a) |
+| a shell prompt that sets the terminal title counts as a manual rename and stops `automatic-rename` for that window for good | yes | 8070a22; `allow-rename off` is what makes the format hold |
+| `pane_current_command` is not the agent's name: tmux reports the interpreter for a script agent, and a real resurrect save recorded it for Claude Code panes as the agent's version string | yes | a resurrect save file on a real machine (c15f63e) |
+| tmux runs a pane's shell as a login shell, and `/etc/profile` resets `PATH` | yes | container scenario 7: an agent reachable only through the harness's `PATH` could not be started or resumed (ef20852) |
+| a bare `new-session -d` starts the passwd shell, which writes history into `$HOME` when killed | yes | validation left a `.zsh_history` in an otherwise untouched home (c5eb8e2) |
+| `kill-server` leaves the socket file behind | yes | about 900 had piled up under `/tmp/tmux-<uid>/` (510f803) |
+
+### resurrect, continuum and TPM
+
+| Fact | Result | How |
+|---|---|---|
+| continuum autosave rides on `status-right` interpolation | yes | continuum README, and it warns that themes overwriting `status-right` stop autosave |
+| continuum **prepends** its hook to whatever `status-right` holds at load, and skips installing it at all while another tmux server is running | yes | read from `continuum.tmux` (`another_tmux_server_running`) (1bc0255, 1aa91b4) |
+| continuum's `@continuum-restore` defaults to **off** | yes | a stock install restored nothing after a reboot (ab37bf0) |
+| continuum restores only when the server started within `@continuum-restore-max-delay`, when no other server runs, and when `~/tmux_no_auto_restore` is absent | yes | read from continuum at the pinned commit; `reboot-check` reports all three |
+| continuum's default save interval is 15 minutes | yes | read from continuum at the pinned commit |
+| resurrect inline strategy (`->`, `*` arg token) rewrites restore commands | yes | full round trip: launch → save → kill server → restore → process running with rewritten `--resume <id>` |
+| resurrect restore replays the saved command via `send-keys` into a fresh shell, and **only** when that command matches `@resurrect-processes`, whose default names editors and pagers | yes | read from `process_restore_helpers.sh`; without the generated list a perfect resume command was never typed (d0c7bea) |
+| resurrect splits `@resurrect-processes` with `eval set` | yes | read from the pinned commit (d0c7bea) |
+| resurrect saves no user pane options | yes | a restored pane came back with `@canopy_agent_session` empty (621e10e) |
+| resurrect leaves the save file untouched when a new save is byte-identical to the last | yes | `files_differ` in the pinned commit (1bc0255), so file age alone cannot judge autosave |
+| resurrect builds the save-command strategy path by interpolating the option into its own tree unsanitised, and falls back to `ps` when the file is missing | yes | measured on the pinned commit and pinned by a test that runs a real save (495df6b) |
+| resurrect binds `prefix C-s` and `prefix C-r` when it loads | yes | it took canopy's send-prefix key (94435f6) |
+| TPM finds plugins by grepping `/etc/tmux.conf`, the user's `tmux.conf` and the files that file sources directly; it reads `@tpm_plugins` from a real option | yes | on a real machine TPM loaded nothing from `user.conf` and exited 0 (9a243c6) |
+
+### Agents
+
+| Fact | Result | How |
+|---|---|---|
+| Claude Code `--session-id` cannot be reused | yes | second launch with same id → `Session ID … is already in use` |
+| Claude Code's `/clear` starts a new conversation in the same pane, delivered as a new id on `SessionStart`, whose state is `idle` | yes | c15f63e; this is why the report debounce compares the id as well as the state |
+| a live Claude Code pane started as `claude --session-id <uuid>` carries its id on its own command line | yes | canopy read the uuid off sixteen live panes on a real machine (5aaac53) |
+| Claude Code exposes no way to ask whether a pane holds unsent input | yes | 0554a17; the adapter's `detect_draft` is empty |
+| `TMUX_PANE` is inherited by agent hook subprocesses | **to verify** | standard tmux environment inheritance, and `report` depends on it. Not yet observed with a real Claude Code hook firing; step 2 of the manual procedure in `docs/07` is the check. Fallback: an explicit variable injected by a launch wrapper |
+
+### Userland and toolchain
+
+| Fact | Result | How |
+|---|---|---|
+| `ps -ao ppid,args` exits non-zero on machines where it works (1 with procps, 2 on macOS), exits 0 under BusyBox where it cannot report a parent, and `-a` lists only processes with a terminal | yes | by hand on macOS, procps on Debian and Alpine, and a real BusyBox `ps` (a54eb1c). doctor asks `ps -o ppid= -p $$` instead |
+| a BusyBox userland has no `bash`, and many slim images have no `ps` | yes | container scenarios; both images install procps, Alpine installs bash (ef20852) |
+| `env -i` breaks a tmux reached through a version-manager shim | yes | milestone 1's macOS CI (c15f63e). Validation unsets exactly the four `CANOPY_*` roots instead |
+| shell arithmetic reads a leading zero as octal, so `0900` is an error rather than a number | yes | a flaky test (11a3adf) and a stagger option that silently dropped the wrapper (6ef854a) |
+| a CI matrix that installs its own toolchain hides a version-floor bug | yes | bats on mise tmux passed while the restore proof on system tmux 3.4 failed (b303aae) |
 | starship multi-config via colon-separated `STARSHIP_CONFIG` | **NO** (1.26.0) | `base.toml:user.toml` silently fell back to the default prompt; single path works. Upstream PR still open |
 | ghostty `config-file` include exists | yes (docs) | docs reference; `?` prefix makes a missing file non-fatal |
 | ghostty include *precedence* | **unverified** | CLI probe inconclusive. Design routes around it via the themes dir instead |
-| ghostty user themes directory | yes | `+list-themes` labels sources; user already has `~/.config/ghostty/themes/` |
+| ghostty user themes directory | yes | `+list-themes` labels sources |
 | mise auto-loads `~/.config/mise/conf.d/*.toml` | yes | mise docs/source; `[env]` merges additively |
-| continuum autosave rides on `status-right` interpolation | yes | continuum README states it, and warns themes that overwrite `status-right` stop autosave |
-| Claude Code `--session-id` cannot be reused | yes | second launch with same id → `Session ID … is already in use` |
-| resurrect inline strategy (`->`, `*` arg token) rewrites restore commands | yes | full round trip: launch → save → kill server → restore → process running with rewritten `--resume <id>` |
-| resurrect restore replays the saved command via `send-keys` into a fresh shell | yes | read from `process_restore_helpers.sh` |
-| `TMUX_PANE` is inherited by agent hook subprocesses | **to verify** | mechanism is standard tmux env inheritance; confirm per agent during adapter work |
 
 ---
 
@@ -116,112 +176,159 @@ and carry a fallback.
 
 ### 4.1 Store layout
 
-**Status: partly planned.** The path `~/.local/share/canopy` is a suggestion, not
-something canopy establishes: no installer exists, so the store is wherever the
-repository was cloned. `bin/canopy` derives it from the real path of the running
-script, following symlinks, so the clone can live anywhere and `bin/canopy` may be
-symlinked onto a `PATH`. Entries below marked planned are absent from the tree.
+The store is wherever the repository was cloned. `bin/canopy` derives it from the real
+path of the running script, walking a symlink chain one hop at a time because
+`readlink -f` is not portable (76e9fc0), so the clone can live anywhere and
+`bin/canopy` may be symlinked onto `PATH`. `~/.local/share/canopy` is a suggestion,
+not a requirement.
 
 ```
-<clone>/                        # git clone; read-only by convention
-                                # ~/.local/share/canopy is the suggested path,
-                                # not one canopy creates or requires
-  bin/canopy                    # dispatcher: scans siblings' metadata headers
-  bin/canopy-*                  # one command per file
-  lib/                          # env.sh, tmux.sh, manifest.sh
-                                # (caps.sh: planned. The probe is bin/canopy-caps)
-  tmux/tmux.conf                # entry point
-  tmux/conf.d/*.conf            # layers, see 4.2 (only 00-core.conf exists)
-  adapters/{claude-code,opencode,pi,codex}/   # planned, M3
-  plugins/                      # vendored, pinned by commit -- implemented, M2
-  themes/<theme>/{tmux.conf,ghostty,starship.toml,colors.toml}   # planned, M5
-  migrations/<epoch>.sh         # planned, unscheduled
-  manual/NN-*.md                # planned. M1's prose lives in docs/ instead
+<clone>/                          # git clone; read-only by convention
+  bin/canopy                      # dispatcher: scans siblings' metadata headers
+  bin/canopy-*                    # one command per file, eleven of them
+  lib/env.sh                      # the four paths, hashing, stat, the runtime dir
+  lib/tmux.sh                     # version floor, bare-environment validation, option probe
+  lib/manifest.sh                 # transactions and the self-contained restore.sh
+  lib/adapter.sh                  # reads and validates adapter manifests
+  lib/pane.sh                     # which pane is running which agent
+  lib/resume.sh                   # the stagger wrapper and @resurrect-processes
+  lib/plugins.sh                  # vendored plugin pins and digests
+  tmux/tmux.conf                  # entry point the installed stub sources
+  tmux/conf.d/{00-core,20-status,30-plugins}.conf
+  tmux/keys.tsv                   # the key table, §4.4
+  adapters/claude-code/           # manifest, hooks.json, report.sh, install.sh
+  plugins/VERSIONS, CHECKSUMS, vendor.sh, README.md
+  plugins/tmux-resurrect/, plugins/tmux-continuum/   # upstream bytes, unmodified
+  plugins/strategies/             # canopy's save strategy and process-list generator
+  test/                           # bats, restore-proof.sh, smoke/
+  docs/                           # the user manual
+  adapters/{opencode,pi,codex}/   # planned, M3
+  themes/<theme>/                 # planned, M5
+  migrations/<epoch>.sh           # planned, unscheduled
 ```
-
-**Distribution today:** clone the repository anywhere, put its `bin/` on `PATH` (or
-symlink `bin/canopy` into a directory already on it), and run `canopy install`. There
-is no `curl | bash` installer **[planned, unscheduled]** and no `canopy update`
-**[planned, unscheduled]**; updating means pulling the clone.
 
 **User-owned directories:**
 
-- `~/.config/canopy/`: `user.conf`, `starship.user.toml` **[planned, M5]**, user themes
-  **[planned, M5]**. Survives uninstall.
-- `~/.local/state/canopy/`: caps cache, command index, backups. The `current/theme`
-  symlink is **[planned, M5]**.
-- `$XDG_RUNTIME_DIR/canopy/`: transient scratch files. Locks are **[planned]**; nothing
-  in M1 takes one. Falls back to `/tmp/canopy-<uid>`, which canopy creates mode 0700
-  and refuses to use if it is not exclusively the caller's.
+- `$CANOPY_CONFIG`, default `~/.config/canopy/`: `user.conf`, and `adapters/<id>/` to
+  override a shipped adapter. `starship.user.toml` and user themes **[planned, M5]**.
+  Survives uninstall.
+- `$CANOPY_STATE`, default `~/.local/state/canopy/`: `05-caps.conf`, `10-keys.conf`,
+  `commands.tsv`, `backups/`, and `resurrect/`, where resurrect keeps its saves. The
+  saves are the data persistence depends on, so they live in a tree canopy reasons
+  about rather than at upstream's default (c15f63e); saves at the old path are not
+  migrated. The `current/theme` pointer **[planned, M5]**.
+- `$CANOPY_RUNTIME`: `$XDG_RUNTIME_DIR/canopy`, falling back to `/tmp/canopy-<uid>`,
+  scoped by uid because `/tmp` is shared (347c500), created mode 0700 and refused if it
+  is a symlink, not a directory, another user's, or group- or world-writable
+  (46d1bdc). Scratch files only; nothing takes a lock **[planned]**.
 
-Agent state lives in tmux options, not on disk: no cleanup, no reboot story of its own.
-**[planned, M3]**
+Agent state lives in tmux pane options, not on disk. It dies with the server, and
+resurrect does not save it, which is why a restored pane's session id is recovered
+from the command it is running (§7.1).
 
 ### 4.2 Layers and load order
 
-Two of these nine exist. The `[1-9]*.conf` glob in the entry point matches nothing
-today, and the entry point sources `$CANOPY_CONFIG/user.conf` directly rather than
-through a `90-user` link.
+`canopy install` writes a stub at the entry point tmux loads. The stub carries the
+store, state and config paths as absolute literals, runs `set-environment -g` for each
+so that everything the server starts later inherits them, and sources the store's
+`tmux/tmux.conf` (510f803). That file sources, in order:
 
-| File | Owns | State |
-|---|---|---|
-| `00-core` | prefix, indexes, mouse, escape-time, history, terminal-features | ships. Deliberately small: base and pane indexes, escape-time, focus-events, history-limit, mouse, renumber-windows |
-| `05-caps` | **generated**: capability flags as tmux options | ships, generated by `canopy caps` into `$CANOPY_STATE`, not into the store's `conf.d/` |
-| `10-keys` | **generated** from the key table (4.4) | **[planned, M4]** |
-| `20-status` | status line: pure `#{@…}` tokens, at most one aggregator `#()` | **[planned, M3]** |
-| `30-plugins` | vendored plugin loads, incl. resurrect/continuum | **[implemented, M2]** |
-| `40-agents` | optional: hooks, pane-border and status formats | **[planned, M3]** |
-| `50-worktree` | optional: wt-aware session naming, picker binds | **[planned, M6]** |
-| `60-theme` | generated: sources the active theme's tmux fragment | **[planned, M5]** |
-| `90-user` | symlink → `~/.config/canopy/user.conf`; loaded last | **Correction:** loaded last, but not as a file in `conf.d/` and not through a symlink. `tmux/tmux.conf` ends with `source-file -q "$CANOPY_CONFIG/user.conf"`, and `canopy doctor` asserts textually that this is the last `source-file` line in the entry point |
+| # | File | Owns | State |
+|---|---|---|---|
+| 1 | `00-core` | prefix, indexes, mouse, escape-time, history, terminal features, window naming | ships. Prefix `C-s` (the recipe for keeping `C-b` sits beside it); base and pane index 1; escape-time 0; focus-events; history 100000; mouse; renumber-windows; set-clipboard; vi mode keys; a terminal block (tmux-256color, RGB per terminal, allow-passthrough for inline images, `extended-keys always`, `extended-keys-format csi-u` only on tmux ≥ 3.5, extkeys, TERM passthrough) run once per server under a `%if` guard so reloads do not grow the appending lists (6ef854a); windows named for their directory with `allow-rename off` (8070a22) |
+| 2 | `05-caps` | **generated**: capability flags as tmux options | ships. Written by `canopy caps` into `$CANOPY_STATE`, sourced with `-q` |
+| 3 | `10-keys` | **generated** from the key table (§4.4) | ships (2e87036). Written by `canopy keys` into `$CANOPY_STATE`, sourced with `-q` |
+| 4 | `20-status` | status line: pure `#{…}` tokens and one aggregator `#()` | ships (1aa91b4). Numbered 20 so it loads **before** the plugins, because continuum prepends its autosave hook to whatever `status-right` holds at load. It renders no agent state yet **[planned, M3]** |
+| 4 | `30-plugins` | vendored resurrect and continuum, and every option they read | ships, §7.5 |
+| 4 | `40-agents` | optional: hooks, pane-border and status formats | **[planned, M3]** |
+| 4 | `50-worktree` | optional: wt-aware session naming, picker binds | **[planned, M6]** |
+| 4 | `60-theme` | generated: sources the active theme's tmux fragment | **[planned, M5]** |
+| 5 | `$CANOPY_CONFIG/user.conf` | the user's own settings, migrated tmux config included | ships. Sourced last, directly, with `-q`; there is no `90-user` file or symlink |
+
+Step 4 is the glob `conf.d/[1-9]*.conf`. It starts at `[1-9]` so that `00-core` is never
+sourced twice. Generated layers live in state, not in the store's `conf.d/`, because the
+store is read-only by convention and a generated file in a checkout is a local
+modification on every machine.
+
+Two rules keep a load honest. A layer decides what it can with `%if`, which the parser
+evaluates without forking and without resetting the load's status, rather than
+`if-shell` (b303aae); the status layer is asserted to run no shell command at all. The
+plugin layer is the one exception, because loading a bash plugin needs a shell, and
+every load in it is guarded so that a missing `bash` or `plugins/` tree makes the layer
+dormant instead of failing the whole configuration (c5eb8e2).
 
 ### 4.3 Capability model
 
-Detection runs **once**, at install/update/doctor, and is written to `05-caps.conf` as
-plain options (`set -g @canopy_has_wt 1`). Layer files guard on the option, never on a
-subprocess, so sourcing the config tree forks nothing.
+`canopy caps` probes six tools (`wt`, `fzf`, `gum`, `ghostty`, `starship`, `mise`) and
+the tmux version, and writes plain options (`set -g @canopy_has_wt 1`) to
+`$CANOPY_STATE/05-caps.conf`, atomically. `canopy install` runs it; re-running it after
+installing or removing a tool is the user's job. `canopy doctor` never re-probes: it
+reads the file, so doctor's report and tmux's options cannot disagree. Layer files are
+meant to guard on these options, never on a subprocess, so sourcing the tree forks
+nothing.
 
-**Correction on where detection runs:** it runs in `canopy caps`, which `canopy
-install` invokes. `canopy doctor` never re-probes; it reads `05-caps.conf` and reports
-what the probe last found, so that doctor's report and tmux's options cannot disagree.
-Re-running `canopy caps` after installing or removing a tool is the user's job.
+No shipped layer guards on a caps option yet, because the layers that would are
+M3 to M6. Doctor's Layers section therefore reports what each capability *will*
+enable, and says so. Per-layer switches (`@canopy_layer_agents off`) with zero
+bindings and zero formats left behind by a disabled layer **[planned, M3 to M6]**;
+`@canopy_layer_*` is read nowhere today.
 
-Each layer is independently switchable (`@canopy_layer_agents off`) and
-independently dead-able (missing capability). A disabled layer leaves zero bindings
-and zero formats behind: no half-states. **[planned, M3 to M6]** No layer is switchable
-today because no gated layer exists; `@canopy_layer_*` is not read anywhere.
-
-`doctor` reports which layers are dormant **and why** ("worktree: wt not found"). That
-section exists and prints exactly that, with the caveat stated in its own output and in
-`docs/04`: with no gated layer shipped, it reports what each capability *will* enable.
+The one layer that degrades today degrades on a different signal: the plugin layer
+guards on `command -v bash` at load, and doctor reports `bash` and a capable `ps` as
+dormant rather than as warnings, because an absent optional tool describes the
+machine rather than a fault in the install.
 
 ### 4.4 Keys are data
 
-**Status: planned, M4.** No key table exists, `10-keys.conf` is not generated, and M1
-adds no binding to tmux's own. `canopy doctor` prints a line saying its `list-keys`
-cross-check is stubbed until the table exists, rather than leaving the section out.
+`tmux/keys.tsv` declares every binding canopy ships, and `canopy keys` generates
+`$CANOPY_STATE/10-keys.conf` from it. Nothing else in canopy binds a key. The table has
+six tab-separated columns: `name`, `key`, `flags` (`-` or tmux bind flags such as
+`-r`), `command`, `group`, `description`. The generator refuses a table with a missing
+or empty column, a duplicate key or a duplicate name rather than emitting a partial
+layer, and writes its temp file beside the target so the move is atomic (94435f6).
 
-A single table declares every binding: `name, key, command, group, description`. It
-generates `10-keys.conf` *and* feeds the palette, which-key menu, and cheatsheet
-(§8). Every binding invokes a dispatcher command, so every binding has a description
-and a group by construction; there are no orphan keys.
+The point is that there are no orphan keys: a row cannot exist without a name, a group
+and a description, so every binding can appear in a cheatsheet, a palette or a
+which-key menu. `canopy keys --print` already renders the table as a grouped
+cheatsheet.
+
+It ships twenty bindings: send-prefix, splits and a new window in the current
+directory, a "cockpit" window and layout (one full-height pane, two stacked), hjkl
+focus and repeatable HJKL resize, last/previous/next session, reload, and resurrect's
+save and restore. resurrect's own `prefix C-s` and `prefix C-r` are moved to `M-s` and
+`M-r` before it loads, because with canopy's prefix on `C-s` resurrect's binding took
+the send-prefix key and the table declared a row that existed nowhere in tmux (94435f6).
+
+**Deviation from the original design:** it said every binding invokes a dispatcher
+command. It does not. Splitting a pane through `canopy` would fork a process per
+keypress to do what tmux does natively, and the name, group and description live in
+the table either way. Bindings that need canopy call it; the rest are tmux commands.
+The prefix is an option, not a binding, and lives in `00-core`.
+
+`canopy doctor` counts table rows against `bind` lines in the generated layer, so a
+table that grew without regeneration reports as stale; a stored count could not catch
+that. The live `list-keys` cross-check **[planned, M4]** arrives with the palette.
 
 ### 4.5 Environment resolution
 
-`display-popup` and `run-shell` execute in the **tmux server's** environment, which
-never sourced the user's shell rc. `lib/env.sh` resolves the toolchain once and every
-`bin/` script sources it. Scripts must not hardcode tool paths individually.
+`display-popup`, `run-shell` and `#()` execute in the **tmux server's** environment,
+which never sourced the user's shell rc. canopy meets this in three places and solves
+it the same way each time: never trust the caller's environment for canopy's own paths.
 
-**Correction on scope:** `lib/env.sh` exists and every `bin/` script sources it, but
-what it resolves is canopy's own four paths (`CANOPY_STORE`, `CANOPY_CONFIG`,
-`CANOPY_STATE`, `CANOPY_RUNTIME`), each of which must be absolute. It resolves no tool
-paths; `canopy_have` is a `command -v` test and nothing more. M1 uses neither
-`display-popup` nor `run-shell`, so the hazard the section is about is still ahead of
-the code. What M1 did meet is the same hazard one level down: the installed entry point
-expanded `$CANOPY_STORE` from the tmux server's environment, which nothing populates,
-so `canopy install` now writes a stub carrying absolute literals and a
-`set-environment -g` line for each of the three variables the store's `tmux.conf`
-needs.
+- `lib/env.sh` resolves canopy's four roots (`CANOPY_STORE`, `CANOPY_CONFIG`,
+  `CANOPY_STATE`, `CANOPY_RUNTIME`), each required to be absolute, and every `bin/`
+  script sources it. It resolves no tool paths; `canopy_have` is a `command -v` test.
+- The installed stub writes the paths as literals and puts them into the server's
+  environment with `set-environment -g`, so `#($CANOPY_STORE/bin/canopy-status)` and
+  key bindings naming `$CANOPY_STORE` resolve (510f803).
+- Code that tmux or an agent runs derives the store from its own file location:
+  the save strategy, because the server's environment may be stale or missing, and the
+  Claude Code `report.sh`, because the agent's environment is not canopy's.
+
+Validation removes exactly the four `CANOPY_*` roots from the environment rather than
+using `env -i`, because a tmux reached through a shim needs the rest of its environment
+to find the binary it forwards to (c15f63e). The fzf-backed popups that would meet the
+toolchain half of this hazard **[planned, M4]**.
 
 ---
 
@@ -230,122 +337,141 @@ needs.
 ### 5.1 The invariant
 
 **We never write a file we don't own, and ownership is provable.** A file is ours only
-if it is a symlink into our store, carries our marker block, or is a generated file
-whose recorded hash still matches. Everything else is the user's.
+if it carries our marker or its recorded hash still matches. Everything else is the
+user's.
 
 **Preference order:** drop new files into an app's extension point → own a whole file
-with a backup → splice into someone else's file. Splicing looks polite and behaves
-badly; it is the last resort, marker-delimited, and rewritten only between markers.
+with a backup → splice into someone else's file. Splicing is the last resort,
+marker-delimited, and rewritten only between markers.
 
-**What M1 implements of that:** the marker block (`# canopy:entry-point`, written into
-every entry point canopy creates, and how a re-run recognises its own file) and the
-recorded hash (`manifest.tsv` records a pre-state and a post-state per path, and
-restore refuses a path holding neither). canopy owns no file by symlinking it into the
-store, and **splicing is not implemented [planned, M5]**: the manifest's `action`
-vocabulary reserves `splice`, `generate` and `env`, and M1 writes only `own` and
-`drop`. Taking over a path that is itself a symlink owns the **link**, never the bytes
-at the other end.
+What is built: every entry point canopy writes carries `# canopy:entry-point`, which is
+how a re-run recognises its own file; `manifest.tsv` records a pre-state and a
+post-state per path, and restore refuses to revert a path holding neither. Taking over
+a path that is itself a symlink owns the **link**, never the bytes at the other end:
+the state is recorded as `symlink:<target>`, backed up with `cp -pP`, and recreated
+exactly, because chezmoi, stow and bare dotfiles repos all produce such links and
+writing through one damaged a file the manifest never recorded (2c770b3). A dangling
+link at the entry point counts as an existing config (5e244b9). The manifest reserves
+the actions `splice`, `generate` and `env`; canopy writes only `own` and `drop`.
+Splicing **[planned, M5]**.
 
 ### 5.2 Per-app integration
 
 | App | What canopy does | Their file | State |
 |---|---|---|---|
-| tmux | owns the entry point; the user's existing config is backed up and re-sourced **last** as `90-user.conf` | backed up, replayed last | ships. **Correction:** the migrated content is appended to `~/.config/canopy/user.conf`, which the store's `tmux.conf` sources last. There is no `90-user.conf` |
-| ghostty | drops a **new** theme file into `~/.config/ghostty/themes/` (collision-checked); optionally one marker-wrapped `theme =` line | untouched, or one line | **[planned, M5]** canopy never reads or writes anything under `~/.config/ghostty` today |
-| starship | sets `STARSHIP_CONFIG` (via the mise `conf.d` fragment) to a **generated** file in canopy state, merged from our base + `~/.config/canopy/starship.user.toml` | **never touched** | **[planned, M5]** the mise fragment canopy writes carries a `[tools]` table only, declaring `fzf`, `gum` and `starship` as tools to install. It sets no `[env]`, so `STARSHIP_CONFIG` is never set |
+| tmux | owns the entry point and writes the stub; the existing config's contents are appended to `$CANOPY_CONFIG/user.conf`, which loads last | backed up, replayed last | ships. This is a **migration, not a merge**, and install refuses without `--yes` when a config exists |
+| mise | writes `~/.config/mise/conf.d/canopy.toml` declaring `fzf`, `gum` and `starship` under `[tools]`, when mise is installed or that directory exists | never touched | ships. It sets no `[env]` |
+| Claude Code | `canopy agent install claude-code` merges canopy's hooks into `settings.json` under `$CLAUDE_CONFIG_DIR` or `~/.claude`, with `jq` | merged, never replaced | ships. Refuses when the directory does not exist, rather than inventing a config for an agent that is not installed. Runs inside a transaction, so `canopy restore` puts the file back byte for byte |
+| ghostty | drops a **new** theme file into `~/.config/ghostty/themes/`; optionally one marker-wrapped `theme =` line | untouched, or one line | **[planned, M5]** |
+| starship | sets `STARSHIP_CONFIG` via the mise fragment to a generated file merged from canopy's base and `starship.user.toml` | never touched | **[planned, M5]** |
 
-Third-party (non-tmux) integration is **opt-in per app** (`canopy theme install ghostty`),
-never performed by `install`. Blast radius stays where we can test it. **[planned, M5]**
-There is no `canopy theme` command; M1 performs no third-party integration at all, opt-in
-or otherwise. The one file it writes outside tmux's own tree is the mise fragment above,
-and only when `mise` is installed or `~/.config/mise/conf.d` already exists.
-
-For tmux specifically this is a **migration, not a merge**, and first run says so
-explicitly rather than pretending to be additive.
+Third-party integration is opt-in per app and never performed by `canopy install`. The
+agent adapter is the first instance of that rule; `canopy theme install ghostty`
+**[planned, M5]** would be the second.
 
 ### 5.3 Load-bearing settings
 
-**Status: partly planned.** The four settings listed below are **[M2 implemented,
-M3 planned]**: each depends on a vendored plugin or an adapter that does not exist yet, so
-there is nothing for doctor to assert about them. Doctor does assert a load-bearing set
-today, and it is a different one, named at the end of this subsection.
+A small set of settings cannot be left to chance without silently breaking the
+product. The design gave all of them to `doctor`. Building them split them across two
+commands, by who can answer: `doctor` checks the configuration, `reboot-check` checks
+the running persistence path.
 
-A small set of settings cannot be left to user override without silently breaking the
-product. `doctor` asserts them and names the escape hatch:
+**doctor, exit 2 on failure:**
 
-- `status-right` retains continuum's hook (verified failure mode: a theme overwriting
-  `status-right` stops autosave silently; you find out after a reboot)
-- `status-interval` stays above zero (same reason)
-- `@resurrect-processes` covers every installed adapter's command
-- `@continuum-restore` is on
+- tmux is at least 3.4.
+- The entry point this machine actually loads loads cleanly on a throwaway socket from
+  a bare environment. "Cleanly" is judged by tmux's exit status **and** by its output,
+  matched against tmux's three error shapes, because the status lies twice over (§3,
+  1aa91b4, 94435f6). The scratch session runs `sleep` rather than a shell, so
+  validation writes nothing into `$HOME` (c5eb8e2), and zeroes
+  `@continuum-restore-max-delay` first, so a validation run never restores the user's
+  saved session onto a scratch socket.
+- `@continuum-restore` is `on` in that same loaded config, `user.conf` included. Read
+  by `canopy_tmux_loaded_option`, which sources and asks in two separate invocations
+  writing to files, because one chain ending in `show` deadlocks on a config that
+  fails to load (2907e89). Not asked at all when the entry point did not load.
+- `user.conf` is the last `source-file` line in the store's `tmux.conf`, checked
+  textually.
 
-**What doctor asserts today** is the M1 set, and a failure of any of them is what earns
-exit 2 rather than a warning:
+**doctor, warning:**
 
-- tmux is at least 3.4
-- the entry point tmux would actually load on this machine loads cleanly from a bare
-  environment, on a throwaway socket
-- `user.conf` is the last `source-file` line in the store's `tmux.conf`, so no later
-  layer can be sourced after the user's own file and win instead
+- continuum's hook is missing from the **live** server's `status-right`. A scratch
+  server cannot answer this, because continuum skips the hook whenever another server
+  is running, which is every machine currently using tmux (1aa91b4).
+- A vendored plugin tree no longer matches its recorded digest, or is missing.
+- `user.conf` holds TPM `@plugin` lines, which TPM cannot see (9a243c6).
+
+**reboot-check, exit 2:** continuum restore off or halted by its halt file; autosave
+interval set to zero or to something that is not a number; `status-interval` 0, so the status line never
+redraws and autosave never fires; no save ever; or the newest of the save file and
+continuum's own last-save timestamp older than twice the interval.
+
+**Not asserted, and not needed:** `@resurrect-processes` covering every installed
+adapter. It is generated from the installed adapters at load (§7.1), so it cannot
+drift from them.
 
 ### 5.4 Two rollback classes, one guarantee
 
-**Class A: config mutations.** Everything a fresh install does on a machine that
-already has configs. Byte-captured before the change, **completely reversible,
-forever**.
+**Class A: config mutations.** Everything an install or an adapter install does to
+files that may predate canopy. Byte-captured before the change, **completely
+reversible, forever**.
 
-**Class B: canopy-owned state.** Caps cache, theme pointer **[planned, M5]**, adopt
-records **[planned, M2]**. Did not exist before canopy. Migrations here are
-forward-only, which is harmless because they cannot touch anything that predates
-canopy. In M1 the class holds the caps cache, the command index and `backups/` itself.
+**Class B: canopy-owned state.** The caps cache, the key layer, the command index,
+resurrect's saves, `backups/` itself, and the theme pointer **[planned, M5]**. Did not
+exist before canopy. Migrations here may be forward-only, because they cannot touch
+anything that predates canopy.
 
-**Enforcement:** a migration may not write to a user-owned file. If it must, it opens
-a config transaction and becomes Class A. The categories are enforced by the code
-path, not by the author remembering. **[planned, unscheduled]** M1 ships no migration,
-so this is still a design rule and nothing in the code enforces it yet.
+**Enforcement:** a migration may not write to a user-owned file; if it must, it opens a
+config transaction and becomes Class A. **[planned, unscheduled]** No migration exists,
+so this is a rule nothing enforces yet.
 
-> **Invariant (goes in the README):** the pre-install restore point is complete and
-> reachable forever, no matter how many updates and migrations have run since.
-> `canopy restore --all` returns every file that existed before canopy to its exact
-> original bytes.
+> **Invariant (in the README):** the pre-install restore point is complete and
+> reachable forever. `canopy restore --all` returns every file that existed before
+> canopy to its exact original bytes.
 
 ### 5.5 Transactions and restore
 
-Every mutating operation (`install`, `update` when it touches user-owned files
-**[planned, unscheduled]**, `theme install <app>` **[planned, M5]**) opens a
-transaction first. In M1 that means `canopy install` and `canopy restore` itself.
+Every mutating operation opens a transaction first: `canopy install`, `canopy agent
+install <id>`, and `canopy restore` itself. `update` and `theme install`
+**[planned]**.
 
 ```
-~/.local/state/canopy/backups/<ts>/
-  manifest.tsv      # one row per recorded path: action (own|splice|drop|generate|env), pre-state (absent | sha256+copy), post-state sha256
-  files/...         # byte copies of everything that existed before
+$CANOPY_STATE/backups/<epoch>-<label>/    # label: install, restore, agent-install-<id>
+  manifest.tsv      # per row: action (own|drop), path, pre-state (absent | sha256 | symlink:<target>), backup file, post-state
+  files/...         # one byte copy per manifest row, cp -pP
   restore.sh        # self-contained POSIX sh
   dirs-created.txt  # directories this run created, shallowest first
-  .committed        # marker, written when the operation finished
-  .pinned           # marker, written on the pre-install point only
+  .committed        # the operation finished
+  .pinned           # the pre-install point only
+  .failed           # install validated, failed and reverted itself
+  .rollback         # a restore's own transaction
 ```
 
-The id is `<epoch>-<label>`, and the manifest's `action` column uses `own` and `drop`
-in M1; `splice`, `generate` and `env` are reserved for later milestones. `files/` holds
-one copy per manifest **row**, copied with `cp -pP` so a symlink is copied as the link
-it is.
+Details verification forced: the directory is allocated atomically so two operations in
+the same second cannot collide (88e8b30); backup filenames are percent-encoded paths
+plus the row's ordinal, because escape-based schemes collided and two rows for one path
+clobbered each other (05850d5, 227afd2).
 
 Rules:
 
 - **Restore is itself non-destructive.** A current-hash mismatch means the user edited
-  the file after install; restore stops and names it rather than reverting newer work.
-  `--force` proceeds. Either way restore opens its own restore point first.
-- **The rollback tool does not depend on the thing it rolls back.** `restore.sh` is
-  self-contained: no store, no dispatcher, no mise. It works when canopy itself is what
-  broke.
-- **The pre-install restore point is pinned and never pruned.** The pinning ships:
-  `canopy install` writes `.pinned` on its own transaction after a successful commit,
-  and `restore --list` marks it `PINNED`.
+  the file after canopy wrote it; restore keeps it and names it. `--force` proceeds.
+  Either way restore records its own transaction first.
+- **Restore is a fixed point, not a toggle.** A restore's own transaction is marked
+  `.rollback` and skipped by automatic rollback, so `--all` run three times leaves the
+  original bytes and exits 0 each time; reverting a revert stays available through
+  `--to <restore-id>` (c345b0e). `.failed` transactions are skipped the same way.
+- **An interrupted install is still recoverable.** Rollback acts on recorded rows
+  whether or not `.committed` exists, `--to` accepts every id `--list` shows, and
+  doctor names an incomplete transaction and the command that undoes it until the
+  files say it is undone (28a8e85, ba3d2c6).
+- **The rollback tool does not depend on the thing it rolls back.** `restore.sh` needs
+  no store, no dispatcher and no mise.
+- **The pre-install restore point is pinned and never pruned.** `canopy install`
+  writes `.pinned` after a successful commit, and `restore --list` marks it `PINNED`.
 - **Retention: others roll off after the most recent 10, configurable via
-  `@canopy_backup_keep`. [planned, unscheduled]** Nothing prunes anything today.
-  `@canopy_backup_keep` does not exist, and restore points accumulate without bound:
-  one per `canopy install`, and one per `canopy restore` as well, because restore
-  records its own bytes before overwriting them.
+  `@canopy_backup_keep`. [planned, unscheduled]** Nothing prunes anything today;
+  restore points accumulate, one per install, adapter install and restore.
 
   **Warning for whoever implements this.** Pruning is not "delete the oldest
   directories". Restore is replayed newest first, and each row is guarded by comparing
@@ -355,226 +481,350 @@ Rules:
   that state: the older rows see neither their `pre` nor their `post`, treat the file
   as user-edited, and keep it. The pinned pre-install point is still on disk and still
   says it is reachable, while `restore --all` can no longer reach it, which is exactly
-  the guarantee in §5.4 failing quietly. Whatever retention ends up being, it has to
-  reason about the chain rather than about ages, and the restore proof has to cover a
-  pruned middle.
+  the guarantee in §5.4 failing quietly. Retention has to reason about the chain
+  rather than about ages, and the restore proof has to cover a pruned middle.
 - **Restore reports on the result, and a config tmux dislikes is a warning, not a
-  failure.** (**Correction.** This bullet used to read "restore verifies before
-  declaring success", with a non-zero exit when the restored config failed to parse.
-  The code deliberately went the other way and the code is right: what restore promises
-  is the user's original bytes, and plugin-dependent or version-dependent configs
-  routinely carry lines a bare tmux rejects. Exiting non-zero there reported a
-  byte-perfect restore as a failure, directly beneath a summary reading `0 reverted, 0
-  kept`. Non-zero is reserved for a restore that did not restore.) The restored config
-  is still loaded on a throwaway socket from a bare environment and tmux's verdict is
-  printed, so "your config is back" is never confused with "your config parses".
-- **`~/.config/canopy/` is never touched** beyond the files a transaction recorded, so
-  a user's own overrides in there survive a `restore --all` and keep the directory
-  alive with them. `--purge` is a separate, explicit act **[planned, unscheduled]**:
-  there is no `--purge` flag, because there is no `uninstall` for it to modify.
-- Restore ends by printing what was reverted, what was kept, and where the kept things are.
+  failure.** What restore promises is the user's original bytes, and plugin-dependent
+  or version-dependent configs routinely carry lines a bare tmux rejects. The restored
+  config is still loaded on a throwaway socket and tmux's verdict printed, so "your
+  config is back" is never confused with "your config parses". Non-zero is reserved
+  for a restore that did not restore (2d9a01e).
+- **Directories come back too.** Every directory a transaction created is removed,
+  deepest first, with `rmdir`, so a virgin home returns to virgin while a directory
+  holding the user's own files survives on its own merits (2d9a01e).
+- **`~/.config/canopy/` is never touched** beyond what a transaction recorded.
+  `--purge` **[planned, unscheduled]**: there is no `uninstall` for it to modify.
 
 | Command | Does | State |
 |---|---|---|
-| `canopy restore` | roll back the last transaction | ships |
-| `canopy restore --list` | show restore points; marks the pinned pre-install point | ships. Also marks `FAILED` and `INCOMPLETE` points |
-| `canopy restore --to <id>` | roll back to a specific point | ships. Rolls back that transaction and every eligible one newer than it |
+| `canopy restore` | roll back the most recent eligible transaction | ships |
+| `canopy restore --list` | show restore points, newest first | ships. Marks `PINNED`, `FAILED` and `INCOMPLETE` |
+| `canopy restore --to <id>` | roll back that transaction and every eligible one newer | ships |
 | `canopy restore --all` | back to pre-install state | ships |
-| `canopy uninstall` | `restore --all` + remove store and state (`--purge` also removes user overrides) | **[planned, unscheduled]** Removal is `canopy restore --all` followed by removing the three directories by hand; `docs/01` spells out the order and why it matters |
+| `canopy uninstall` | `restore --all` plus removing store and state | **[planned, unscheduled]** Removal is `canopy restore --all` then removing the directories by hand, in the order `docs/01` gives |
 
 ### 5.6 CI proves it
 
-**Status: partly planned.** The update and migration steps below are **[planned,
-unscheduled]**, because neither exists. What runs on every push is install →
-`restore --all`, in two harnesses: `test/restore-proof.sh` records a full `find`
-listing including directories plus a sha256 per file across three scenarios (a home
-with real tmux, ghostty and starship configs; an empty home; a `tmux.conf` that is a
-symlink to a target outside `$HOME`), on Ubuntu and macOS, and `test/smoke/run.sh` runs
-six container scenarios in each of Debian and Alpine from a bare environment.
-`docs/06` describes both.
+Three workflows, split by cost (94435f6):
 
-An e2e job builds an image with a pre-existing `tmux.conf`, `ghostty/config` +
-`themes/`, and `starship.toml`, records their hashes, then: install → update → run
-migrations → `restore --all` → asserts every original file is byte-identical and no
-canopy artifact remains. A restore promise that is not in CI stops being true around
-version three.
+- **CI**, on every push: `test/lint.sh` (shellcheck at a pinned version, since an
+  unpinned one drifted between machines (a18f8a4), and shfmt) and the bats suite,
+  319 tests, on Ubuntu and macOS with tmux from mise.
+- **Restore proof**, on main, pull requests and on demand: `test/restore-proof.sh`
+  records a full `find` listing plus a sha256 per file, installs, runs `restore --all`,
+  and requires both to be identical, across three scenarios (a home with real tmux,
+  ghostty and starship configs; an empty home; a `tmux.conf` symlinked outside
+  `$HOME`), on Ubuntu and macOS with the **system** tmux. That choice is load-bearing:
+  it is the job that caught the 3.4 failure (b303aae).
+- **Smoke**, on the same triggers: `test/smoke/run.sh` builds Debian (dash) and Alpine
+  (BusyBox) images and runs eight scenarios in each from a bare environment, §11.
+
+All three cancel superseded runs. The e2e job that also runs `update` and migrations
+between install and `restore --all` **[planned, unscheduled]**, since neither exists.
+A restore promise that is not in CI stops being true around version three.
 
 ---
 
 ## 6. Agent layer
 
-**Status: M2 implemented, M3 planned.** `canopy agent report`, the adapter contract,
-the Claude Code adapter and the `@canopy_agent_*` pane options exist, and are what
-makes a pane resumable by its own session id. What does not exist yet is everything
-this section says about *visibility*: the window and session rollups, the seen and
-unseen distinction, the status line formats, the `40-agents` layer, and the three
-further adapters. All of that is M3.
+**Status: partly built.** M2 needed agents to identify themselves and to report their
+session ids, so the report path, the adapter contract, pane identity and one adapter
+exist. Everything this section says about *visibility* is M3.
 
 ### 6.1 Model
 
 Five states, normalized across agents: `idle · working · blocked · completed · exited`.
 
 ```
-canopy agent report <state> [--source <agent>] [--session-id <id>]
+canopy agent report <state> [--source <adapter-id>] [--session-id <id>]
+canopy agent install <adapter-id>
 ```
 
 **Pane targeting needs no plumbing:** tmux exports `TMUX_PANE` into the pane
-environment; the agent inherits it; the agent's hooks inherit it from the agent. When
-the agent runs outside tmux (IDE, desktop, web), `TMUX_PANE` is absent and the adapter
-exits 0 silently.
+environment, the agent inherits it, and the agent's hooks inherit it from the agent
+(see the one unverified row in §3). With no `TMUX_PANE` (IDE, desktop, web) or a pane
+that has gone away, `report` exits 0 and writes nothing: a failing hook interrupts the
+user's work to report something they cannot act on. A state outside the five is a bug
+in the adapter and is reported as one.
 
 ### 6.2 Write path
 
 ```
-tmux set -p @canopy_agent_{state,source,session,ts}    # pane
-tmux set -w @canopy_rollup "…"                          # precomputed rollup
-tmux refresh-client -S                                  # push
+tmux display-message -p -t $TMUX_PANE '#{@canopy_agent_state}|#{@canopy_agent_source}|#{@canopy_agent_session}'
+# only if any of the three changed:
+tmux set -p @canopy_agent_state … \; set -p @canopy_agent_source … \; set -p @canopy_agent_session … \; set -p @canopy_agent_ts …
 ```
 
-**Debounce:** `report` reads the current value first and returns without writing when
-unchanged, so chatty hooks (`PostToolUse`) cost one `tmux show` and nothing else. Only
-real transitions touch rollups or refresh.
+- **Debounce on all three values, not just the state.** Chatty hooks (`PostToolUse`)
+  cost one read and no write. The session id is part of the comparison because
+  `/clear` delivers a new id with an `idle` state into a pane that is usually already
+  `idle`; debouncing on state alone would resume that pane into the wrong
+  conversation after a reboot (c15f63e). The timestamp moves only on a write.
+- **An option the caller does not name keeps its value**, so a hook that knows only a
+  state cannot blank the id an earlier hook recorded.
+- **The session id is constrained where it enters**, to letters, digits, `.`, `_`,
+  `:` and `-`, and `|` is refused in both values. The id goes on to `respawn-pane`,
+  which hands it to `/bin/sh`, and into resurrect's save file, which is replayed at
+  boot; only control characters were rejected before (94435f6).
+- Window and session rollups (`tmux set -w @canopy_rollup`) and the `refresh-client
+  -S` push **[planned, M3]**.
 
 ### 6.3 Render path
 
-Pane borders use `#{@canopy_agent_state}`; window status uses `#{@canopy_rollup}`;
-status-right uses the session rollup. **Pure format expansion, zero forks per redraw.**
-The single aggregator `#()` budget is reserved for things that genuinely need sampling
-(battery, pet).
+**Status: planned, M3.** Pane borders from `#{@canopy_agent_state}`, window status
+from the rollup, status-right from the session rollup, all pure format expansion with
+zero forks per redraw. The status line that ships renders no agent state.
+
+The single aggregator `#()` budget the design reserved for sampled segments is spent:
+`canopy status` renders network, battery, date and clock in one process, reading every
+option it needs in one tmux call (1aa91b4, 6ef854a). Agent state must therefore arrive
+as `#{…}` tokens, never as a second `#()`.
 
 ### 6.4 Attention
 
-`blocked` and `completed` set `@canopy_agent_unseen`; `set-hook -g pane-focus-in`
-clears it (requires `focus-events on`). `canopy agent next` jumps to the oldest unseen
-pane.
+**Status: planned, M3.** `blocked` and `completed` set `@canopy_agent_unseen`; `set-hook
+-g pane-focus-in` clears it (`focus-events on` is already in `00-core`). `canopy agent
+next` jumps to the oldest unseen pane.
 
 ### 6.5 Adapters
 
-Each adapter manifest declares five things; everything above that line is
-agent-agnostic:
+The design listed five things an adapter manifest would declare. The contract that was
+built is six `key=value` keys, all required, validated in full on every read
+(56c5d6d); `docs/adapters/contract.md` is the authority:
 
-1. events → states map
-2. how to read the agent's session id
-3. resume command template
-4. whether it can pre-pin an id at launch
-5. how to detect unsent input in a pane (for `adopt`; UI-shaped, so it belongs here)
+| Key | Is |
+|---|---|
+| `id` | the adapter's name, which must equal its directory name |
+| `command` | the program name that marks a pane as running this agent |
+| `resume_template` | the command that resumes a conversation; must contain `{id}` |
+| `can_pin_at_launch` | `yes` or `no`: whether the agent accepts a caller-chosen id at launch |
+| `launch_template` | the command that starts a conversation at a chosen id; `{id}` required when pinnable, empty otherwise |
+| `detect_draft` | a command with `{pane}` reporting unsent input: exit 0 yes, 1 no, anything else undetermined; empty means it cannot answer |
 
-| Agent | Transport | Notable mapping |
-|---|---|---|
-| Claude Code | `hooks.json` + sh reporter | `Notification` matcher splits `permission_prompt`→blocked, `idle_prompt`→completed |
-| opencode | TS plugin | `session.idle`→completed, `tool.execute.before`→working |
-| pi | TS extension | `agent_settled`→completed, `ask_user` tool→blocked |
-| codex | `notify` + hooks → sh bridge | `PermissionRequest`→blocked |
+What moved out of the manifest: the events → states map lives in the adapter's own
+hook configuration (`hooks.json`, with `{report}` standing for the reporter's path),
+because that is the agent's format, not canopy's. `report.sh` turns one event into one
+`canopy agent report`, pulling the session id from the hook payload with `sed` so the
+per-tool-use path needs no `jq`. `install.sh` is sourced by `canopy agent install`
+inside a transaction and must call `canopy_agent_own` on every path before writing it.
 
-### 6.6 Capability tiers
+`$CANOPY_CONFIG/adapters/` is searched before `$CANOPY_STORE/adapters/`. Placeholder
+substitution is literal and never passes through a shell, so a manifest cannot run
+anything by being read.
 
-| Tier | Agent can | Mechanism | Result |
+| Agent | Transport | Notable mapping | State |
 |---|---|---|---|
-| 1 | choose an id at launch **and** resume by id | pre-pin `--session-id` in argv | same conversation |
-| 2 | resume by id only | canopy rewrites the saved command at save time | same conversation |
-| 3 | neither | nothing to rewrite | agent restarts in the right cwd; conversation lost |
+| Claude Code | `hooks.json` + sh reporter | `SessionStart`→idle; `UserPromptSubmit`, `PreToolUse`, `PostToolUse`→working; `Notification` split by matcher, `permission_prompt`→blocked, `idle_prompt`→completed; `Stop`→completed; `SessionEnd`→exited | ships, tier 1 |
+| opencode | TS plugin | `session.idle`→completed, `tool.execute.before`→working | **[planned, M3]** |
+| pi | TS extension | `agent_settled`→completed, `ask_user` tool→blocked | **[planned, M3]** |
+| codex | `notify` + hooks → sh bridge | `PermissionRequest`→blocked | **[planned, M3]** |
 
-Claude Code is tier 1 (verified). Other tiers are recorded in each adapter's manifest
-when that adapter is built. `canopy agent install <agent>` prints the tier at install
-time; `doctor` shows the matrix for installed agents. **Users only meet the tiers of
-agents they opted into.**
+### 6.6 Pane identity
+
+Not in the original design; `reboot-check`, `adopt` and the save strategy all need to
+answer "which agent is in this pane", and two answers would be two chances to disagree,
+so `lib/pane.sh` is the one lookup (c15f63e).
+
+- It **never** reads `pane_current_command` (§3).
+- It reads the pane's start command first, and falls back to the command line of the
+  process in front of the pane's shell, read the way resurrect's `ps` strategy reads it
+  but with an exact parent-pid match rather than a prefix. Both are needed: a pane
+  started *as* the agent has no such child, and a pane resurrect restored has no start
+  command, because resurrect types the command into a shell.
+- The program name is taken from that command line skipping interpreters (`sh`, `bash`,
+  `env`, …), options and `VAR=value` assignments, so a script agent and
+  `env FOO=1 claude` are both recognised. It is matched against each adapter's
+  `command`.
+- It ignores `@canopy_agent_source`, which outlives the process that reported it.
+
+This is why persistence needs a `ps` that can report a parent: without one no restored
+pane is ever recognised, and every save records a shell.
+
+### 6.7 Capability tiers
+
+| Tier | Agent can | Where canopy gets the id | Result |
+|---|---|---|---|
+| 1 | choose an id at launch **and** resume by id | the pane's own launch command, read back through `launch_template`, or the agent's report | same conversation, from the moment the pane starts |
+| 2 | resume by id only | the agent's report | same conversation, once the agent has reported |
+| 3 | neither | nowhere | the pane comes back as a shell in the right directory; conversation lost |
+
+The design had tier 2 meaning "canopy rewrites the saved command at save time". That
+turned out to be the mechanism for every tier: the save strategy rewrites the command
+for any pane whose id it can find (§7.1). The tier only decides when the id becomes
+findable. Reading it from the launch command came from a real machine, where sixteen
+hand-started Claude panes had never reported and still carried their uuids in plain
+sight (5aaac53).
+
+Tier 3 has no representation in the contract, since `resume_template` must contain
+`{id}`; such an agent gets no adapter. Claude Code is tier 1. `canopy agent install`
+prints the tier, read off the manifest; a tier matrix in doctor **[planned, M3]**.
 
 ---
 
 ## 7. Persistence
 
-**Status: planned, M2.** Nothing in this section is implemented. resurrect and
-continuum are not vendored, there is no save-command strategy, and neither
-`canopy reboot-check` nor `canopy adopt` exists. Installing canopy today does not make
-a single pane survive a reboot.
+Built in M2. `docs/07` is the user's view of the same chain.
 
 ### 7.1 Flow
 
-1. **Launch:** adapter reports `idle` + session id → `@canopy_agent_session`.
-2. **Save:** continuum triggers resurrect's save; canopy's vendored **save-command
-   strategy** maps `PANE_PID → pane_id`, reads the pane's session option and the
-   adapter's resume template, and writes the pane's saved command as
-   `<resume template>`. Uniform for tiers 1 and 2. Launch-time pinning remains as a
-   second channel, not the only one.
-3. **Reboot:** tmux dies; agent state dies with it (derived, repopulated on restart).
-4. **Boot:** continuum restores; panes come back running their resume commands;
-   adapters repopulate state.
+1. **Launch.** The agent starts in a pane. Its hooks report `idle` and a session id
+   into the pane's options. A tier 1 agent started as `claude --session-id <uuid>` is
+   identifiable even if its hooks never fire.
+2. **Save.** continuum fires resurrect's save every five minutes (0dbf66b; upstream's
+   fifteen made `reboot-check` truthfully report a twelve-minute-old pane as not saved,
+   which is correct and useless). resurrect asks canopy's save-command strategy,
+   `plugins/strategies/canopy_save_command.sh`, what to record for each pane. The
+   strategy maps the pid to a pane in one `list-panes` call, takes the adapter from
+   the pane's report or from pane identity (§6.6), takes the id from the report or,
+   failing that, from the command the pane is running (resume template first, then
+   launch template), and prints the adapter's resume command behind a stagger wrapper
+   (§7.4). A command carrying a control character is not written, because the save
+   file is tab-delimited (495df6b).
+
+   **Everything else comes out as resurrect would have written it.** Every path that
+   is not a recognised agent pane, every error path included, execs resurrect's own
+   `ps` strategy on the same pid. The lookup runs inside a command substitution, so a
+   `canopy_die` in any library ends the lookup and not the save. nvim panes use
+   resurrect's `session` strategy, so they return holding their buffers.
+3. **Replay list.** At load, `canopy_restore_processes.sh` sets `@resurrect-processes`
+   from the installed adapters, two entries per command: the plain name, and
+   `"~^sleep [0-9.]* && <command>"` for the same command behind the wrapper. Without
+   it resurrect never typed a resume command back (d0c7bea). A command that is not a
+   plain word is dropped rather than quoted harder, because resurrect `eval`s the
+   value. No adapters means an empty value and resurrect's defaults untouched.
+4. **Reboot.** tmux dies; agent state dies with it.
+5. **Boot.** `@continuum-restore on` is set by canopy (ab37bf0). continuum replays the
+   save when the server starts, provided it started within the restore delay, no
+   other tmux server is running and continuum's halt file is absent. Each pane comes
+   back as a shell into which resurrect types `sleep <n> && <agent> --resume <id>`.
+6. **After restore.** The pane carries no canopy options, because resurrect saves
+   none. Every reader recovers the id from the command the pane is running, so
+   `reboot-check` reports the pane correctly and the next save keeps the stagger
+   wrapper instead of falling back to a verbatim save (621e10e).
 
 ### 7.2 `canopy reboot-check`
 
-Pre-flight: every agent pane, whether it will survive, and why not if not. Answering
-"is it safe to reboot?" *before* the reboot is the product promise in one command.
+Pre-flight: every agent pane, whether it will survive, and why not if not. Every
+verdict is read off resurrect's save file, never off what canopy meant to save
+(1bc0255). A pane counts as resuming only when the saved line, with the wrapper
+stripped, equals its adapter's resume command for the id the pane carries now.
+
+| Verdict | Means |
+|---|---|
+| `will resume` | the save holds this pane's resume command for its current id, and says whether the id came from the report or the pane's command |
+| `will restart without its conversation` | no id anywhere, no usable resume command, or the save records something else |
+| `not saved yet` | the save exists but does not have this pane |
+| `will not be restored` | the restore path itself is off, so no pane comes back however well it was saved |
+
+Exit 0 when every agent pane resumes or no server is running, 1 when any will not,
+2 when persistence is misconfigured (§5.3). It also says when another tmux server is
+running, using continuum's own arithmetic rather than a better one, because continuum
+refuses to restore while one is and that is where a developer's machine stops
+behaving like CI.
+
+Two choices differ from the plan. A missing autosave hook in `status-right` is not an
+exit-2 condition, since continuum skips the hook whenever a second server runs and a
+pre-flight that cries wolf is worse than none; doctor checks the live hook instead.
+Recency uses the newer of the save file's mtime and continuum's timestamp, because
+resurrect leaves the file untouched when nothing changed. With `@resurrect-dir` unset,
+it falls back to resurrect's own default location rather than canopy's state
+directory, so it gives a true answer on a machine that has not switched yet (5aaac53).
 
 ### 7.3 `canopy adopt`
 
-Brings panes lacking a pinned id under management. Guards, derived from a real
-incident during design:
+Restarts a hand-started agent pane in place, with `respawn-pane -k`, as its own resume
+command, so the id sits in the pane's command where it survives anything that forgets
+the option (bccb88f). Guards, derived from a real incident during design:
 
-- dry-run by default
-- skip panes whose agent is mid-task
-- skip panes holding **unsent input** (adapter-provided detection)
-- **fail closed** when it cannot tell
+- dry run by default; `--yes` acts
+- restart only when the agent reported `idle` or `completed`
+- restart only when `detect_draft` says **no** unsent input; undetermined counts as yes
+- never invent an id: a pane with no id is named and left alone, because minting one
+  would pin the pane by throwing its conversation away
+- a pane already running its resume command counts as adopted, so a second run never
+  kills what the first fixed
+
+`detect_draft` runs with `</dev/null` so a probe cannot swallow the pane list, and must
+contain `{pane}` or it answers once for every pane (94435f6).
 
 The motivating case: a pane held an unsent draft containing two pasted images, which
-exist only in that process. Naive adoption destroys them.
+existed only in that process. Naive adoption destroys them.
+
+**Consequence worth stating:** `adopt` skips every Claude Code pane, because Claude
+Code cannot answer the draft question. Since 5aaac53 it is also rarely needed for
+Claude Code: a pane started with `--session-id` is resumable without adoption.
 
 ### 7.4 Restore ergonomics
 
-- **Stagger.** Ten agents spawning at once on boot is a thundering herd. The resume
-  wrapper takes a small jitter; configurable; default on.
-- **Autostart layer (opt-in, off by default).** A launchd agent / systemd user unit
-  starts the tmux server at login so restore happens before a terminal is opened.
+- **Stagger.** Ten agents spawning at once on boot is a thundering herd, so each saved
+  resume command carries `sleep <n> && ` in front of it (19fab4e). The delay is
+  derived from the pane pid multiplied by a prime, modulo the bound, so it is stable
+  across saves and panes opened together (consecutive pids) are spread out.
+  `@canopy_resume_stagger_ms` sets the bound, default 1000; `0` emits no wrapper; a
+  value with a leading zero falls back to the default rather than being read as octal
+  (6ef854a). The wrapper is a plain `sleep` and `&&` because a human may read or retype
+  it from the save file, and its three shapes (emit, strip, match) live together in
+  `lib/resume.sh`.
+- **Autostart layer (opt-in, off by default). [planned, M6]** A launchd agent or
+  systemd user unit starts the tmux server at login, so restore happens before a
+  terminal is opened. Until then, restore happens when tmux is next started.
 
 ### 7.5 Vendoring
 
-resurrect and continuum are pinned by commit under `plugins/` and loaded directly; no
-TPM. The save-command strategy ships alongside. If resurrect insists on resolving
-strategy files from inside its own tree, the vendor step applies a **recorded** patch
-so updates re-apply it deterministically.
+resurrect and continuum are copied into `plugins/` at the commits in `plugins/VERSIONS`
+by `plugins/vendor.sh`: no submodule, no plugin manager, no fetch at runtime (c5eb8e2).
+`vendor.sh` strips what git cannot reproduce (a nested `.gitignore`, `.gitmodules`,
+resurrect's dangling symlinks into a submodule), so what it writes is what a checkout
+reproduces, and `plugins/CHECKSUMS` records a digest per tree that doctor compares
+against the bytes on disk.
+
+The design allowed for a recorded patch against resurrect's tree. None was needed:
+`@resurrect-save-command-strategy` is set to `../../strategies/canopy_save_command`,
+which climbs out of resurrect's tree to `plugins/strategies/`, so upstream's bytes stay
+exactly as vendored and CHECKSUMS keeps meaning "unmodified". A value that ever stops
+resolving costs the agent rewrite, not the save, since resurrect falls back to `ps`. A
+test builds the same path by hand and runs a real save through resurrect, so a pin that
+breaks either half fails in CI (495df6b). `plugins/patches/` stays unwritten until a pin
+needs it.
+
+`30-plugins.conf` sets every option the plugins read (`@resurrect-dir`,
+`@continuum-restore`, `@continuum-save-interval 5`, `@resurrect-strategy-nvim session`,
+the strategy, the process list, the moved keys) **before** loading them, then loads
+each through `if-shell` on `bash` and the script being present.
 
 ---
 
 ## 8. UI surfaces
 
-**Status: planned, M4.** No surface in the table below exists. M1 binds no key at all,
-so there is no `prefix :` and no `prefix ?`. The one part that ships is the index the
-surfaces will read.
+**Status: planned, M4.** The palette, which-key menu and key search do not exist, and
+`prefix :` and `prefix ?` are tmux's own. What ships is what they will read: the key
+table (§4.4), its cheatsheet (`canopy keys --print`), and the command index.
 
 | Surface | Trigger | Renderer | Backed by |
 |---|---|---|---|
-| Command palette | `prefix :` | `display-popup -E` + fzf, preview shows usage/args/examples | generated command index |
-| Which-key menu | `prefix ?` | native `display-menu`, grouped | same index |
-| Key search | `prefix ?` → `/` | fzf over live `list-keys` ⨝ index descriptions | live tmux + index |
+| Command palette | `prefix :` | `display-popup -E` + fzf, preview shows usage/args/examples | `commands.tsv` |
+| Which-key menu | `prefix ?` | native `display-menu`, grouped | `keys.tsv` and `commands.tsv` |
+| Key search | `prefix ?` → `/` | fzf over live `list-keys` ⨝ table descriptions | live tmux + table |
 
-- **The index is generated once**, at install/update, to
-  `~/.local/state/canopy/commands.tsv`, by scanning `bin/canopy-*` metadata headers.
-  The palette reads one file rather than stat-ing thirty. This ships: `canopy index`
-  writes it, `canopy install` runs it, and nothing reads it yet.
-- **Key search merges live `list-keys` with the index** so user-added bindings appear
-  too, with their command as the description. A cheatsheet that omits the user's own
-  keys is worse than none. **[planned, M4]**
-- **`doctor` cross-references** `list-keys` against the index: bindings without
-  metadata are an error for ours, an FYI for the user's. **[planned, M4]** Doctor
-  prints a line saying this check is stubbed until the key table exists. What it does
-  check today is the other direction: every `bin/canopy-*` carrying a
-  `canopy:summary=` header.
-- **Extensions come free:** any executable named `canopy-*` on `PATH` with the metadata
-  header is picked up by the dispatcher, appears in the palette, and can be bound. No
-  manifest, no registry, no install step. **[planned, M4, and deliberately so]** The
-  dispatcher scans and dispatches only `$CANOPY_STORE/bin/canopy-*`.
-
-  **Decision: this stays planned rather than being implemented now.** It is not the
-  small change it looks like. Dispatching whatever is named `canopy-*` anywhere on
-  `PATH` turns every writable `PATH` entry into a way to put code behind a canopy
-  subcommand name, with no precedence rule written down for a name that exists in both
-  places. It also changes what the index is: `commands.tsv` is generated from the
-  store, is identical on every machine with the same clone, and `doctor` reports a
-  command in it that lacks a summary header as a defect. Scanning `PATH` makes the
-  file machine-specific and makes doctor complain about a third party's script. Both
-  questions belong with the surfaces that consume the index, which is M4, and none of
-  it is needed before then. `docs/02` states the M1 behaviour plainly.
+- **The index is generated**, at install, to `$CANOPY_STATE/commands.tsv`, by scanning
+  the first 40 lines of each `bin/canopy-*` for `canopy:summary=`, `group`, `args` and
+  `examples` headers. It ships; nothing reads it yet. doctor reports a command missing
+  its summary header, and a test requires every `bin/canopy-*` to have a section in
+  `docs/02` (d28d587).
+- **Key search merges live `list-keys` with the table** so user-added bindings appear
+  too. **[planned, M4]**
+- **doctor cross-references** `list-keys` against the table. **[planned, M4]** It
+  already compares table rows with the generated layer.
+- **Extensions on `PATH`.** Any `canopy-*` executable on `PATH` with the metadata
+  header being dispatched, indexed and bindable **[planned, M4, and deliberately
+  so]**. The dispatcher scans and dispatches only `$CANOPY_STORE/bin/canopy-*`.
+  Dispatching anything on `PATH` turns every writable `PATH` entry into a way to put
+  code behind a canopy subcommand name, with no precedence rule for a name in both
+  places, and makes `commands.tsv` machine-specific and doctor's summary check
+  complain about a third party's script. Both questions belong with the surfaces that
+  consume the index.
 - **Fallbacks follow the layer rule:** without fzf, palette and search degrade to
-  `display-menu`, which is built into tmux. **[planned, M4]**
+  `display-menu`. **[planned, M4]**
 - **Not copied from fut:** the 700 ms prefix-pause auto-hint. tmux has no prefix-timeout
   hook; emulating it needs a custom key-table with a timer, whose failure mode is a
   wedged key-table. `prefix ?` is one keystroke and always correct.
@@ -583,20 +833,28 @@ surfaces will read.
 
 ## 9. Themes
 
-**Status: planned, M5.** No theme ships, `themes/` does not exist, there is no
-`canopy theme` command, no `60-theme.conf` and no `current/theme` pointer.
+**Status: planned, M5.** No theme ships, and there is no `themes/`, `canopy theme`,
+`60-theme.conf` or `current/theme`.
+
+What is built is the seam a theme needs in tmux (1aa91b4). Every colour in the status
+line is read from an `@theme_*` option (`bg`, `fg`, `blue`, `yellow`, `green`, `grey`,
+`muted`, `red`) and the pill end-caps from `@pill_l` and `@pill_r`, so a theme repaints
+the bar by setting options, with nothing to re-source. A test caps the number of hex
+literals the status layer may hold, because a literal is a colour no theme can reach.
+`@theme_red` is deliberately not meant to be repainted: a warning colour that changes
+with the theme has to be learned twice.
 
 A theme is **data**, not code:
 
 ```
 themes/<name>/
   colors.toml      # canonical palette
-  tmux.conf        # generated-from-palette tmux fragment
+  tmux.conf        # the @theme_* options, generated from the palette
   ghostty          # a ghostty theme file, dropped into the user's themes dir
   starship.toml    # overlay merged into the generated starship config
 ```
 
-- `~/.local/state/canopy/current/theme` is a symlink to the active theme.
+- `$CANOPY_STATE/current/theme` is a symlink to the active theme.
 - `canopy theme set <name>` regenerates `60-theme.conf`, rewrites generated artifacts,
   and reloads tmux.
 - Per-app theming is opt-in (§5.2) and additive.
@@ -608,54 +866,55 @@ themes/<name>/
 
 ## 10. Worktree / project layer
 
-**Status: planned, M6.** The layer does not exist: no `50-worktree.conf`, no session
-naming, no picker binds. What ships is the half of the last bullet that M1 can honour:
+**Status: planned, M6.** No `50-worktree.conf`, no session naming, no picker binds.
 `canopy caps` records whether `wt` is present, and `canopy doctor` reports the worktree
-layer as dormant when it is not.
+layer as dormant when it is not. Windows are already named for their directory
+(`00-core`), which is the window-level half of this.
 
 - **No fourth level.** tmux has session/window/pane; the worktree directory on disk is
   the fourth level already, and `wt` (worktrunk) owns it. fut needs a workspace tier
   because nothing else tells it what a checkout is; canopy does not.
 - **Context is a name prefix, not a container.** Sessions named
   `work/acme-api@feat-login` let the picker group by context and by project without
-  inventing a hierarchy. This preserves cockpit-style life-area contexts without
-  conflicting with project/worktree identity.
+  inventing a hierarchy.
 - The layer activates only when `wt` is present; otherwise dormant, reported by doctor.
 
 ---
 
 ## 11. Milestones and how they are verified
 
-Each milestone ends in a capability a person can exercise on a machine that has
-never seen canopy. The acceptance gate is a container run from a bare
-environment, not a passing unit suite.
+Each milestone ends in a capability a person can exercise on a machine that has never
+seen canopy. The acceptance gate is a container run from a bare environment, not a
+passing unit suite.
 
-This rule exists because it was learned the hard way. Milestone 1 reached 93
-green tests, a passing restore proof and a clean lint while its installed
-configuration loaded nothing at all on a real machine: the entry point expanded
-`$CANOPY_STORE` from the tmux server's environment, which nothing set, and every
-test exported that variable before invoking anything. The verification ran in a
-richer environment than any user will ever have.
+This rule was learned the hard way. Milestone 1 reached 93 green tests, a passing
+restore proof and a clean lint while its installed configuration loaded nothing at all
+on a real machine: the entry point expanded `$CANOPY_STORE` from the tmux server's
+environment, which nothing set, and every test exported that variable first
+(510f803). The verification ran in a richer environment than any user will ever have.
 
-**The rule: every verification runs the shipped artifact through the same entry
-path a user does, from a bare environment.** Unit tests may use conveniences for
-speed. The acceptance scenario may not: no `CANOPY_*` exported, no helper
-sourced, no store path assumed.
+**The rule: every verification runs the shipped artifact through the same entry path a
+user does, from a bare environment.** Unit tests may use conveniences for speed. The
+acceptance scenario may not: no `CANOPY_*` exported, no helper sourced, no store path
+assumed.
 
-**Status: M1 is built and its container scenario passes. M2 to M6 are not started.**
-The table is a plan for everything below the first row.
+Two corollaries came later. A container is not a real machine either: the fixes in
+621e10e, 5aaac53 and 9a243c6 came from pointing canopy at a working machine with live
+agent panes, hundreds of resurrect saves and a TPM config, none of which a container has.
+And a check has to be proven able to fail: scenario 7 was run with every saved resume
+repointed at a conversation that did not exist, and caught it (ef20852).
 
-| M | Capability delivered | Acceptance scenario, in a container, bare environment |
-|---|---|---|
-| **M1** | A machine can adopt canopy and shed it again without a trace **[shipped]** | Virgin box: install, start tmux with no `CANOPY_*` set, canopy's config is loaded, `doctor` exits 0, `restore --all` returns `find $HOME` to its original listing. Box with pre-existing tmux, ghostty and a **symlinked** `tmux.conf`: same, and afterwards the symlink and its target are byte-identical |
-| **M2** | A reboot returns every agent pane to its own conversation **[shipped]** | Container with agent panes, kill the server to simulate the reboot, restart, each pane resumes its own session id, and `reboot-check` said so beforehand. Scenarios 7 and 8 in `test/smoke/scenarios.sh`, on Debian and Alpine |
-| **M3** | Agent state is visible across four agents without polling | Drive the report CLI as each adapter does, pane and window state reflect it, and the status line performs no subprocess per redraw |
-| **M4** | Every command is reachable by key, CLI and palette from one definition | Open the palette and the which-key menu inside a container tmux, the generated index matches `list-keys` exactly |
-| **M5** | A theme repaints tmux and, where opted in, ghostty and starship | `theme set` changes all opted-in surfaces, and the M1 scenario still passes afterwards |
-| **M6** | Worktrees are navigable as peers, and agents can return before first attach | Worktree sessions group by project, optional autostart brings panes back with no terminal opened |
+| M | Capability delivered | Acceptance scenario, in a container, bare environment | State |
+|---|---|---|---|
+| **M1** | A machine can adopt canopy and shed it again without a trace | Scenarios 1 to 6 in `test/smoke/scenarios.sh`, on Debian and Alpine: a virgin machine; existing tmux, ghostty and starship configs; a symlinked `tmux.conf`; idempotence and recovery; a dangling symlink at the entry point; two user accounts on one machine. Each installs, starts tmux with no `CANOPY_*`, checks the config loaded and `doctor`, and requires `restore --all` to return the home byte-identical | **done.** Harness ed31528; last fixes 76e9fc0, d128d66; manual b06eedd |
+| **M2** | A reboot returns every agent pane to its own conversation | Scenarios 7 and 8: three panes, `reboot-check` says all three will resume **before** anything is killed, the save holds each resume command, and after kill and restart each transcript reads `launch <id>` then `resume <id>`; and a pane that never reports an id is named by `reboot-check` (exit 1) without costing the other pane its conversation | **done.** ef20852, with the manual in 0554a17. Fixes found afterwards on a real machine: 621e10e, 5aaac53, 9a243c6 |
+| **M3** | Agent state is visible across four agents without polling | Drive the report CLI as each adapter does, pane and window state reflect it, and the status line performs no subprocess per redraw beyond the one aggregator | **partly built.** The report CLI, pane options and the Claude Code adapter shipped with M2 (c15f63e), and the status line with its single aggregator (1aa91b4). Planned: rollups, formats, attention, three more adapters, `40-agents` |
+| **M4** | Every command is reachable by key, CLI and palette from one definition | Open the palette and the which-key menu inside a container tmux; the key table matches `list-keys` exactly | **partly built.** The key table and generator (2e87036) and the command index. Planned: palette, which-key, key search, the `list-keys` cross-check |
+| **M5** | A theme repaints tmux and, where opted in, ghostty and starship | `theme set` changes all opted-in surfaces, and the M1 scenarios still pass afterwards | **planned.** The `@theme_*` seam exists (1aa91b4) |
+| **M6** | Worktrees are navigable as peers, and agents can return before first attach | Worktree sessions group by project; optional autostart brings panes back with no terminal opened | **planned** |
 
-Ordering rationale: M1 makes everything else safe to install; M2 is the wedge and
-the only urgent part; M3 makes M2's `adopt` trivial by supplying session ids as a
+Ordering rationale: M1 makes everything else safe to install; M2 is the wedge and the
+only urgent part; M3 makes `adopt` largely unnecessary by supplying session ids as a
 byproduct; M4 to M6 are experience layers that assume the skeleton.
 
 A milestone is not complete when its code exists and its unit tests pass. It is
@@ -667,21 +926,37 @@ complete when its container scenario passes.
 
 | Risk | Mitigation |
 |---|---|
-| opencode/pi capability tiers unknown | Recorded per adapter in M3; degrade to tier 3 with an explicit install-time message. Does not block M1–M2. |
-| resurrect resolves strategy files only inside its own tree | Vendored tree + recorded patch re-applied on update (§7.5). |
-| Shell at scale (~30 scripts) | One command per file, metadata headers, bats tests per script, shellcheck in CI. Sidecar only behind a measured trigger (D5). |
-| Third-party config integration ages badly across app versions | Opt-in per app, additive-only, capability-gated, and covered by the restore CI proof. The starship 1.26 finding is the archetype. |
-| `TMUX_PANE` inheritance not yet confirmed per agent | Verify during each adapter's work; fallback is an explicit env var injected by a launch wrapper. |
+| opencode, pi and codex capability tiers unknown | Recorded per adapter in M3; an agent that cannot resume by id gets no adapter and says so. |
+| The save strategy depends on resurrect interpolating a relative path unsanitised (§7.5) | Pinned by a test that runs a real save through resurrect; a pin that changes it fails in CI, and the failure mode is losing the rewrite, not the save. |
+| `TMUX_PANE` inheritance not yet observed with a real Claude Code hook | The manual check in `docs/07`. Tier 1 panes stay resumable without any report (5aaac53). Fallback is an explicit variable injected by a launch wrapper. |
+| Persistence silently needs `bash` and a parent-reporting `ps` | doctor reports both, probing `ps` by running it (a54eb1c). canopy installs neither. |
+| continuum refuses to restore while another tmux server runs | `reboot-check` says so; it is a property of the next boot, not a misconfiguration. |
+| `adopt` can never act on a Claude Code pane | Documented; launch-time ids make it largely unnecessary. |
+| Restore points accumulate without bound | Retention is designed but unbuilt, and carries the chain hazard in §5.5. |
+| `extended-keys always` breaks option-as-alt in some macOS ghostty builds | Written beside the setting; `user.conf` can revert it. |
+| The `%if` version guard compares numerically and will read tmux 3.10 as below 3.5 | Written beside it; revisit when tmux 3.10 exists. |
+| Shell at scale (eleven commands, seven libraries, about 4,000 lines) | One command per file, metadata headers, bats per script, pinned shellcheck and shfmt in CI. Sidecar only behind a measured trigger (D5). |
+| Third-party config integration ages badly across app versions | Opt-in per app, additive-only, capability-gated, and covered by the restore proof. The starship 1.26 finding is the archetype. |
 | Theme scope creep into other apps' executable config | Hard scope limit in §9. |
 
 ---
 
 ## 13. Non-goals
 
-- Rewriting or replacing tmux.
+- Rewriting or replacing tmux. (Replacing it is grofe's job, §14.)
 - A plugin manager, plugin registry, or extension store.
 - Managing system packages. canopy **declares and diagnoses** dependencies; it never
   installs them. It ships a `~/.config/mise/conf.d/canopy.toml` fragment; the user's
   own mise config is never edited.
 - Theming programs whose configuration is executable code (v1).
 - Supporting agents that expose no lifecycle events (they simply get no agent layer).
+
+---
+
+## 14. Relationship to grofe
+
+canopy is the tmux-based path to this experience and the requirements source for
+[grofe](https://github.com/morrieinmaas/grofe), a multiplexer written in Rust: what
+canopy had to build around tmux, and what verifying it taught, is what grofe has to do
+natively. canopy remains the path until grofe reaches parity with it, and then gains a
+grofe backend.

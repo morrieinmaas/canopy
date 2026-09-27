@@ -67,7 +67,7 @@ sleep 0.514 && claude --resume 3f2a…
 | `@continuum-restore` | `on` | canopy. Load-bearing: `canopy doctor` exits 2 if the config your machine loads leaves it off, and `canopy reboot-check` refuses to judge panes while it is off. |
 | `@resurrect-dir` | `$CANOPY_STATE/resurrect` | canopy, so saves live under canopy's own state rather than in your home |
 | `@resurrect-save-command-strategy` | canopy's strategy | canopy |
-| `@continuum-save-interval` | not set, so continuum's own default of 15 minutes applies | upstream |
+| `@continuum-save-interval` | `5` minutes, where continuum's own default is 15, because the interval is the window in which a reboot loses a conversation | canopy |
 | `@canopy_resume_stagger_ms` | not set, so the default bound of 1000ms applies. `0` disables the wrapper exactly. | you, if you want |
 
 Anything you set in `$CANOPY_CONFIG/user.conf` wins, because the entry point
