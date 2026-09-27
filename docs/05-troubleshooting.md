@@ -73,10 +73,13 @@ Every plugin key falls back to a tmux default: `prefix s` opens tmux's own
 `choose-tree` instead of the session picker you installed, and `prefix y` copies
 nothing. TPM itself reports no error and exits 0.
 
-`canopy doctor` names it:
+`canopy doctor` names it, and exits 1 for it: nothing load-bearing is broken, since
+canopy vendors what it needs either way, but something you asked for is not happening.
 
 ```
   TPM @plugin lines in user.conf: WARNING, TPM cannot see them
+    it greps one level below the entry point and user.conf is two, so it loads nothing
+    declare them in one option instead: set -g @tpm_plugins 'owner/repo owner/repo'
 ```
 
 TPM does not read tmux options to discover plugins. It **greps config files** for
@@ -180,6 +183,8 @@ Exit 1 is warnings only. The machine works. Common causes:
 | `installed entry point: none, canopy is not installed` | `canopy install` |
 | `INCOMPLETE transaction, interrupted before it committed` | See the next section |
 | `missing summary header: canopy-<name>` | A command file in `bin/` lacks a `# canopy:summary=` line. Only relevant if you added one |
+| `TPM @plugin lines in user.conf: WARNING, TPM cannot see them` | Declare them in `@tpm_plugins` instead. See the TPM section above |
+| `key table present, layer not yet generated` | `canopy keys` |
 
 Exit 1 is also what canopy uses for a hard refusal: an unknown argument, a relative
 `XDG_*` or `CANOPY_*` path, or a runtime directory it will not use.
@@ -283,7 +288,7 @@ canopy: unknown command "instal" (did you mean "install"?)
 
 Exit 2. `canopy help` lists everything that exists. M1 has six subcommands; anything
 from the design document describing agents, themes, the palette or worktrees is not
-implemented yet. See the milestone table in the [README](../README.md#status-milestone-1-of-six).
+implemented yet. See the milestone table in the [README](../README.md#status-milestones-1-and-2-of-six).
 
 ---
 
