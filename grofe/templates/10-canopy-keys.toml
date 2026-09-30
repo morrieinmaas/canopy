@@ -1,0 +1,10 @@
+requires = "grofe >= 0.1"
+
+# canopy's key table, on grofe. Every row comes from tmux/keys.tsv, the one
+# declaration of every binding canopy ships, and carries the row's name,
+# group and description, so grofe's list-keys and any palette read them.
+# grofe/keys.tsv names the rows whose grofe command differs, and the rows
+# grofe does not bind, each with its reason.
+
+[keys.prefix]
+# @keys@
