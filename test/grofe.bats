@@ -61,11 +61,11 @@ absent() {
   # A key TOML cannot take bare is quoted; a command holding double quotes
   # is a literal string, so it reaches grofe byte for byte.
   grep -qF '"|" = { cmd = '\''split-window -h -c "#{pane_current_path}"'\''' "$keys"
-  # Every row but the two grofe does not bind, counted as the generator
-  # counts: blank rows and comments skipped.
+  # Every row, counted as the generator counts: blank rows and comments
+  # skipped.
   rows="$(awk '!/^#/ && NF { n++ } END { print n + 0 }' "$CANOPY_STORE/tmux/keys.tsv")"
   bound="$(grep -c ' = { cmd = ' "$keys")"
-  [ "$bound" -eq $((rows - 2)) ]
+  [ "$bound" -eq "$rows" ]
 }
 
 @test "a semicolon stays grofe's command separator, not an argument" {
@@ -80,12 +80,13 @@ absent() {
   absent -q 'source-file' "$out/10-canopy-keys.toml"
 }
 
-@test "save-now and restore-now are not bound, and say why" {
+@test "save-now and restore-now run the vendored resurrect scripts, as on tmux" {
   canopy-grofe generate --out "$out"
-  absent -q '^M-[sr] ' "$out/10-canopy-keys.toml"
-  absent -q 'resurrect/scripts' "$out/10-canopy-keys.toml"
-  grep -q '^# save-now (M-s) is not bound on grofe: ' "$out/10-canopy-keys.toml"
-  grep -q '^# restore-now (M-r) is not bound on grofe: ' "$out/10-canopy-keys.toml"
+  grep -qF "M-s = { cmd = 'run-shell \"\$CANOPY_STORE/plugins/tmux-resurrect/scripts/save.sh\"'," "$out/10-canopy-keys.toml"
+  grep -qF "M-r = { cmd = 'run-shell \"\$CANOPY_STORE/plugins/tmux-resurrect/scripts/restore.sh\"'," "$out/10-canopy-keys.toml"
+  grep -q 'name = "save-now"' "$out/10-canopy-keys.toml"
+  grep -q 'name = "restore-now"' "$out/10-canopy-keys.toml"
+  absent -q "is not bound on grofe" "$out/10-canopy-keys.toml"
 }
 
 @test "an override naming no key table row is refused, and nothing is written" {
