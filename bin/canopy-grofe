@@ -1,0 +1,211 @@
+#!/bin/sh
+# canopy:summary=Generate and check canopy's config for grofe
+# canopy:group=core
+# canopy:args=generate [--out <dir>] | validate [--user <file>] [<dir>]
+# canopy:examples=canopy grofe generate --out ~/.config/grofe/conf.d
+# shellcheck disable=SC2154,SC2153  # CANOPY_STORE is exported by lib/env.sh's canopy_paths
+set -eu
+
+: "${CANOPY_STORE:=$(cd "$(dirname "$0")/.." && pwd)}"
+# shellcheck source=../lib/env.sh
+# shellcheck disable=SC1091
+. "$CANOPY_STORE/lib/env.sh"
+# shellcheck source=../lib/grofe.sh
+# shellcheck disable=SC1091
+. "$CANOPY_STORE/lib/grofe.sh"
+canopy_paths
+
+# canopy's grofe backend. grofe reads TOML, in layers: config.toml, then
+# conf.d/*.toml in lexical order, then user.toml. canopy owns only its own
+# conf.d fragments, NN-canopy-*.toml, and this is what writes them.
+#
+# One fragment per file in grofe/templates/, under the same name, so adding
+# a layer is adding a template. A template is TOML as it will load, with one
+# exception: a line reading exactly `# @keys@` becomes the key table,
+# generated from tmux/keys.tsv, the same table `canopy keys` reads for tmux,
+# so the two backends cannot bind different keys. grofe/keys.tsv names the
+# rows whose grofe command differs.
+#
+# The fragments are also checked in under grofe/conf.d/, generated, so a
+# checkout carries them and a test can tell when they fall behind.
+
+canopy_grofe_templates="$CANOPY_STORE/grofe/templates"
+canopy_grofe_table="$CANOPY_STORE/tmux/keys.tsv"
+canopy_grofe_overrides="$CANOPY_STORE/grofe/keys.tsv"
+
+canopy_grofe_usage() {
+  canopy_die "usage: canopy grofe generate [--out <dir>] | validate [--user <file>] [<dir>]"
+}
+
+# The [keys.prefix] entries, one per key table row, on stdout. A malformed
+# row is refused rather than emitted, as `canopy keys` refuses it.
+canopy_grofe_keys() {
+  awk -F'\t' '
+    # A TOML string: basic quotes, else literal quotes, else escaped.
+    function str(s) {
+      if (s !~ /["\\]/) return "\"" s "\""
+      if (s !~ /\047/) return "\047" s "\047"
+      gsub(/\\/, "\\\\", s)
+      gsub(/"/, "\\\"", s)
+      return "\"" s "\""
+    }
+    function key(k) {
+      if (k ~ /^[A-Za-z0-9_-]+$/) return k
+      return str(k)
+    }
+    FNR == 1 { file++ }
+    /^#/ { next }
+    NF == 0 { next }
+    file == 1 {
+      if (NF != 3 || $1 == "" || $2 == "" || $3 == "") {
+        printf "canopy-grofe: %s line %d: expected 3 filled, tab separated columns\n", FILENAME, FNR > "/dev/stderr"
+        bad = 1
+        next
+      }
+      over[$1] = $2
+      why[$1] = $3
+      next
+    }
+    NF != 6 {
+      printf "canopy-grofe: %s line %d: expected 6 tab separated columns, got %d\n", FILENAME, FNR, NF > "/dev/stderr"
+      bad = 1
+      next
+    }
+    $1 == "" || $2 == "" || $3 == "" || $4 == "" || $5 == "" || $6 == "" {
+      printf "canopy-grofe: %s line %d: every column must be filled\n", FILENAME, FNR > "/dev/stderr"
+      bad = 1
+      next
+    }
+    {
+      if (seen_key[$2]++) {
+        printf "canopy-grofe: %s line %d: key %s is declared twice\n", FILENAME, FNR, $2 > "/dev/stderr"
+        bad = 1
+        next
+      }
+      if (seen_name[$1]++) {
+        printf "canopy-grofe: %s line %d: name %s is declared twice\n", FILENAME, FNR, $1 > "/dev/stderr"
+        bad = 1
+        next
+      }
+      rows[++n] = $0
+    }
+    END {
+      for (name in over) {
+        if (!seen_name[name]) {
+          printf "canopy-grofe: grofe/keys.tsv names %s, which tmux/keys.tsv does not declare\n", name > "/dev/stderr"
+          bad = 1
+        }
+      }
+      if (bad) exit 1
+      for (i = 1; i <= n; i++) {
+        split(rows[i], f, "\t")
+        cmd = f[4]
+        if (f[1] in over) {
+          if (over[f[1]] == "-") {
+            printf "# %s (%s) is not bound on grofe: %s.\n", f[1], f[2], why[f[1]]
+            continue
+          }
+          printf "# %s: %s.\n", f[1], why[f[1]]
+          cmd = over[f[1]]
+        }
+        line = key(f[2]) " = { cmd = " str(cmd) ", desc = " str(f[6]) ", group = " str(f[5]) ", name = " str(f[1])
+        if (f[3] ~ /(^| )-r( |$)/) line = line ", repeat = true"
+        print line " }"
+      }
+    }
+  ' "$canopy_grofe_overrides" "$canopy_grofe_table"
+}
+
+canopy_grofe_generate() {
+  canopy_grofe_out="${XDG_CONFIG_HOME:-$HOME/.config}/grofe/conf.d"
+  while [ "$#" -gt 0 ]; do
+    case "$1" in
+      --out)
+        [ "$#" -ge 2 ] || canopy_grofe_usage
+        canopy_grofe_out="$2"
+        shift 2
+        ;;
+      *) canopy_die "canopy-grofe: unknown argument: $1" ;;
+    esac
+  done
+
+  [ -d "$canopy_grofe_templates" ] ||
+    canopy_die "canopy-grofe: no templates at $canopy_grofe_templates"
+  [ -f "$canopy_grofe_table" ] ||
+    canopy_die "canopy-grofe: no key table at $canopy_grofe_table"
+  [ -f "$canopy_grofe_overrides" ] ||
+    canopy_die "canopy-grofe: no grofe key overrides at $canopy_grofe_overrides"
+
+  mkdir -p "$canopy_grofe_out"
+  canopy_grofe_block="$canopy_grofe_out/.canopy-keys.$$"
+  canopy_grofe_tmp=""
+  trap 'rm -f "$canopy_grofe_block" ${canopy_grofe_tmp:+"$canopy_grofe_tmp"}' EXIT
+  # shellcheck disable=SC2310  # the function is one awk, whose status is the answer
+  canopy_grofe_keys >"$canopy_grofe_block" ||
+    canopy_die "canopy-grofe: the key table has errors, nothing was written"
+
+  for canopy_grofe_t in "$canopy_grofe_templates"/*.toml; do
+    [ -f "$canopy_grofe_t" ] || continue
+    canopy_grofe_name="${canopy_grofe_t##*/}"
+    canopy_grofe_dest="$canopy_grofe_out/$canopy_grofe_name"
+    # Beside the target and moved into place, so a grofe reading conf.d
+    # mid-write never sees half a fragment.
+    canopy_grofe_tmp="$canopy_grofe_dest.tmp.$$"
+    {
+      # shellcheck disable=SC2016  # the backticks are text, not a command
+      printf '# Generated by `canopy grofe generate` from grofe/templates/%s.\n' "$canopy_grofe_name"
+      printf '# Do not edit: edit the template, or tmux/keys.tsv, and regenerate.\n'
+      printf '\n'
+      awk -v block="$canopy_grofe_block" '
+        $0 == "# @keys@" {
+          while ((getline l < block) > 0) print l
+          close(block)
+          next
+        }
+        { print }
+      ' "$canopy_grofe_t"
+    } >"$canopy_grofe_tmp"
+    mv "$canopy_grofe_tmp" "$canopy_grofe_dest"
+    canopy_grofe_tmp=""
+  done
+
+  # canopy removes its own files and nothing else: a canopy fragment whose
+  # template is gone would otherwise keep loading.
+  for canopy_grofe_f in "$canopy_grofe_out"/[0-9][0-9]-canopy-*.toml; do
+    [ -f "$canopy_grofe_f" ] || continue
+    [ -f "$canopy_grofe_templates/${canopy_grofe_f##*/}" ] || rm -f "$canopy_grofe_f"
+  done
+}
+
+canopy_grofe_validate_cmd() {
+  canopy_grofe_dir="$CANOPY_STORE/grofe/conf.d"
+  canopy_grofe_user=""
+  while [ "$#" -gt 0 ]; do
+    case "$1" in
+      --user)
+        [ "$#" -ge 2 ] || canopy_grofe_usage
+        canopy_grofe_user="$2"
+        shift 2
+        ;;
+      -*) canopy_die "canopy-grofe: unknown argument: $1" ;;
+      *)
+        canopy_grofe_dir="$1"
+        shift
+        ;;
+    esac
+  done
+  if [ -n "$canopy_grofe_user" ]; then
+    canopy_grofe_validate "$canopy_grofe_dir" "$canopy_grofe_user"
+  else
+    canopy_grofe_validate "$canopy_grofe_dir"
+  fi
+}
+
+[ "$#" -gt 0 ] || canopy_grofe_usage
+canopy_grofe_sub="$1"
+shift
+case "$canopy_grofe_sub" in
+  generate) canopy_grofe_generate "$@" ;;
+  validate) canopy_grofe_validate_cmd "$@" ;;
+  *) canopy_grofe_usage ;;
+esac
