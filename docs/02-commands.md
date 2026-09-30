@@ -559,8 +559,8 @@ removes any other `NN-canopy-*.toml` there, so a layer canopy stopped shipping
 stops loading. It touches no other file. The key fragment is generated from
 `tmux/keys.tsv`, the same table `canopy keys` reads, with each row's name,
 group and description; `grofe/keys.tsv` lists the rows whose grofe command
-differs (`canopy-reload` runs grofe's `reload`) and the rows grofe does not
-bind (`save-now`, `restore-now`), each with its reason. The same fragments are
+differs (`canopy-reload` runs grofe's `reload`), or that grofe does not bind
+(none today), each with its reason. The same fragments are
 checked in under `grofe/conf.d/`; after editing a template or the key table,
 regenerate them with `canopy grofe generate --out grofe/conf.d`.
 
