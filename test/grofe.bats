@@ -121,7 +121,7 @@ absent() {
       next
     }
     file > 1 && /^\[/ { inside = ($0 == "[user-options]") ; next }
-    file > 1 && inside && /^[a-z_]+ = "/ {
+    file > 1 && inside && /^[a-z_-]+ = "/ {
       name = $0; sub(/ = .*/, "", name)
       value = $0; sub(/^[^"]*"/, "", value); sub(/"$/, "", value)
       seen++
@@ -129,8 +129,66 @@ absent() {
       else if (want[name] != value) { printf "%s: %s, options.tsv says %s\n", name, value, want[name]; bad = 1 }
     }
     END { if (!seen) { print "no user options read"; bad = 1 } exit bad }
-  ' "$CANOPY_STORE/tmux/options.tsv" "$out/00-canopy-core.toml" "$out/20-canopy-status.toml"
+  ' "$CANOPY_STORE/tmux/options.tsv" "$out/00-canopy-core.toml" "$out/20-canopy-status.toml" "$out/30-canopy-plugins.toml"
   [ "$status" -eq 0 ] || { printf '%s\n' "$output"; false; }
+}
+
+# A copy of the store to break things in.
+store_copy() {
+  store="$BATS_TEST_TMPDIR/store"
+  cp -R "$CANOPY_STORE" "$store"
+}
+
+@test "a key table saved with CRLF line endings generates the same fragment" {
+  canopy-grofe generate --out "$out"
+  store_copy
+  awk '{ printf "%s\r\n", $0 }' "$CANOPY_STORE/tmux/keys.tsv" >"$store/tmux/keys.tsv"
+  awk '{ printf "%s\r\n", $0 }' "$CANOPY_STORE/grofe/keys.tsv" >"$store/grofe/keys.tsv"
+  CANOPY_STORE="$store" run "$store/bin/canopy-grofe" generate --out "$BATS_TEST_TMPDIR/crlf"
+  [ "$status" -eq 0 ]
+  cmp "$out/10-canopy-keys.toml" "$BATS_TEST_TMPDIR/crlf/10-canopy-keys.toml"
+}
+
+@test "a control character in a column is refused, and nothing is written" {
+  store_copy
+  printf 'bell\tX\t-\tdisplay-message "\a"\tmisc\tRings\n' >>"$store/tmux/keys.tsv"
+  CANOPY_STORE="$store" run "$store/bin/canopy-grofe" generate --out "$out"
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"control character"* ]]
+  [ -z "$(ls -A "$out" 2>/dev/null)" ]
+}
+
+@test "a command holding both quote kinds becomes an escaped basic string grofe reads" {
+  store_copy
+  printf 'both-quotes\tX\t-\tdisplay-message "it'"'"'s \\\\ here"\tmisc\tBoth quotes\n' >>"$store/tmux/keys.tsv"
+  CANOPY_STORE="$store" run "$store/bin/canopy-grofe" generate --out "$out"
+  [ "$status" -eq 0 ]
+  grep -qxF 'X = { cmd = "display-message \"it'"'"'s \\\\ here\"", desc = "Both quotes", group = "misc", name = "both-quotes" }' "$out/10-canopy-keys.toml"
+  need_grofe
+  run "${CANOPY_GROFE:-grofe}" show-config --file "$out/10-canopy-keys.toml" keys.prefix.X
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"it's"* ]]
+}
+
+@test "generate refuses a fragment grofe cannot load, and leaves conf.d as it was" {
+  need_grofe
+  canopy-grofe generate --out "$out"
+  before="$(cat "$out"/*.toml | cksum)"
+  store_copy
+  printf 'stauts.left = "x"\n' >>"$store/grofe/templates/00-canopy-core.toml"
+  CANOPY_STORE="$store" run "$store/bin/canopy-grofe" generate --out "$out"
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"00-canopy-core.toml"* ]]
+  [[ "$output" == *"nothing was written"* ]]
+  [ "$(cat "$out"/*.toml | cksum)" = "$before" ]
+  [ -z "$(ls -A "$out" | grep -v '^[0-9][0-9]-canopy-')" ]
+}
+
+@test "without a grofe to ask, generate writes and says the fragments are unchecked" {
+  CANOPY_GROFE=/nonexistent/grofe run canopy-grofe generate --out "$out"
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"written unchecked"* ]]
+  [ -f "$out/10-canopy-keys.toml" ]
 }
 
 @test "both pill glyphs are byte-for-byte intact in the status fragment" {
@@ -140,11 +198,60 @@ absent() {
   [[ "${output//[[:space:]]/}" == *"ee82b4"* ]]
 }
 
-@test "the plugin layer loads no plugin" {
+@test "the plugin layer sets every resurrect and continuum option 30-plugins.conf sets, to its value" {
   canopy-grofe generate --out "$out"
-  grep -qx 'load-commands = \[\]' "$out/30-canopy-plugins.toml"
-  grep -v '^#' "$out/30-canopy-plugins.toml" >"$BATS_TEST_TMPDIR/body"
-  absent -q '@resurrect\|@continuum\|run-shell' "$BATS_TEST_TMPDIR/body"
+  plugins="$out/30-canopy-plugins.toml"
+  run awk '
+    FNR == 1 { file++ }
+    # tmux: set -g @name value, the value quoted either way or not at all.
+    file == 1 && /^set -g @(resurrect|continuum)-/ {
+      name = $3
+      value = $0
+      sub(/^set -g @[^ ]+ /, "", value)
+      if (value ~ /^".*"$/ || value ~ /^\047.*\047$/) value = substr(value, 2, length(value) - 2)
+      want[substr(name, 2)] = value
+      next
+    }
+    file == 2 && /^\[/ { inside = ($0 == "[user-options]"); next }
+    file == 2 && inside && /^[a-z-]+ = "/ {
+      name = $1
+      value = $0
+      sub(/^[^"]*"/, "", value)
+      sub(/"$/, "", value)
+      got[name] = value
+    }
+    # A path the tmux layer expands, set by a load command that grofe expands.
+    file == 2 && /^  \047set-option -g @/ {
+      line = $0
+      sub(/^  \047set-option -g @/, "", line)
+      name = line
+      sub(/ .*/, "", name)
+      value = line
+      sub(/^[^"]*"/, "", value)
+      sub(/"\047,$/, "", value)
+      got[name] = value
+    }
+    END {
+      for (n in want) {
+        seen++
+        if (!(n in got)) { printf "%s is not set\n", n; bad = 1 }
+        else if (got[n] != want[n]) { printf "%s: [%s], 30-plugins.conf says [%s]\n", n, got[n], want[n]; bad = 1 }
+      }
+      if (seen != 7) { printf "read %d options from 30-plugins.conf, want 7\n", seen; bad = 1 }
+      exit bad
+    }
+  ' "$CANOPY_STORE/tmux/conf.d/30-plugins.conf" "$plugins"
+  [ "$status" -eq 0 ] || { printf '%s\n' "$output"; false; }
+}
+
+@test "the plugin layer loads no plugin yet, and names where the loader goes" {
+  canopy-grofe generate --out "$out"
+  plugins="$out/30-canopy-plugins.toml"
+  grep -q 'ten vendored' "$plugins"
+  # canopy_restore_processes.sh is there, commented out for the loader.
+  grep -q '^  # """if-shell .*canopy_restore_processes.sh' "$plugins"
+  grep -v '^ *#' "$plugins" >"$BATS_TEST_TMPDIR/body"
+  absent -q 'run-shell\|resurrect.tmux\|continuum.tmux' "$BATS_TEST_TMPDIR/body"
 }
 
 @test "validate: the generated tree loads in grofe with no errors" {
