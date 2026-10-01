@@ -272,7 +272,7 @@ resume 22222222-3333-4444-5555-666666666666" ]
   # Points $TMUX at a socket path where nothing is listening rather than
   # unsetting it: an unset $TMUX falls through to the default socket,
   # which on a developer's machine is their real session.
-  TMUX="$BATS_TEST_TMPDIR/no-such-socket,0,0"
+  TMUX="$TMUX_TMPDIR/no-such-socket,0,0"
   export TMUX
   run canopy-adopt
   [ "$status" -eq 0 ]
