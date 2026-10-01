@@ -80,9 +80,9 @@ absent() {
   absent -q 'source-file' "$out/10-canopy-keys.toml"
 }
 
-@test "save-now and restore-now run the vendored resurrect scripts, as on tmux" {
+@test "save-now runs canopy's save wrapper and restore-now resurrect's restore, as on tmux" {
   canopy-grofe generate --out "$out"
-  grep -qF "M-s = { cmd = 'run-shell \"\$CANOPY_STORE/plugins/tmux-resurrect/scripts/save.sh\"'," "$out/10-canopy-keys.toml"
+  grep -qF "M-s = { cmd = 'run-shell \"\$CANOPY_STORE/plugins/strategies/canopy_save.sh\"'," "$out/10-canopy-keys.toml"
   grep -qF "M-r = { cmd = 'run-shell \"\$CANOPY_STORE/plugins/tmux-resurrect/scripts/restore.sh\"'," "$out/10-canopy-keys.toml"
   grep -q 'name = "save-now"' "$out/10-canopy-keys.toml"
   grep -q 'name = "restore-now"' "$out/10-canopy-keys.toml"
