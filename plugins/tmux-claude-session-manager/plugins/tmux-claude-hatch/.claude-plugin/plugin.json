@@ -1,0 +1,10 @@
+{
+  "name": "tmux-claude-hatch",
+  "description": "Companion hooks for tmux-claude-hatch: ring the terminal bell when an agent needs you, and keep the picker's agent cache fresh.",
+  "version": "1.0.0",
+  "author": {
+    "name": "Takuya Matsuyama",
+    "email": "hi@craftz.dog"
+  },
+  "homepage": "https://github.com/craftzdog/tmux-claude-hatch"
+}
