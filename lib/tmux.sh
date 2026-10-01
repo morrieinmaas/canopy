@@ -91,6 +91,10 @@ canopy_tmux_bare() {
 # user's saved session onto a throwaway socket and start every agent in it
 # for the second before the socket is killed. Zero means continuum does
 # not consider this server freshly booted, which is the truth.
+#
+# @canopy_plugins off keeps the plugin loader from running any plugin on
+# the scratch server, for the same kind of reason: their loads write to
+# $HOME and /tmp, and validating must leave the home as it found it.
 canopy_tmux_validate() {
   conf="$1"
   if [ ! -f "$conf" ]; then
@@ -102,7 +106,7 @@ canopy_tmux_validate() {
     return 1
   fi
   sock="canopy-verify-$$"
-  err="$(canopy_tmux_bare "$tmux_bin" -L "$sock" -f /dev/null new-session -d 'sleep 600' \; set -g @continuum-restore-max-delay 0 \; source-file "$conf" 2>&1)"
+  err="$(canopy_tmux_bare "$tmux_bin" -L "$sock" -f /dev/null new-session -d 'sleep 600' \; set -g @continuum-restore-max-delay 0 \; set -g @canopy_plugins off \; source-file "$conf" 2>&1)"
   rc=$?
   canopy_tmux_bare "$tmux_bin" -L "$sock" kill-server >/dev/null 2>&1
   # kill-server stops the server and leaves its socket file behind, one per
@@ -186,7 +190,7 @@ canopy_tmux_loaded_option() {
   rc=0
   canopy_tmux_bare "$tmux_bin" -L "$sock" -f /dev/null \
     new-session -d 'sleep 600' \; \
-    set -g @continuum-restore-max-delay 0 \; \
+    set -g @continuum-restore-max-delay 0 \; set -g @canopy_plugins off \; \
     source-file "$conf" >"$out" 2>&1 || rc=$?
   if [ "$rc" -eq 0 ]; then
     canopy_tmux_bare "$tmux_bin" -L "$sock" \
