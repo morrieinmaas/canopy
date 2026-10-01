@@ -201,10 +201,12 @@ prefix_binding() {
 # One spot check per plugin, each something only that plugin's load does.
 loaded() {
   case "$1" in
-    # resurrect binds its save; tmux.conf and the grofe fragment then point
-    # continuum's saves at canopy's one-at-a-time wrapper.
+    # resurrect binds its restore (and its save, which tmux.conf and the
+    # grofe fragment then take back): M-s and continuum's saves run
+    # canopy's one-at-a-time wrapper.
     tmux-resurrect)
-      [[ "$(prefix_binding M-s)" == *"tmux-resurrect/scripts/save.sh"* ]] &&
+      [[ "$(prefix_binding M-r)" == *"tmux-resurrect/scripts/restore.sh"* ]] &&
+        [[ "$(prefix_binding M-s)" == *"plugins/strategies/canopy_save.sh"* ]] &&
         [ "$(srv show -gv @resurrect-save-script-path)" = "$CANOPY_STORE/plugins/strategies/canopy_save.sh" ]
       ;;
     # continuum swaps #{continuum_status} for a #(continuum_status.sh).
