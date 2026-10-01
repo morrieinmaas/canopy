@@ -378,3 +378,89 @@ MANIFEST
   [ "$status" -eq 0 ]
   [[ "$output" == "sleep "*" && fake-agent --resume ffffffff-1111-2222-3333-444444444444" ]]
 }
+
+# --- what a save costs -----------------------------------------------------
+#
+# resurrect runs this strategy once per pane, so a strategy that reads the
+# whole process table costs a save one full table scan per pane. On a busy
+# macOS machine `ps -ao ppid,args` took more than ten seconds a call, a save
+# over a few dozen panes outlasted continuum's interval, continuum started
+# the next one regardless (its lock covers only its own launcher), and the
+# saves piled up for hours, each one adding to the load that slowed the
+# rest. The strategy now asks only about the pane's own terminal.
+
+# scan_logging_ps
+# A `ps` first on PATH that records every call reading the whole table,
+# that is every call not scoped to a terminal (-t) or to pids (-p), and
+# then runs the real one, so what the strategy prints is unchanged.
+scan_logging_ps() {
+  local real
+  real="$(command -v ps)"
+  mkdir -p "$BATS_TEST_TMPDIR/psbin"
+  PS_SCANS="$BATS_TEST_TMPDIR/ps-scans"
+  : >"$PS_SCANS"
+  export PS_SCANS
+  cat >"$BATS_TEST_TMPDIR/psbin/ps" <<PS
+#!/bin/sh
+case " \$* " in
+  *" -t "* | *" -p "*) ;;
+  *) printf '%s\n' "\$*" >>"\$PS_SCANS" ;;
+esac
+exec "$real" "\$@"
+PS
+  chmod +x "$BATS_TEST_TMPDIR/psbin/ps"
+  PATH="$BATS_TEST_TMPDIR/psbin:$PATH"
+  export PATH
+}
+
+@test "an ordinary pane is answered without reading the whole process table" {
+  strategy_tmux_start
+  tmux -L "$sock" send-keys -t "$pane" "sleep 600" Enter
+  pid="$(pane_pid_of "$pane")"
+  wait_for_default_output "$pid"
+  expected="$("$default_strategy" "$pid")"
+  [ -n "$expected" ]
+  scan_logging_ps
+  run "$strategy" "$pid"
+  [ "$status" -eq 0 ]
+  [ "$output" = "$expected" ]
+  [ ! -s "$PS_SCANS" ]
+}
+
+@test "an idle shell is answered as nothing, without reading the whole process table" {
+  strategy_tmux_start
+  pid="$(pane_pid_of "$pane")"
+  [ -z "$("$default_strategy" "$pid")" ]
+  scan_logging_ps
+  run "$strategy" "$pid"
+  [ "$status" -eq 0 ]
+  [ "$output" = "" ]
+  [ ! -s "$PS_SCANS" ]
+}
+
+@test "an agent found through its running command costs no table scan either" {
+  install_fake_adapter
+  strategy_tmux_start
+  tmux -L "$sock" send-keys -t "$pane" "fake-agent --session-id aaaa-bbbb" Enter
+  wait_for_pane_command "$pane" fake-agent
+  mark_agent_pane "$pane" aaaa-bbbb
+  scan_logging_ps
+  run "$strategy" "$(pane_pid_of "$pane")"
+  [ "$status" -eq 0 ]
+  [ "$output" = "fake-agent --resume aaaa-bbbb" ]
+  [ ! -s "$PS_SCANS" ]
+}
+
+@test "a whole resurrect save over many panes reads the process table zero times" {
+  scan_logging_ps
+  strategy_tmux_start
+  tmux -L "$sock" set-environment -g PATH "$PATH"
+  tmux -L "$sock" set-environment -g PS_SCANS "$PS_SCANS"
+  tmux -L "$sock" source-file "$CANOPY_STORE/tmux/conf.d/30-plugins.conf"
+  for _ in 1 2 3 4 5 6 7 8; do tmux -L "$sock" new-window -d 'sleep 600'; done
+  tmux -L "$sock" send-keys -t "$pane" "sleep 600" Enter
+  tmux -L "$sock" run-shell "$CANOPY_STORE/plugins/tmux-resurrect/scripts/save.sh quiet"
+  wait_for_file "$CANOPY_STATE/resurrect/last"
+  [ "$(grep -c '^pane' "$CANOPY_STATE/resurrect/last")" -eq 9 ]
+  [ ! -s "$PS_SCANS" ]
+}
