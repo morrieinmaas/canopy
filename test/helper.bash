@@ -17,6 +17,33 @@ setup_canopy_env() {
   OPENSESSIONS_SKIP_BINARY_DOWNLOAD=1
   OPENSESSIONS_PID_FILE="$BATS_TEST_TMPDIR/opensessions.pid"
   export OPENSESSIONS_SKIP_BINARY_DOWNLOAD OPENSESSIONS_PID_FILE
+  # Nothing of the shell that ran bats reaches a test's tmux: not its
+  # server, not grofe's, and not the shared socket directory. Each test's
+  # sockets go in a private directory under the one setup_suite made, and
+  # canopy's own scratch servers (lib/tmux.sh) use the same one.
+  unset TMUX TMUX_PANE "${!GROFE@}"
+  if [ -z "${CANOPY_TEST_SOCKS:-}" ]; then
+    printf 'test/setup_suite.bash did not run\n' >&2
+    return 1
+  fi
+  TMUX_TMPDIR="$CANOPY_TEST_SOCKS/${BATS_SUITE_TEST_NUMBER:-0}"
+  (umask 077 && mkdir -p "$TMUX_TMPDIR")
+  CANOPY_SCRATCH_TMPDIR="$TMUX_TMPDIR"
+  export TMUX_TMPDIR CANOPY_SCRATCH_TMPDIR
+  # No plugin loads unless a test is about loading them
+  # (test/plugin_loader.bats), and canopy install provisions no release
+  # binary: it would reach the network and write into this checkout.
+  CANOPY_PLUGINS=off
+  CANOPY_ARTIFACTS="$BATS_TEST_TMPDIR/no-artifacts"
+  : >"$CANOPY_ARTIFACTS"
+  export CANOPY_PLUGINS CANOPY_ARTIFACTS
+}
+
+# load_persistence_plugins <socket-name>
+# Loads resurrect and continuum, and only those, into a test server, for
+# the suites that test persistence through them.
+load_persistence_plugins() {
+  tmux -L "$1" run-shell 'CANOPY_PLUGINS=on; . "$CANOPY_STORE/lib/plugins.sh"; canopy_load_plugins tmux-resurrect tmux-continuum'
 }
 
 # setup_canopy_home
@@ -68,7 +95,7 @@ bare_tmux() {
   bin="$(command -v tmux)"
   (
     unset CANOPY_STORE CANOPY_CONFIG CANOPY_STATE CANOPY_RUNTIME
-    export TMUX_TMPDIR=/tmp
+    export TMUX_TMPDIR="$CANOPY_SCRATCH_TMPDIR"
     exec "$bin" "$@"
   )
 }
@@ -78,7 +105,7 @@ bare_tmux() {
 # leaves behind. The path is known because bare_tmux names TMUX_TMPDIR.
 bare_tmux_cleanup() {
   bare_tmux -L "$1" kill-server >/dev/null 2>&1 || true
-  rm -f "/tmp/tmux-$(id -u)/$1"
+  rm -f "$CANOPY_SCRATCH_TMPDIR/tmux-$(id -u)/$1"
 }
 
 # kill_tmux_server <socket-name>

@@ -53,13 +53,15 @@ canopy_tmux_version_ok() {
 # It is how milestone 1's macOS CI broke.
 #
 # TMUX_TMPDIR is named rather than inherited so the socket file's path is
-# known and can be removed afterwards.
+# known and can be removed afterwards. It is /tmp unless
+# CANOPY_SCRATCH_TMPDIR names another; the test suite names a private one,
+# so no scratch server it starts sits beside anyone's real sockets.
 canopy_tmux_bare() {
   canopy_tmux_bin="$1"
   shift
   (
     unset CANOPY_STORE CANOPY_CONFIG CANOPY_STATE CANOPY_RUNTIME
-    TMUX_TMPDIR=/tmp
+    TMUX_TMPDIR="${CANOPY_SCRATCH_TMPDIR:-/tmp}"
     export TMUX_TMPDIR
     exec "$canopy_tmux_bin" "$@"
   )
@@ -111,7 +113,7 @@ canopy_tmux_validate() {
   canopy_tmux_bare "$tmux_bin" -L "$sock" kill-server >/dev/null 2>&1
   # kill-server stops the server and leaves its socket file behind, one per
   # call; that is how roughly 900 of them piled up under /tmp/tmux-<uid>/.
-  rm -f "/tmp/tmux-$(id -u)/$sock"
+  rm -f "${CANOPY_SCRATCH_TMPDIR:-/tmp}/tmux-$(id -u)/$sock"
   # Anything tmux said counts as a failure, even when it exited 0.
   #
   # tmux does not report a sourced file's errors through the exit status
@@ -197,7 +199,7 @@ canopy_tmux_loaded_option() {
       show -gqv "$option" >"$out" 2>/dev/null || rc=$?
   fi
   canopy_tmux_bare "$tmux_bin" -L "$sock" kill-server >/dev/null 2>&1
-  rm -f "/tmp/tmux-$(id -u)/$sock"
+  rm -f "${CANOPY_SCRATCH_TMPDIR:-/tmp}/tmux-$(id -u)/$sock"
   if [ "$rc" -ne 0 ]; then
     rm -f "$out"
     return 1

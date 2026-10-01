@@ -178,7 +178,7 @@ bare_tmux() {
   shift
   (
     unset CANOPY_STORE CANOPY_CONFIG CANOPY_STATE CANOPY_RUNTIME
-    TMUX_TMPDIR=/tmp
+    TMUX_TMPDIR="${CANOPY_SCRATCH_TMPDIR:-/tmp}"
     export TMUX_TMPDIR
     exec "${bare_bin}" "$@"
   )
@@ -202,7 +202,7 @@ tmux_option() {
     bare_tmux "${tmux_bin}" -L "${tmux_sock}" show -gv "$2" || tmux_rc=$?
   fi
   bare_tmux "${tmux_bin}" -L "${tmux_sock}" kill-server >/dev/null 2>&1 || :
-  rm -f "/tmp/tmux-$(id -u)/${tmux_sock}"
+  rm -f "${CANOPY_SCRATCH_TMPDIR:-/tmp}/tmux-$(id -u)/${tmux_sock}"
   return "${tmux_rc}"
 }
 
@@ -587,7 +587,7 @@ rb() {
 in_pane() {
   ip_pane="$1"
   shift
-  env TMUX="${sock_path},0,0" TMUX_TMPDIR=/tmp TMUX_PANE="${ip_pane}" "$@"
+  env TMUX="${sock_path},0,0" TMUX_TMPDIR="${CANOPY_SCRATCH_TMPDIR:-/tmp}" TMUX_PANE="${ip_pane}" "$@"
 }
 
 # wait_for <seconds> <command...>
@@ -684,7 +684,7 @@ force_save() {
 # shellcheck disable=SC2310  # killing a server that is already gone is success here, not a reason to abort
 simulate_reboot() {
   rb kill-server >/dev/null 2>&1 || :
-  rm -f "/tmp/tmux-$(id -u)/${reboot_sock}"
+  rm -f "${CANOPY_SCRATCH_TMPDIR:-/tmp}/tmux-$(id -u)/${reboot_sock}"
   sleep 1
   bare_tmux "${tmux_bin}" -L "${reboot_sock}" \
     -f "${home}/.config/tmux/tmux.conf" new-session -d -s boot
@@ -799,7 +799,7 @@ done
 
 # shellcheck disable=SC2310  # killing a server that is already gone is success here
 rb kill-server >/dev/null 2>&1 || :
-rm -f "/tmp/tmux-$(id -u)/${reboot_sock}"
+rm -f "${CANOPY_SCRATCH_TMPDIR:-/tmp}/tmux-$(id -u)/${reboot_sock}"
 end_scenario
 
 # --- scenario 8: honest failure --------------------------------------------
@@ -883,7 +883,7 @@ check "the anonymous pane did not come back resumed into a conversation" no \
 
 # shellcheck disable=SC2310  # killing a server that is already gone is success here
 rb kill-server >/dev/null 2>&1 || :
-rm -f "/tmp/tmux-$(id -u)/${reboot_sock}"
+rm -f "${CANOPY_SCRATCH_TMPDIR:-/tmp}/tmux-$(id -u)/${reboot_sock}"
 end_scenario
 
 printf '\nSCENARIOS-COMPLETE %s\n' "${scenario_count}"
