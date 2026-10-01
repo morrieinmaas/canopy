@@ -1,0 +1,17 @@
+# Files written into a vendored tree after vendoring. The tree digest
+# (lib/plugins.sh, canopy_plugin_digest) leaves these out, so a tree a
+# plugin has run in, or canopy install has provisioned, still matches its
+# CHECKSUMS line. <name> <path relative to plugins/<name>>
+#
+# canopy install, from plugins/ARTIFACTS; doctor checks each against its
+# own sha256 there.
+opensessions bin/opensessions-sidebar
+opensessions bin/opensessions-server
+opensessions bin/lazydiff
+opensessions bin/.opensessions-version
+tmux-fzf-url bin/xre
+# tmux-which-key, on its first load: its config, copied from
+# config.example.yaml, and the menu it loads, copied from
+# plugin/init.example.tmux.
+tmux-which-key config.yaml
+tmux-which-key plugin/init.tmux

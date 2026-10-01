@@ -51,7 +51,6 @@
 @resurrect-save-command-strategy	../../strategies/canopy_save_command	layer	persistence	canopy's save strategy, as a path relative to resurrect's own strategies directory. This is what rewrites an agent pane's saved command into the one that resumes its conversation
 @resurrect-processes	from installed adapters	generated	persistence	Which saved commands resurrect is allowed to replay. Computed at load from the adapters on disk, because an adapter is a file a user adds rather than a name canopy knows in advance
 @canopy_resume_stagger_ms	1000	code	persistence	Upper bound in milliseconds on the wait put in front of each restored agent command, so ten panes do not launch ten agents at once. 0 turns it off. The default is in lib/resume.sh rather than a layer, because a save has nobody to report a bad value to
-@tmux-which-key-xdg-enable	1	layer	plugins	which-key writes its config under XDG_CONFIG_HOME and its built menu under XDG_DATA_HOME, not into its vendored tree, which doctor would then call modified
 @tmux-which-key-disable-autobuild	1	layer	plugins	which-key loads its prebuilt default menu. Its build imports a git submodule vendoring leaves out, so with autobuild on which-key fails to load at all
 @canopy_test_marker	shipped-default	layer	internal	Carries no behaviour. It is the probe that proves the core layer loaded and that user.conf overrides it
 @canopy_core_appended	1	layer	internal	Set once the core layer has appended its terminal settings, so re-sourcing the config does not append them a second time

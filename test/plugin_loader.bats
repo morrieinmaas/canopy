@@ -5,9 +5,11 @@ load helper
 # 30-plugins.conf on tmux and from the grofe plugin fragment's
 # load-commands, over the ten vendored plugins.
 #
-# Every server here runs on a private socket in a short scratch directory,
-# with a scratch $HOME and XDG tree, and loads from a copy of the store, so
-# no plugin can write into this checkout or into anyone's real home. The
+# Every server here runs on a private socket in the suite's private socket
+# directory (test/setup_suite.bash), with a scratch $HOME and XDG tree, and
+# loads from a copy of the store, so no plugin can write into this
+# checkout or into anyone's real home. The rest of the suite loads no
+# plugin (CANOPY_PLUGINS=off, test/helper.bash); this file does. The
 # tmux cases use a tmux 3.7b named by absolute path; the grofe cases need
 # a grofe binary ($CANOPY_GROFE) and are skipped without one.
 #
@@ -22,20 +24,15 @@ setup() {
   setup_canopy_home
   XDG_STATE_HOME="$HOME/.local/state"
   export XDG_STATE_HOME
-  # tmux-which-key resolves its XDG directories with realpath, which needs
-  # them to exist, as they do in any real home.
-  mkdir -p "$XDG_CONFIG_HOME" "$XDG_DATA_HOME" "$XDG_STATE_HOME"
+  mkdir -p "$XDG_CONFIG_HOME" "$XDG_STATE_HOME"
+  unset CANOPY_PLUGINS
   . "$CANOPY_STORE/lib/env.sh"
   . "$CANOPY_STORE/lib/plugins.sh"
   real_store="$CANOPY_STORE"
-  # Socket paths have a length limit that BATS_TEST_TMPDIR can exceed.
-  socks="$(mktemp -d /tmp/cnp-tp3.XXXXXX)"
-  mkdir -p "$socks/tmux" "$socks/xdg"
-  chmod 700 "$socks/tmux" "$socks/xdg"
-  TMUX_TMPDIR="$socks/tmux"
-  XDG_RUNTIME_DIR="$socks/xdg"
-  export TMUX_TMPDIR XDG_RUNTIME_DIR
-  unset TMUX TMUX_PANE GROFE GROFE_PANE
+  # grofe keeps its sockets under XDG_RUNTIME_DIR.
+  XDG_RUNTIME_DIR="$TMUX_TMPDIR/xdg"
+  (umask 077 && mkdir -p "$XDG_RUNTIME_DIR")
+  export XDG_RUNTIME_DIR
   bin="$BATS_TEST_TMPDIR/bin"
   mkdir -p "$bin"
   PATH="$bin:$PATH"
@@ -47,7 +44,6 @@ teardown() {
   for s in $servers; do
     "${s%%:*}" -L "${s#*:}" kill-server >/dev/null 2>&1 || true
   done
-  rm -rf "$socks"
   return 0
 }
 
@@ -72,18 +68,29 @@ copy_store() {
   done
   CANOPY_STORE="$store"
   export CANOPY_STORE
+  # opensessions' binaries, as canopy install provisions them, so its entry
+  # point neither runs its installer nor writes /tmp/opensessions-install.log.
+  local b
+  for b in opensessions-sidebar opensessions-server lazydiff; do
+    printf '#!/bin/sh\nexit 0\n' >"$store/plugins/opensessions/bin/$b"
+    chmod +x "$store/plugins/opensessions/bin/$b"
+  done
+  sed -n 's/.*"version": *"\([^"]*\)".*/\1/p' "$store/plugins/opensessions/package.json" |
+    head -1 >"$store/plugins/opensessions/bin/.opensessions-version"
 }
 
-# What the plugins read before they load: claude-session-manager's keys
-# as the owner sets them (its defaults take yank's y and fzf-url's u), and
-# a status-right holding continuum's #{continuum_status}, which continuum
-# replaces on load whether or not another server is running, and no
-# continuum restore at start. On tmux they are set on the server before
-# canopy's tmux.conf is sourced, because user.conf is sourced after the
-# plugin layer and would set them too late.
-set_plugin_options() {
-  srv set -g @claude_launch_key a \; set -g @claude_list_key A \; \
-    set -g @continuum-restore-max-delay 0
+# What the plugins read before they load, set where a user sets them:
+# claude-session-manager's keys as the owner sets them (its defaults take
+# yank's y and fzf-url's u), no continuum restore at start, and a
+# status-right holding continuum's #{continuum_status}, which continuum
+# replaces on load whether or not another server is running.
+write_user_conf() {
+  cat >"$CANOPY_CONFIG/user.conf" <<'EOF'
+set -g @claude_launch_key 'a'
+set -g @claude_list_key 'A'
+set -g @continuum-restore-max-delay 0
+set -g status-right '#{continuum_status}'
+EOF
 }
 
 write_grofe_config() {
@@ -126,15 +133,11 @@ start() {
       ln -sf "$tmux37" "$bin/tmux"
       srv() { env -u TMUX -u TMUX_PANE "$tmux37" -L grofe-tp3-tmux "$@"; }
       servers="$servers $tmux37:grofe-tp3-tmux"
+      write_user_conf
       srv -f /dev/null new-session -d -s main -x 120 -y 40 'sleep 600'
-      set_plugin_options
       srv source-file "$CANOPY_STORE/tmux/tmux.conf"
-      # canopy's status layer sets status-right before the plugin layer
-      # runs, so continuum's #{continuum_status} is put back and the plugin
-      # layer sourced a second time, as a reload sources it. That also
-      # shows a second load pass loading the same set.
-      srv set -g status-right '#{continuum_status}'
-      srv source-file "$CANOPY_STORE/tmux/conf.d/30-plugins.conf"
+      # A second time, as prefix r reloads: the same set loads again.
+      srv source-file "$CANOPY_STORE/tmux/tmux.conf"
       ;;
     grofe-tmux)
       ln -sf "$grofe_bin" "$bin/tmux"
@@ -323,11 +326,22 @@ call_list() {
   tr '\n' ' ' <"$1" | sed -n 's/.*canopy_load_plugins \(.*\)/\1/p' | sed "s/'.*//; s/\\\\//g" | tr -s ' ' | sed 's/^ //; s/ $//'
 }
 
-@test "30-plugins.conf and the grofe fragment load the ten in VERSIONS order" {
+@test "tmux.conf and the grofe fragment load the ten in VERSIONS order" {
   want="$(canopy_plugin_names | tr '\n' ' ' | sed 's/ $//')"
-  [ "$(call_list "$CANOPY_STORE/tmux/conf.d/30-plugins.conf")" = "$want" ]
+  [ "$(call_list "$CANOPY_STORE/tmux/tmux.conf")" = "$want" ]
   [ "$(call_list "$CANOPY_STORE/grofe/templates/30-canopy-plugins.toml")" = "$want" ]
   [ "$(call_list "$CANOPY_STORE/grofe/conf.d/30-canopy-plugins.toml")" = "$want" ]
+}
+
+@test "on tmux the plugins load after user.conf, and prefix C-s is taken back after them" {
+  conf="$CANOPY_STORE/tmux/tmux.conf"
+  user="$(grep -nF 'source-file -q "$CANOPY_CONFIG/user.conf"' "$conf" | cut -d: -f1)"
+  load="$(grep -n "^run-shell .*canopy_load_plugins" "$conf" | cut -d: -f1)"
+  csend="$(grep -nx 'bind-key C-s send-prefix' "$conf" | cut -d: -f1)"
+  [ -n "$user" ] && [ -n "$load" ] && [ -n "$csend" ]
+  [ "$user" -lt "$load" ] && [ "$load" -lt "$csend" ]
+  run grep -c 'canopy_load_plugins\|^bind-key C-s' "$CANOPY_STORE/tmux/conf.d/30-plugins.conf"
+  [ "$output" -eq 0 ]
 }
 
 @test "no line of canopy's own config uses TPM" {
@@ -349,25 +363,53 @@ fake_plugins() {
   printf '#!/bin/sh\n' >"$store/plugins/empty/off.tmux"
   cat >"$bin/tmux" <<EOF
 #!/bin/sh
-if [ "\$1" = show-option ]; then
+if [ "\$3" = show-option ]; then
   [ -f "$BATS_TEST_TMPDIR/off" ] && echo off
   exit 0
 fi
 printf '%s\n' "\$*" >>"$BATS_TEST_TMPDIR/calls"
-case "\$2" in *b.tmux*) exit 1 ;; esac
+case "\$4" in *b.tmux*) exit 1 ;; esac
 EOF
   chmod +x "$bin/tmux"
+  # As if run by a server: the loader talks to this socket and no other.
+  TMUX="$BATS_TEST_TMPDIR/fake.sock,1,0"
+  export TMUX
 }
 
-@test "the loader runs each executable *.tmux through tmux run-shell, in glob order" {
+@test "the loader runs each executable *.tmux through run-shell on \$TMUX's socket, in glob order" {
   fake_plugins
   canopy_load_plugins one two empty missing
   run cat "$BATS_TEST_TMPDIR/calls"
-  [ "${lines[0]}" = "run-shell '$store/plugins/one/one.tmux'" ]
-  [ "${lines[1]}" = "run-shell '$store/plugins/two/a.tmux'" ]
-  [ "${lines[2]}" = "run-shell '$store/plugins/two/b.tmux'" ]
+  sock="$BATS_TEST_TMPDIR/fake.sock"
+  [ "${lines[0]}" = "-S $sock run-shell '$store/plugins/one/one.tmux'" ]
+  [ "${lines[1]}" = "-S $sock run-shell '$store/plugins/two/a.tmux'" ]
+  [ "${lines[2]}" = "-S $sock run-shell '$store/plugins/two/b.tmux'" ]
   [ "${#lines[@]}" -eq 3 ]
 }
+
+@test "outside a server the loader runs nothing, and says so once" {
+  fake_plugins
+  unset TMUX
+  canopy_load_plugins one two
+  [ ! -e "$BATS_TEST_TMPDIR/calls" ]
+  run plugin_log
+  [ "${#lines[@]}" -eq 1 ]
+  [[ "${lines[0]}" == *" loader: loaded nothing, TMUX is unset"* ]]
+}
+
+@test "an entry point whose path holds a quote is passed as one word" {
+  fake_plugins
+  mkdir -p "$store/plugins/it's"
+  printf '#!/bin/sh\n' >"$store/plugins/it's/q.tmux"
+  chmod +x "$store/plugins/it's/q.tmux"
+  canopy_load_plugins "it's"
+  run cat "$BATS_TEST_TMPDIR/calls"
+  word="${lines[0]#-S * run-shell }"
+  eval "set -- $word"
+  [ "$#" -eq 1 ]
+  [ "$1" = "$store/plugins/it's/q.tmux" ]
+}
+
 
 @test "a missing tree or entry point is one dormant line, a failing one is logged, the rest load" {
   fake_plugins
@@ -404,17 +446,19 @@ EOF
   [ "$output" -eq 2 ]
 }
 
-@test "without bash every plugin is dormant and nothing runs" {
+@test "without bash only an entry point that asks for bash is dormant" {
   fake_plugins
+  printf '#!/usr/bin/env bash\n' >"$store/plugins/one/one.tmux"
   nobash="$BATS_TEST_TMPDIR/nobash"
   mkdir -p "$nobash"
   ln -s "$bin/tmux" "$nobash/tmux"
-  for tool in date mkdir; do ln -s "$(command -v "$tool")" "$nobash/$tool"; done
+  for tool in date mkdir sed; do ln -s "$(command -v "$tool")" "$nobash/$tool"; done
   PATH="$nobash" canopy_load_plugins one two
-  [ ! -e "$BATS_TEST_TMPDIR/calls" ]
+  run cat "$BATS_TEST_TMPDIR/calls"
+  [ "${#lines[@]}" -eq 2 ]
+  [[ "${lines[0]}" == *"/plugins/two/a.tmux'" ]]
   run plugin_log
   [[ "${lines[0]}" == *" one: dormant, bash not found" ]]
-  [[ "${lines[1]}" == *" two: dormant, bash not found" ]]
 }
 
 # --- doctor ------------------------------------------------------------------
@@ -500,4 +544,129 @@ EOF
   [ "${#lines[@]}" -eq 1 ]
   [[ "${lines[0]}" == *" tmux-which-key: dormant, no executable *.tmux in $store/plugins/tmux-which-key" ]]
   mv "$BATS_TEST_TMPDIR/tmux-which-key.aside" "$store/plugins/tmux-which-key"
+}
+
+# --- release artifacts, and files written into a tree ----------------------
+
+@test "every ARTIFACTS row is well formed, and every dest is in LOCAL" {
+  while read -r name platform url sum member dest want; do
+    case "$name" in '#'* | '') continue ;; esac
+    canopy_plugin_pin "$name" >/dev/null
+    case "$platform" in darwin-arm64 | darwin-x86_64 | linux-arm64 | linux-x86_64 | any) ;; *) false ;; esac
+    case "$url" in https://github.com/*/releases/download/* | text:*) ;; *) false ;; esac
+    [[ "$want" =~ ^[0-9a-f]{64}$ ]]
+    [[ "$sum" =~ ^[0-9a-f]{64}$ ]] || [ "$sum" = - ]
+    [ -n "$member" ]
+    grep -qxF "$name $dest" "$real_store/plugins/LOCAL"
+  done <"$real_store/plugins/ARTIFACTS"
+  # Every platform canopy names has opensessions' three binaries and xre.
+  for platform in darwin-arm64 darwin-x86_64 linux-arm64 linux-x86_64; do
+    CANOPY_ARTIFACTS="$real_store/plugins/ARTIFACTS" run canopy_plugin_artifacts "$platform"
+    [ "${#lines[@]}" -eq 5 ]
+  done
+}
+
+@test "a file plugins/LOCAL lists does not change the tree digest" {
+  copy_store
+  before="$(canopy_plugin_digest "$store/plugins/tmux-which-key")"
+  printf 'x\n' >"$store/plugins/tmux-which-key/config.yaml"
+  printf 'x\n' >"$store/plugins/tmux-which-key/plugin/init.tmux"
+  [ "$(canopy_plugin_digest "$store/plugins/tmux-which-key")" = "$before" ]
+  printf 'x\n' >"$store/plugins/tmux-which-key/other"
+  [ "$(canopy_plugin_digest "$store/plugins/tmux-which-key")" != "$before" ]
+}
+
+# A local release: one .tar.gz holding a binary, served as a file:// url.
+fixture_artifacts() {
+  copy_store
+  rm -f "$store/plugins/opensessions/bin/opensessions-server"
+  mkdir -p "$BATS_TEST_TMPDIR/rel/pkg"
+  printf '#!/bin/sh\necho fixture\n' >"$BATS_TEST_TMPDIR/rel/pkg/server"
+  chmod +x "$BATS_TEST_TMPDIR/rel/pkg/server"
+  tar -czf "$BATS_TEST_TMPDIR/rel.tar.gz" -C "$BATS_TEST_TMPDIR/rel" pkg/server
+  archive_sum="$(canopy_sha256 "$BATS_TEST_TMPDIR/rel.tar.gz")"
+  file_sum="$(canopy_sha256 "$BATS_TEST_TMPDIR/rel/pkg/server")"
+  stamp_sum="$(printf 'v9\n' | canopy_sha256)"
+  CANOPY_ARTIFACTS="$BATS_TEST_TMPDIR/ARTIFACTS"
+  export CANOPY_ARTIFACTS
+  {
+    printf 'opensessions %s file://%s %s pkg/server bin/opensessions-server %s\n' \
+      "$(canopy_platform)" "$BATS_TEST_TMPDIR/rel.tar.gz" "$archive_sum" "$file_sum"
+    printf 'opensessions any text:v9 - - bin/stamp %s\n' "$stamp_sum"
+    printf 'opensessions not-this-machine file:///nonexistent %s x bin/other %s\n' "$archive_sum" "$file_sum"
+  } >"$CANOPY_ARTIFACTS"
+}
+
+@test "provisioning puts each artifact for this machine in place, checked, and nothing else" {
+  fixture_artifacts
+  run canopy_provision_artifacts
+  [ "$status" -eq 0 ]
+  [ -x "$store/plugins/opensessions/bin/opensessions-server" ]
+  [ "$(canopy_sha256 "$store/plugins/opensessions/bin/opensessions-server")" = "$file_sum" ]
+  [ "$(cat "$store/plugins/opensessions/bin/stamp")" = v9 ]
+  [ ! -e "$store/plugins/opensessions/bin/other" ]
+}
+
+@test "a second provisioning run fetches nothing" {
+  fixture_artifacts
+  canopy_provision_artifacts
+  rm "$BATS_TEST_TMPDIR/rel.tar.gz"
+  run canopy_provision_artifacts
+  [ "$status" -eq 0 ]
+}
+
+@test "an archive whose sha256 differs is refused, and nothing is written" {
+  fixture_artifacts
+  printf 'tampered' >>"$BATS_TEST_TMPDIR/rel.tar.gz"
+  run canopy_provision_artifacts
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"not the recorded $archive_sum; refused"* ]]
+  [ ! -e "$store/plugins/opensessions/bin/opensessions-server" ]
+  # The text row does not depend on the archive, and is still provided.
+  [ -f "$store/plugins/opensessions/bin/stamp" ]
+}
+
+@test "an unreachable artifact is reported, not fatal" {
+  fixture_artifacts
+  rm "$BATS_TEST_TMPDIR/rel.tar.gz"
+  run canopy_provision_artifacts
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"opensessions: could not download file://"* ]]
+}
+
+@test "doctor checks each provisioned binary against its own sha256" {
+  fixture_artifacts
+  run canopy-doctor
+  [[ "$output" == *"opensessions: bin/opensessions-server MISSING (provision with: canopy install)"* ]]
+  canopy_provision_artifacts
+  run canopy-doctor
+  [[ "$output" == *"opensessions: bin/opensessions-server provisioned, matches"* ]]
+  [[ "$output" == *"opensessions: pinned "*", tree matches"* ]]
+  printf 'x' >>"$store/plugins/opensessions/bin/opensessions-server"
+  run canopy-doctor
+  [[ "$output" == *"opensessions: bin/opensessions-server MODIFIED"* ]]
+  # The tree digest leaves the binary out, so the tree itself still matches.
+  [[ "$output" == *"opensessions: pinned "*", tree matches"* ]]
+}
+
+@test "canopy install provisions the artifacts" {
+  fixture_artifacts
+  run canopy install --yes
+  [ "$status" -eq 0 ]
+  [ "$(canopy_sha256 "$store/plugins/opensessions/bin/opensessions-server")" = "$file_sum" ]
+}
+
+@test "doctor shows what the last plugin load skipped" {
+  printf '2026-01-01T00:00:00Z tmux-which-key: dormant, no executable *.tmux in x\n' >"$CANOPY_STATE/plugins.log"
+  run canopy-doctor
+  [[ "$output" == *"last plugin load:"* ]]
+  [[ "$output" == *"    2026-01-01T00:00:00Z tmux-which-key: dormant"* ]]
+}
+
+# --- isolation ---------------------------------------------------------------
+
+@test "no test or scratch server names the shared socket directory" {
+  run grep -rnE --exclude=plugin_loader.bats --exclude=setup_suite.bash \
+    'TMUX_TMPDIR=/tmp([^/]|$)|"/tmp/tmux-' "$real_store/test" "$real_store/lib" "$real_store/bin"
+  [ "$status" -eq 1 ]
 }

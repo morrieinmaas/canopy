@@ -89,6 +89,7 @@ plugins_dir() { printf '%s' "$CANOPY_STORE/plugins"; }
   tmux -L "$sock" -f /dev/null new-session -d
   run tmux -L "$sock" source-file "$CANOPY_STORE/tmux/conf.d/30-plugins.conf"
   [ "$status" -eq 0 ]
+  load_persistence_plugins "$sock"
   run tmux -L "$sock" list-keys -T prefix
   [ "$status" -eq 0 ]
   [[ "$output" == *"tmux-resurrect/scripts/save.sh"* ]]
@@ -106,6 +107,7 @@ plugins_dir() { printf '%s' "$CANOPY_STORE/plugins"; }
   tmux -L "$sock" -f /dev/null new-session -d
   tmux -L "$sock" set -g status-right 'left#{continuum_status}right'
   tmux -L "$sock" source-file "$CANOPY_STORE/tmux/conf.d/30-plugins.conf"
+  load_persistence_plugins "$sock"
   run tmux -L "$sock" show -gv status-right
   [ "$status" -eq 0 ]
   [[ "$output" == *"tmux-continuum/scripts/continuum_status.sh"* ]]
@@ -118,6 +120,7 @@ plugins_dir() { printf '%s' "$CANOPY_STORE/plugins"; }
   sock="cnp-plg-c-$$"
   tmux -L "$sock" -f /dev/null new-session -d
   tmux -L "$sock" source-file "$CANOPY_STORE/tmux/conf.d/30-plugins.conf"
+  load_persistence_plugins "$sock"
   run tmux -L "$sock" show -gv @resurrect-save-script-path
   [ "$status" -eq 0 ]
   [ "$output" = "$CANOPY_STORE/plugins/tmux-resurrect/scripts/save.sh" ]
@@ -125,12 +128,14 @@ plugins_dir() { printf '%s' "$CANOPY_STORE/plugins"; }
 
 @test "the layer is reached through the store's own tmux.conf" {
   # 30-plugins.conf matches the loader's conf.d/[1-9]*.conf glob, so a user
-  # who loads the shipped entry point gets the plugins without naming them.
+  # who loads the shipped entry point gets the plugin options without
+  # naming them. The plugins themselves load from tmux.conf too, which
+  # test/plugin_loader.bats covers; this suite loads none from there.
   sock="cnp-plg-d-$$"
   tmux -L "$sock" -f "$CANOPY_STORE/tmux/tmux.conf" new-session -d
-  run tmux -L "$sock" show -gv @resurrect-save-script-path
+  run tmux -L "$sock" show -gv @resurrect-save
   [ "$status" -eq 0 ]
-  [[ "$output" == *"/plugins/tmux-resurrect/scripts/save.sh"* ]]
+  [ "$output" = M-s ]
 }
 
 @test "resurrect saves into canopy's own state tree, not upstream's default" {
