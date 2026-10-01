@@ -43,7 +43,7 @@ setup_canopy_env() {
 # Loads resurrect and continuum, and only those, into a test server, for
 # the suites that test persistence through them.
 load_persistence_plugins() {
-  tmux -L "$1" run-shell 'CANOPY_PLUGINS=on; . "$CANOPY_STORE/lib/plugins.sh"; canopy_load_plugins tmux-resurrect tmux-continuum'
+  tmux -L "$1" run-shell 'CANOPY_PLUGINS=on; . "$CANOPY_STORE/lib/env.sh"; . "$CANOPY_STORE/lib/plugins.sh"; canopy_load_plugins tmux-resurrect tmux-continuum'
 }
 
 # setup_canopy_home
