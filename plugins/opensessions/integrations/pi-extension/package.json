@@ -1,0 +1,15 @@
+{
+  "name": "@opensessions/pi-extension",
+  "version": "0.1.0",
+  "description": "Pi extension that registers the live pi process with opensessions",
+  "private": true,
+  "pi": {
+    "extensions": [
+      "./opensessions-runtime.ts"
+    ]
+  },
+  "files": [
+    "opensessions-runtime.ts",
+    "README.md"
+  ]
+}
