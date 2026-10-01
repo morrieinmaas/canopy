@@ -77,6 +77,19 @@ copy_store() {
   done
   sed -n 's/.*"version": *"\([^"]*\)".*/\1/p' "$store/plugins/opensessions/package.json" |
     head -1 >"$store/plugins/opensessions/bin/.opensessions-version"
+  mkdir -p "$store/plugins/tmux-fzf-url/bin"
+  printf '#!/bin/sh\necho "xre 0.1.1"\n' >"$store/plugins/tmux-fzf-url/bin/xre"
+  chmod +x "$store/plugins/tmux-fzf-url/bin/xre"
+  # ARTIFACTS rows for exactly these files, so the loader's artifact check
+  # passes as it does after canopy install.
+  CANOPY_ARTIFACTS="$BATS_TEST_TMPDIR/ARTIFACTS.copy"
+  export CANOPY_ARTIFACTS
+  local f
+  for f in opensessions/bin/opensessions-sidebar opensessions/bin/opensessions-server \
+    opensessions/bin/lazydiff opensessions/bin/.opensessions-version tmux-fzf-url/bin/xre; do
+    printf '%s any https://fixture.invalid/none %s none %s %s\n' "${f%%/*}" \
+      "$(printf 0%.0s $(seq 64))" "${f#*/}" "$(canopy_sha256 "$store/plugins/$f")"
+  done >"$CANOPY_ARTIFACTS"
 }
 
 # What the plugins read before they load, set where a user sets them:
@@ -563,6 +576,7 @@ EOF
   for platform in darwin-arm64 darwin-x86_64 linux-arm64 linux-x86_64; do
     CANOPY_ARTIFACTS="$real_store/plugins/ARTIFACTS" run canopy_plugin_artifacts "$platform"
     [ "${#lines[@]}" -eq 5 ]
+    [[ "$output" != *"bad "* ]]
   done
 }
 
@@ -576,10 +590,27 @@ EOF
   [ "$(canopy_plugin_digest "$store/plugins/tmux-which-key")" != "$before" ]
 }
 
-# A local release: one .tar.gz holding a binary, served as a file:// url.
+# A local release: one .tar.gz holding a binary, behind an https url that a
+# fake curl answers from disk, recording how it was asked.
 fixture_artifacts() {
   copy_store
-  rm -f "$store/plugins/opensessions/bin/opensessions-server"
+  rm -f "$store/plugins/opensessions/bin/opensessions-server" "$store/plugins/opensessions/bin/.opensessions-version"
+  cat >"$bin/curl" <<EOF
+#!/bin/sh
+printf '%s\\n' "\$*" >>"$BATS_TEST_TMPDIR/curl-calls"
+out=""
+url=""
+while [ \$# -gt 0 ]; do
+  case "\$1" in
+    -o) out="\$2"; shift 2 ;;
+    https://fixture.invalid/*) url="\$1"; shift ;;
+    *) shift ;;
+  esac
+done
+src="$BATS_TEST_TMPDIR/\${url#https://fixture.invalid/}"
+[ -f "\$src" ] && cp "\$src" "\$out"
+EOF
+  chmod +x "$bin/curl"
   mkdir -p "$BATS_TEST_TMPDIR/rel/pkg"
   printf '#!/bin/sh\necho fixture\n' >"$BATS_TEST_TMPDIR/rel/pkg/server"
   chmod +x "$BATS_TEST_TMPDIR/rel/pkg/server"
@@ -590,10 +621,10 @@ fixture_artifacts() {
   CANOPY_ARTIFACTS="$BATS_TEST_TMPDIR/ARTIFACTS"
   export CANOPY_ARTIFACTS
   {
-    printf 'opensessions %s file://%s %s pkg/server bin/opensessions-server %s\n' \
-      "$(canopy_platform)" "$BATS_TEST_TMPDIR/rel.tar.gz" "$archive_sum" "$file_sum"
-    printf 'opensessions any text:v9 - - bin/stamp %s\n' "$stamp_sum"
-    printf 'opensessions not-this-machine file:///nonexistent %s x bin/other %s\n' "$archive_sum" "$file_sum"
+    printf 'opensessions %s https://fixture.invalid/rel.tar.gz %s pkg/server bin/opensessions-server %s\n' \
+      "$(canopy_platform)" "$archive_sum" "$file_sum"
+    printf 'opensessions any text:v9 - - bin/.opensessions-version %s\n' "$stamp_sum"
+    printf 'opensessions not-this-machine https://fixture.invalid/none %s x bin/lazydiff %s\n' "$archive_sum" "$file_sum"
   } >"$CANOPY_ARTIFACTS"
 }
 
@@ -603,8 +634,10 @@ fixture_artifacts() {
   [ "$status" -eq 0 ]
   [ -x "$store/plugins/opensessions/bin/opensessions-server" ]
   [ "$(canopy_sha256 "$store/plugins/opensessions/bin/opensessions-server")" = "$file_sum" ]
-  [ "$(cat "$store/plugins/opensessions/bin/stamp")" = v9 ]
-  [ ! -e "$store/plugins/opensessions/bin/other" ]
+  [ "$(cat "$store/plugins/opensessions/bin/.opensessions-version")" = v9 ]
+  [ "$(cat "$store/plugins/opensessions/bin/lazydiff")" = "$(printf '#!/bin/sh\nexit 0')" ]
+  # https only, redirects included.
+  [[ "$(cat "$BATS_TEST_TMPDIR/curl-calls")" == *"--proto =https --proto-redir =https https://fixture.invalid/rel.tar.gz"* ]]
 }
 
 @test "a second provisioning run fetches nothing" {
@@ -623,7 +656,7 @@ fixture_artifacts() {
   [[ "$output" == *"not the recorded $archive_sum; refused"* ]]
   [ ! -e "$store/plugins/opensessions/bin/opensessions-server" ]
   # The text row does not depend on the archive, and is still provided.
-  [ -f "$store/plugins/opensessions/bin/stamp" ]
+  [ -f "$store/plugins/opensessions/bin/.opensessions-version" ]
 }
 
 @test "an unreachable artifact is reported, not fatal" {
@@ -631,7 +664,7 @@ fixture_artifacts() {
   rm "$BATS_TEST_TMPDIR/rel.tar.gz"
   run canopy_provision_artifacts
   [ "$status" -eq 1 ]
-  [[ "$output" == *"opensessions: could not download file://"* ]]
+  [[ "$output" == *"opensessions: could not download https://fixture.invalid/rel.tar.gz"* ]]
 }
 
 @test "doctor checks each provisioned binary against its own sha256" {
@@ -669,4 +702,133 @@ fixture_artifacts() {
   run grep -rnE --exclude=plugin_loader.bats --exclude=setup_suite.bash \
     'TMUX_TMPDIR=/tmp([^/]|$)|"/tmp/tmux-' "$real_store/test" "$real_store/lib" "$real_store/bin"
   [ "$status" -eq 1 ]
+}
+
+# --- refusing what an ARTIFACTS row or a tree must not do ------------------
+
+# rows_with <name> <dest>: one row, valid but for what the arguments make it.
+rows_with() {
+  CANOPY_ARTIFACTS="$BATS_TEST_TMPDIR/ARTIFACTS.bad"
+  export CANOPY_ARTIFACTS
+  printf '%s any text:x - - %s %s\n' "$1" "$2" "$(printf 'x\n' | canopy_sha256)" >"$CANOPY_ARTIFACTS"
+}
+
+@test "an ARTIFACTS row is refused for an absolute dest, a .. segment, an odd character, a dest LOCAL does not list, or an unpinned plugin" {
+  copy_store
+  for row in "opensessions /etc/x" "opensessions bin/../../x" "opensessions .." "opensessions bin/a b" \
+    'opensessions bin/$x' "opensessions bin/not-listed" "not-a-plugin bin/xre"; do
+    rows_with $row
+    run canopy_plugin_artifacts
+    [[ "$output" == "bad "* ]] || { printf 'accepted: %s\n' "$row"; false; }
+    run canopy_provision_artifacts
+    [ "$status" -eq 1 ]
+    [[ "$output" == *"refused an ARTIFACTS row"* ]]
+  done
+  [ ! -e /etc/x ] && [ ! -e "$store/x" ] && [ ! -e "$store/plugins/x" ]
+  rows_with opensessions bin/.opensessions-version
+  run canopy_plugin_artifacts
+  [[ "$output" == "ok "* ]]
+}
+
+@test "doctor reports a refused ARTIFACTS row" {
+  copy_store
+  rows_with opensessions bin/../../x
+  run canopy-doctor
+  [[ "$output" == *"opensessions: ARTIFACTS row for bin/../../x REFUSED"* ]]
+}
+
+# The real tmux-fzf-url, with a recording tmux, and its xre in ARTIFACTS.
+fzf_url_gate() {
+  copy_store
+  cat >"$bin/tmux" <<EOF
+#!/bin/sh
+[ "\$3" = show-option ] && exit 0
+printf '%s\\n' "\$*" >>"$BATS_TEST_TMPDIR/calls"
+EOF
+  chmod +x "$bin/tmux"
+  TMUX="$BATS_TEST_TMPDIR/fake.sock,1,0"
+  export TMUX
+}
+
+@test "tmux-fzf-url loads with its xre in place" {
+  fzf_url_gate
+  canopy_load_plugins tmux-fzf-url
+  [[ "$(cat "$BATS_TEST_TMPDIR/calls")" == *"tmux-fzf-url/fzf-url.tmux'" ]]
+  [ -z "$(plugin_log)" ]
+}
+
+@test "tmux-fzf-url with bin/xre deleted is dormant, so its curl | bash can never run" {
+  fzf_url_gate
+  rm "$store/plugins/tmux-fzf-url/bin/xre"
+  canopy_load_plugins tmux-fzf-url
+  [ ! -e "$BATS_TEST_TMPDIR/calls" ]
+  run plugin_log
+  [ "${#lines[@]}" -eq 1 ]
+  [[ "${lines[0]}" == *" tmux-fzf-url: dormant, a release binary from plugins/ARTIFACTS is missing or fails its sha256"* ]]
+}
+
+@test "tmux-fzf-url with bin/xre corrupted is dormant too" {
+  fzf_url_gate
+  printf 'x' >>"$store/plugins/tmux-fzf-url/bin/xre"
+  canopy_load_plugins tmux-fzf-url
+  [ ! -e "$BATS_TEST_TMPDIR/calls" ]
+  [[ "$(plugin_log)" == *" tmux-fzf-url: dormant, a release binary"* ]]
+}
+
+@test "a plugin whose ARTIFACTS row is refused does not load" {
+  fzf_url_gate
+  printf 'tmux-fzf-url any text:x - - /tmp/xre %s\n' "$(printf 'x\n' | canopy_sha256)" >>"$CANOPY_ARTIFACTS"
+  canopy_load_plugins tmux-fzf-url
+  [ ! -e "$BATS_TEST_TMPDIR/calls" ]
+}
+
+@test "a symlinked *.tmux entry point is refused" {
+  fzf_url_gate
+  mv "$store/plugins/tmux-fzf-url/fzf-url.tmux" "$store/plugins/tmux-fzf-url/real.sh"
+  ln -s real.sh "$store/plugins/tmux-fzf-url/fzf-url.tmux"
+  canopy_load_plugins tmux-fzf-url
+  [ ! -e "$BATS_TEST_TMPDIR/calls" ]
+  [[ "$(plugin_log)" == *" tmux-fzf-url: dormant, entry point fzf-url.tmux is a symlink, refused"* ]]
+}
+
+@test "retargeting a symlink changes the tree digest" {
+  copy_store
+  dir="$store/plugins/tmux-continuum"
+  before="$(canopy_plugin_digest "$dir")"
+  [ "$before" = "$(canopy_plugin_recorded_digest tmux-continuum)" ]
+  link="$dir/scripts/handle_tmux_automatic_start/README.md"
+  rm "$link"
+  ln -s ../../README.md "$link"
+  [ "$(canopy_plugin_digest "$dir")" != "$before" ]
+}
+
+@test "doctor compares which-key's copied files with what they are copied from" {
+  copy_store
+  wk="$store/plugins/tmux-which-key"
+  cp "$wk/config.example.yaml" "$wk/config.yaml"
+  cp "$wk/plugin/init.example.tmux" "$wk/plugin/init.tmux"
+  run canopy-doctor
+  [[ "$output" != *"tmux-which-key: config.yaml MODIFIED"* ]]
+  [[ "$output" != *"tmux-which-key: plugin/init.tmux MODIFIED"* ]]
+  printf '# edit\n' >>"$wk/plugin/init.tmux"
+  printf '# edit\n' >>"$wk/config.yaml"
+  run canopy-doctor
+  [[ "$output" == *"tmux-which-key: plugin/init.tmux MODIFIED, it differs from plugin/init.example.tmux"* ]]
+  [[ "$output" == *"tmux-which-key: config.yaml MODIFIED, it differs from config.example.yaml"* ]]
+  # The tree digest still leaves them out.
+  [[ "$output" == *"tmux-which-key: pinned "*", tree matches"* ]]
+}
+
+# --- the tmux shim -----------------------------------------------------------
+
+@test "the suite's tmux refuses a call with no target before it connects" {
+  CANOPY_SHIM_REFUSALS="$BATS_TEST_TMPDIR/refused"
+  export CANOPY_SHIM_REFUSALS
+  [ "$(command -v tmux)" = "$CANOPY_TEST_SOCKS/bin/tmux" ] || [[ "$(command -v tmux)" == "$bin/tmux" ]]
+  run env -u TMUX -u TMUX_TMPDIR "$CANOPY_TEST_SOCKS/bin/tmux" ls
+  [ "$status" -eq 97 ]
+  [ "$(cat "$CANOPY_SHIM_REFUSALS")" = "ls" ]
+  # And a call that names a socket under the suite's directory goes through.
+  run "$CANOPY_TEST_SOCKS/bin/tmux" -L nothing-here ls
+  [ "$status" -ne 97 ]
 }

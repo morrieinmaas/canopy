@@ -73,6 +73,16 @@ canopy_plugin_local() {
   awk -v n="$1" 'NF > 0 && substr($1, 1, 1) != "#" && $1 == n { print $2 }' "$file"
 }
 
+# canopy_plugin_local_copies
+# The plugins/LOCAL rows with a third column, the file in the same tree
+# that the plugin copies to make it, as "<name> <path> <source>".
+canopy_plugin_local_copies() {
+  local file
+  file="$CANOPY_STORE/plugins/LOCAL"
+  [ -f "$file" ] || return 0
+  awk 'NF >= 3 && substr($1, 1, 1) != "#" { print $1, $2, $3 }' "$file"
+}
+
 # canopy_plugin_digest <dir> [<name>]
 # One sha256 over the whole tree: every regular file, in C-collated path
 # order, contributing its own hash, its path, and whether it is
@@ -95,8 +105,14 @@ canopy_plugin_digest() {
   skip="$(canopy_plugin_local "$name")"
   (
     cd "$dir" || exit 1
-    find . -type f | LC_ALL=C sort | while IFS= read -r f; do
+    find . \( -type f -o -type l \) | LC_ALL=C sort | while IFS= read -r f; do
       if [ -n "$skip" ] && printf '%s\n' "$skip" | grep -qxF "${f#./}"; then
+        continue
+      fi
+      # A symlink counts by where it points, so retargeting one is a
+      # modified tree even when the target's content is unchanged.
+      if [ -L "$f" ]; then
+        printf 'l %s %s\n' "$(readlink "$f" | canopy_sha256)" "${f#./}"
         continue
       fi
       # The mode flag goes through %s rather than being written into the
@@ -140,29 +156,69 @@ canopy_platform() {
   printf '%s-%s\n' "$os" "$arch"
 }
 
+# The ARTIFACTS file. CANOPY_ARTIFACTS names another only for the test
+# suite, whose harness sets it explicitly (test/helper.bash) so that no
+# test provisions from the network into this checkout. Whatever file is
+# read, a row is held to the store's own VERSIONS and LOCAL.
 canopy_artifacts_file() {
   printf '%s\n' "${CANOPY_ARTIFACTS:-$CANOPY_STORE/plugins/ARTIFACTS}"
 }
 
+# canopy_artifact_row_ok <name> <dest>
+# True when a row may write <dest> into plugins/<name>: <name> is pinned in
+# VERSIONS, and <dest> is a plain relative path (only [A-Za-z0-9._/-], no
+# leading /, no .. segment) that plugins/LOCAL lists for it.
+canopy_artifact_row_ok() {
+  canopy_plugin_pin "$1" >/dev/null 2>&1 || return 1
+  case "$2" in
+    '' | /* | *[!A-Za-z0-9._/-]*) return 1 ;;
+    .. | ../* | */.. | */../*) return 1 ;;
+    *) ;;
+  esac
+  canopy_plugin_local "$1" | grep -qxF "$2"
+}
+
 # canopy_plugin_artifacts [<platform>]
 # The ARTIFACTS rows for this machine (or <platform>), plus every `any`
-# row, as "<name> <url> <sha256> <member> <dest> <sha256>".
+# row, as "<ok|bad> <name> <url> <sha256> <member> <dest> <sha256>": bad
+# is a row canopy_artifact_row_ok refuses, which nothing acts on.
 canopy_plugin_artifacts() {
-  local file platform
+  local file platform name url sum member dest want verdict
   file="$(canopy_artifacts_file)"
   [ -f "$file" ] || return 0
   platform="${1:-$(canopy_platform || true)}"
   awk -v p="$platform" '
     NF >= 7 && substr($1, 1, 1) != "#" && ($2 == p || $2 == "any") { print $1, $3, $4, $5, $6, $7 }
-  ' "$file"
+  ' "$file" | while read -r name url sum member dest want; do
+    verdict=bad
+    canopy_artifact_row_ok "$name" "$dest" && verdict=ok
+    printf '%s %s %s %s %s %s %s\n' "$verdict" "$name" "$url" "$sum" "$member" "$dest" "$want"
+  done
+}
+
+# canopy_plugin_artifacts_ok <name>
+# True when every ARTIFACTS row for <name> on this machine is a row
+# canopy_artifact_row_ok accepts and its file is in place with the
+# recorded sha256. A plugin for which this fails is one that would fetch
+# what is missing from the network, so the loader does not run it.
+canopy_plugin_artifacts_ok() {
+  local verdict name url sum member dest want path
+  canopy_plugin_artifacts | while read -r verdict name url sum member dest want; do
+    [ "$name" = "$1" ] || continue
+    [ "$verdict" = ok ] || exit 1
+    path="$CANOPY_STORE/plugins/$name/$dest"
+    [ -f "$path" ] && [ ! -L "$path" ] || exit 1
+    [ "$(canopy_sha256 "$path")" = "$want" ] || exit 1
+  done
 }
 
 # canopy_fetch <url> <file>
+# https only, redirects included.
 canopy_fetch() {
   if command -v curl >/dev/null 2>&1; then
-    curl -fsSL "$1" -o "$2"
+    curl -fsSL --proto =https --proto-redir =https "$1" -o "$2"
   elif command -v wget >/dev/null 2>&1; then
-    wget -qO "$2" "$1"
+    wget -q --https-only -O "$2" "$1"
   else
     return 1
   fi
@@ -178,12 +234,17 @@ canopy_fetch() {
 # A url of the form text:<value> is a file holding <value> and a newline,
 # for a plugin that also reads a version stamp next to its binaries.
 canopy_provision_artifacts() {
-  local work rows status name url sum member dest want path got archive
+  local work rows status verdict name url sum member dest want path got archive
   rows="$(canopy_plugin_artifacts)"
   [ -n "$rows" ] || return 0
   work="$(mktemp -d "${TMPDIR:-/tmp}/canopy-artifacts.XXXXXX")" || return 1
   status=0
-  while read -r name url sum member dest want; do
+  while read -r verdict name url sum member dest want; do
+    if [ "$verdict" != ok ]; then
+      printf 'canopy: %s: refused an ARTIFACTS row for %s: not a pinned plugin, or not a plain path plugins/LOCAL lists\n' "$name" "$dest"
+      status=1
+      continue
+    fi
     path="$CANOPY_STORE/plugins/$name/$dest"
     if [ -f "$path" ] && [ "$(canopy_sha256 "$path")" = "$want" ]; then
       continue
@@ -212,7 +273,7 @@ canopy_provision_artifacts() {
         fi
         rm -rf "$work/x"
         mkdir -p "$work/x"
-        if ! tar -xzf "$archive" -C "$work/x" "$member" 2>/dev/null || [ ! -f "$work/x/$member" ]; then
+        if ! tar -xzf "$archive" -C "$work/x" -- "$member" 2>/dev/null || [ ! -f "$work/x/$member" ]; then
           printf 'canopy: %s: %s holds no %s\n' "$name" "$url" "$member"
           status=1
           continue
@@ -276,7 +337,10 @@ canopy_shell_quote() {
 # server, with its output discarded as TPM discards it. An entry point
 # whose first line names bash needs bash; without it, or with no
 # executable entry point, the plugin is dormant: nothing on the status
-# line, one log line. A plugin whose entry point fails is logged too, and
+# line, one log line. So is a plugin whose entry point is a symlink, and one
+# whose release binaries (plugins/ARTIFACTS) are not all in place with their
+# recorded sha256: it would fetch them itself, and canopy never lets a
+# plugin reach the network. A plugin whose entry point fails is logged too, and
 # does not stop the plugins after it.
 canopy_load_plugin() {
   local name glob dir entry found shebang
@@ -287,8 +351,17 @@ canopy_load_plugin() {
   # The glob is the point here: it is expanded, never quoted.
   # shellcheck disable=SC2086
   for entry in "$dir"/$glob; do
+    if [ -L "$entry" ]; then
+      found=1
+      canopy_plugin_note "$name" "dormant, entry point ${entry##*/} is a symlink, refused"
+      continue
+    fi
     [ -f "$entry" ] && [ -x "$entry" ] || continue
     found=1
+    if ! canopy_plugin_artifacts_ok "$name"; then
+      canopy_plugin_note "$name" "dormant, a release binary from plugins/ARTIFACTS is missing or fails its sha256 (canopy install provides it)"
+      return 0
+    fi
     IFS= read -r shebang <"$entry" || shebang=""
     case "$shebang" in
       '#!'*bash*)

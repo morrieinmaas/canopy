@@ -251,9 +251,12 @@ else
   # otherwise fetch it from the network.
   doctor_artifacts="$(canopy_plugin_artifacts)"
   if [ -n "$doctor_artifacts" ]; then
-    while read -r art_name _ _ _ art_dest art_sum; do
+    while read -r art_verdict art_name _ _ _ art_dest art_sum; do
       art_path="$CANOPY_STORE/plugins/$art_name/$art_dest"
-      if [ ! -f "$art_path" ]; then
+      if [ "$art_verdict" != ok ]; then
+        printf '  %s: ARTIFACTS row for %s REFUSED (not a pinned plugin, or not a plain path plugins/LOCAL lists); the plugin does not load\n' "$art_name" "$art_dest"
+        warnings=$((warnings + 1))
+      elif [ ! -f "$art_path" ]; then
         printf '  %s: %s MISSING (provision with: canopy install)\n' "$art_name" "$art_dest"
         warnings=$((warnings + 1))
       elif [ "$(canopy_sha256 "$art_path")" = "$art_sum" ]; then
@@ -265,6 +268,23 @@ else
     done <<DOCTOR_ARTIFACTS_EOF
 $doctor_artifacts
 DOCTOR_ARTIFACTS_EOF
+  fi
+
+  # Files a plugin makes by copying one of its own (plugins/LOCAL's third
+  # column): the tree digest leaves them out, so they are compared with
+  # what they were copied from instead.
+  doctor_copies="$(canopy_plugin_local_copies)"
+  if [ -n "$doctor_copies" ]; then
+    while read -r copy_name copy_path copy_src; do
+      copy_dir="$CANOPY_STORE/plugins/$copy_name"
+      [ -e "$copy_dir/$copy_path" ] || continue
+      if ! cmp -s "$copy_dir/$copy_path" "$copy_dir/$copy_src"; then
+        printf '  %s: %s MODIFIED, it differs from %s, which it is copied from (delete it to have it copied again)\n' "$copy_name" "$copy_path" "$copy_src"
+        warnings=$((warnings + 1))
+      fi
+    done <<DOCTOR_COPIES_EOF
+$doctor_copies
+DOCTOR_COPIES_EOF
   fi
 
   # What the last load pass skipped, from the loader's own log. Dormant is
