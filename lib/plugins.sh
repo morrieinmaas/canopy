@@ -83,3 +83,82 @@ canopy_plugin_digest() {
     done
   ) | canopy_sha256
 }
+
+# The plugin loader: what TPM's tpm script does for a plugin, without the
+# clone, the update, or anything else that reaches the network. 30-plugins.conf
+# (and the grofe plugin fragment) call canopy_load_plugins once, with the
+# fixed list in load order, at server start and again on every reload.
+#
+# It runs as the body of a run-shell, so it talks to whichever server ran it
+# through `tmux` on PATH, the same way every plugin's own script does. That is
+# also why nothing here is tmux specific: grofe answering to the tmux name
+# runs it unchanged.
+
+# Where a load pass records the plugins it could not load. canopy doctor's
+# reasons for a dormant plugin come from its own checks; this file says
+# which plugins the last load actually skipped, and why.
+canopy_plugin_log() {
+  printf '%s/plugins.log\n' "${CANOPY_STATE:-${XDG_STATE_HOME:-$HOME/.local/state}/canopy}"
+}
+
+canopy_plugin_note() {
+  printf '%s %s: %s\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$1" "$2" \
+    >>"$(canopy_plugin_log)" 2>/dev/null || true
+}
+
+# canopy_load_plugin <name> [<entry-glob>]
+#
+# TPM's convention for the entry point: every top-level *.tmux file in the
+# plugin's root, run in glob order. Each runs through `tmux run-shell`, as
+# 30-plugins.conf ran resurrect and continuum before this loop existed, with
+# its output discarded as TPM discards it. A plugin with no bash or no
+# executable entry point is dormant: nothing on the status line, one log
+# line. A plugin whose entry point fails is logged too, and does not stop
+# the plugins after it.
+canopy_load_plugin() {
+  local name glob dir entry found
+  name="$1"
+  glob="${2:-*.tmux}"
+  dir="$CANOPY_STORE/plugins/$name"
+  if ! command -v bash >/dev/null 2>&1; then
+    canopy_plugin_note "$name" "dormant, bash not found"
+    return 0
+  fi
+  found=0
+  # The glob is the point here: it is expanded, never quoted.
+  # shellcheck disable=SC2086
+  for entry in "$dir"/$glob; do
+    [ -f "$entry" ] && [ -x "$entry" ] || continue
+    found=1
+    if ! tmux run-shell "'$entry'" >/dev/null 2>&1; then
+      canopy_plugin_note "$name" "entry point ${entry##*/} failed"
+    fi
+  done
+  if [ "$found" -eq 0 ]; then
+    canopy_plugin_note "$name" "dormant, no executable $glob in $dir"
+  fi
+  return 0
+}
+
+# canopy_load_plugins <name>...
+#
+# One load pass, in the order given. The log is started afresh, so it
+# describes the last load and nothing older.
+#
+# A server with @canopy_plugins set to off loads none and leaves the log
+# alone. canopy's own scratch servers set it (lib/tmux.sh): they exist to
+# check that the config loads, and a plugin's load writes outside the
+# server, into $HOME and /tmp, which `canopy install` validating its entry
+# point must not do to a home it promises to restore exactly.
+canopy_load_plugins() {
+  local log name
+  if [ "$(tmux show-option -gqv @canopy_plugins 2>/dev/null)" = off ]; then
+    return 0
+  fi
+  log="$(canopy_plugin_log)"
+  mkdir -p "${log%/*}" 2>/dev/null && : >"$log" 2>/dev/null
+  for name in "$@"; do
+    canopy_load_plugin "$name"
+  done
+  return 0
+}

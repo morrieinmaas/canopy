@@ -11,6 +11,12 @@ setup_canopy_env() {
   # umask would see canopy refuse its own test fixture.
   (umask 077 && mkdir -p "$CANOPY_RUNTIME")
   PATH="$CANOPY_STORE/bin:$PATH"; export PATH
+  # Every test that sources the plugin layer loads opensessions, whose entry
+  # point otherwise downloads its release binaries into the vendored tree
+  # and keeps a pid and version file under /tmp keyed by the socket path.
+  OPENSESSIONS_SKIP_BINARY_DOWNLOAD=1
+  OPENSESSIONS_PID_FILE="$BATS_TEST_TMPDIR/opensessions.pid"
+  export OPENSESSIONS_SKIP_BINARY_DOWNLOAD OPENSESSIONS_PID_FILE
 }
 
 # setup_canopy_home
@@ -20,7 +26,10 @@ setup_canopy_env() {
 setup_canopy_home() {
   HOME="$BATS_TEST_TMPDIR/home"
   XDG_CONFIG_HOME="$HOME/.config"
-  export HOME XDG_CONFIG_HOME
+  # tmux-which-key writes its config and menu under XDG, and refuses an XDG
+  # directory outside $HOME.
+  XDG_DATA_HOME="$HOME/.local/share"
+  export HOME XDG_CONFIG_HOME XDG_DATA_HOME
   mkdir -p "$HOME"
 }
 

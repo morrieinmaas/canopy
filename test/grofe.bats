@@ -244,14 +244,19 @@ store_copy() {
   [ "$status" -eq 0 ] || { printf '%s\n' "$output"; false; }
 }
 
-@test "the plugin layer loads no plugin yet, and names where the loader goes" {
+@test "the plugin layer loads the plugins through the loader, after the restore process list" {
   canopy-grofe generate --out "$out"
   plugins="$out/30-canopy-plugins.toml"
-  grep -q 'ten vendored' "$plugins"
-  # canopy_restore_processes.sh is there, commented out for the loader.
-  grep -q '^  # """if-shell .*canopy_restore_processes.sh' "$plugins"
   grep -v '^ *#' "$plugins" >"$BATS_TEST_TMPDIR/body"
-  absent -q 'run-shell\|resurrect.tmux\|continuum.tmux' "$BATS_TEST_TMPDIR/body"
+  # In load-commands, in this order: the process list, the loader over the
+  # plugin list, and prefix C-s taken back from opensessions.
+  run grep -n 'canopy_restore_processes.sh\|canopy_load_plugins\|bind-key C-s send-prefix' "$BATS_TEST_TMPDIR/body"
+  [ "${#lines[@]}" -eq 3 ]
+  [[ "${lines[0]}" == *'"""if-shell '*canopy_restore_processes.sh* ]]
+  [[ "${lines[1]}" == *"canopy_load_plugins tmux-resurrect tmux-continuum "* ]]
+  [[ "${lines[2]}" == *'"bind-key C-s send-prefix",' ]]
+  # No plugin is named by its own path: the loader finds the entry points.
+  absent -qF -e resurrect.tmux -e continuum.tmux "$BATS_TEST_TMPDIR/body"
 }
 
 @test "validate: the generated tree loads in grofe with no errors" {
