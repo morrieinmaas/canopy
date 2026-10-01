@@ -5,3 +5,4 @@
 # <name>`, and commit the whole resulting diff, including CHECKSUMS.
 tmux-resurrect https://github.com/tmux-plugins/tmux-resurrect.git cff343cf9e81983d3da0c8562b01616f12e8d548
 tmux-continuum https://github.com/tmux-plugins/tmux-continuum.git 0698e8f4b17d6454c71bf5212895ec055c578da0
+tmux-sensible https://github.com/tmux-plugins/tmux-sensible.git 25cb91f42d020f675bb0a2ce3fbd3a5d96119efa
