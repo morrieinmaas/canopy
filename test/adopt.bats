@@ -316,6 +316,6 @@ resume 22222222-3333-4444-5555-666666666666" ]
 
 in_pane_report() {
   sock_path="$(tmux -L "$sock" display-message -p '#{socket_path}')"
-  env TMUX="$sock_path,0,0" TMUX_TMPDIR=/tmp TMUX_PANE="$1" \
+  env TMUX="$sock_path,0,0" TMUX_TMPDIR="$TMUX_TMPDIR" TMUX_PANE="$1" \
     canopy-agent report idle --source fake-agent --session-id "$2"
 }

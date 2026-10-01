@@ -134,7 +134,7 @@ EOF
 }
 
 @test "canopy_tmux_validate leaves no socket file behind" {
-  sock_dir="/tmp/tmux-$(id -u)"
+  sock_dir="$TMUX_TMPDIR/tmux-$(id -u)"
   before="$(find "$sock_dir" -name 'canopy-verify-*' 2>/dev/null | wc -l)"
   run canopy_tmux_validate "$CANOPY_STORE/tmux/conf.d/00-core.conf"
   [ "$status" -eq 0 ]
