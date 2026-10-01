@@ -1,2 +1,10 @@
 .DS_Store
 /tmp/
+# Written into vendored trees after vendoring: plugins/LOCAL.
+/plugins/opensessions/bin/opensessions-sidebar
+/plugins/opensessions/bin/opensessions-server
+/plugins/opensessions/bin/lazydiff
+/plugins/opensessions/bin/.opensessions-version
+/plugins/tmux-fzf-url/bin/xre
+/plugins/tmux-which-key/config.yaml
+/plugins/tmux-which-key/plugin/init.tmux

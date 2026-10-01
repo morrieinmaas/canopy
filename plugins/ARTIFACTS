@@ -1,0 +1,36 @@
+# Release binaries canopy install puts into a vendored tree, so that no
+# plugin fetches anything when it loads or runs. One file per line:
+#
+#   <name> <platform> <url> <archive-sha256> <member> <dest> <file-sha256>
+#
+# <platform> is darwin-arm64, darwin-x86_64, linux-arm64, linux-x86_64 or
+# any. <member> is the path inside the .tar.gz at <url>; <dest> is where it
+# goes, relative to plugins/<name>, and is listed in plugins/LOCAL so the
+# tree digest leaves it out. A url of text:<value> is a file holding <value>
+# and a newline. Each archive's sha256 is the one GitHub publishes for the
+# release asset; each file's is of the file as extracted.
+#
+# opensessions v0.2.0-alpha.12, the release its vendored package.json names.
+# Its entry point downloads these when bin/ lacks one of them or when
+# bin/.opensessions-version differs from package.json.
+#
+# xre v0.1.1, the version tmux-fzf-url's fzf-url.sh pins as XRE_VERSION. It
+# pipes xre's installer into bash when bin/xre is missing or another
+# version.
+opensessions darwin-arm64 https://github.com/Ataraxy-Labs/opensessions/releases/download/v0.2.0-alpha.12/opensessions-sidebar-aarch64-apple-darwin.tar.gz 7241ce66de74b11826f79f76e54030681a2e829acf4926645e7ec61804125128 ./opensessions-sidebar bin/opensessions-sidebar 1bd462aa5ece8c1f8163ac1c196021641ea3415be8602c22f27816d4c209da72
+opensessions darwin-arm64 https://github.com/Ataraxy-Labs/opensessions/releases/download/v0.2.0-alpha.12/opensessions-sidebar-aarch64-apple-darwin.tar.gz 7241ce66de74b11826f79f76e54030681a2e829acf4926645e7ec61804125128 ./opensessions-server bin/opensessions-server 943191e42232344531f8f7042c2ecce22fed7f5da573abb6130afabbcae51d44
+opensessions darwin-arm64 https://github.com/Ataraxy-Labs/opensessions/releases/download/v0.2.0-alpha.12/opensessions-sidebar-aarch64-apple-darwin.tar.gz 7241ce66de74b11826f79f76e54030681a2e829acf4926645e7ec61804125128 ./lazydiff bin/lazydiff 01946273cdd70dab56cab3c690d7c014aee7550248aa5a98e4922667879c2080
+opensessions darwin-x86_64 https://github.com/Ataraxy-Labs/opensessions/releases/download/v0.2.0-alpha.12/opensessions-sidebar-x86_64-apple-darwin.tar.gz 709b8b790dc73f82a99061599246a05826068fcb230c58053040f888cc1c1e21 ./opensessions-sidebar bin/opensessions-sidebar 919a9994776621b1f3df9cedcc6ebdb973b98f0cd92d2bfc03e604a16c6fb50a
+opensessions darwin-x86_64 https://github.com/Ataraxy-Labs/opensessions/releases/download/v0.2.0-alpha.12/opensessions-sidebar-x86_64-apple-darwin.tar.gz 709b8b790dc73f82a99061599246a05826068fcb230c58053040f888cc1c1e21 ./opensessions-server bin/opensessions-server d7e5f340d7cc09a04985acea0fcab59600a263ceb18b2663f3c0f80822923f61
+opensessions darwin-x86_64 https://github.com/Ataraxy-Labs/opensessions/releases/download/v0.2.0-alpha.12/opensessions-sidebar-x86_64-apple-darwin.tar.gz 709b8b790dc73f82a99061599246a05826068fcb230c58053040f888cc1c1e21 ./lazydiff bin/lazydiff 5db01aced4814f949fd45a09a9a50698dbbe58f7b639b55769d2eebcaab36f90
+opensessions linux-x86_64 https://github.com/Ataraxy-Labs/opensessions/releases/download/v0.2.0-alpha.12/opensessions-sidebar-x86_64-unknown-linux-gnu.tar.gz 184045d720f0c974add2a17b9c0553e2c7d2c8fc3e1594b3b7c4f8c990b82d35 ./opensessions-sidebar bin/opensessions-sidebar 28e526ef31ec3b211ef74e1f0ffc98574c1ec9ca91f9d0bfb79226ac306eb139
+opensessions linux-x86_64 https://github.com/Ataraxy-Labs/opensessions/releases/download/v0.2.0-alpha.12/opensessions-sidebar-x86_64-unknown-linux-gnu.tar.gz 184045d720f0c974add2a17b9c0553e2c7d2c8fc3e1594b3b7c4f8c990b82d35 ./opensessions-server bin/opensessions-server 9b43a37cbd3a83622f4ff7158dcabbd10ee80b7260c834e4bfca3a2f67285c4f
+opensessions linux-x86_64 https://github.com/Ataraxy-Labs/opensessions/releases/download/v0.2.0-alpha.12/opensessions-sidebar-x86_64-unknown-linux-gnu.tar.gz 184045d720f0c974add2a17b9c0553e2c7d2c8fc3e1594b3b7c4f8c990b82d35 ./lazydiff bin/lazydiff 7fd78aa3c7cec5aa6db8a27013d98b58964b321e24b1b9df29e33011601043ce
+opensessions linux-arm64 https://github.com/Ataraxy-Labs/opensessions/releases/download/v0.2.0-alpha.12/opensessions-sidebar-aarch64-unknown-linux-gnu.tar.gz 460a5a5034753a745c881e9bcf15a03e0c07135e38baf92762aac3ff053fc211 ./opensessions-sidebar bin/opensessions-sidebar 182cb9e2ad1f977f69d9bd92dad604467f827f385cf1560bee4047738ae30efc
+opensessions linux-arm64 https://github.com/Ataraxy-Labs/opensessions/releases/download/v0.2.0-alpha.12/opensessions-sidebar-aarch64-unknown-linux-gnu.tar.gz 460a5a5034753a745c881e9bcf15a03e0c07135e38baf92762aac3ff053fc211 ./opensessions-server bin/opensessions-server 5c9728ebc21387378439b308236e9381e6df68ea732224f1e90210071c0a5eff
+opensessions linux-arm64 https://github.com/Ataraxy-Labs/opensessions/releases/download/v0.2.0-alpha.12/opensessions-sidebar-aarch64-unknown-linux-gnu.tar.gz 460a5a5034753a745c881e9bcf15a03e0c07135e38baf92762aac3ff053fc211 ./lazydiff bin/lazydiff c1ebc614db2e95fa615b93a4464954b006e419f447f70d420b7be988851060e9
+opensessions any text:0.2.0-alpha.12 - - bin/.opensessions-version e540d70d9ee8bc8d0fbda93c2d8d5e2edc80229ccfb9560b797a195a06fc41fc
+tmux-fzf-url darwin-arm64 https://github.com/wfxr/xre/releases/download/v0.1.1/xre-v0.1.1-aarch64-apple-darwin.tar.gz d615dd1ccb541187b40f9b749efe0b0917d4f8949433b87571fb64e44e357901 xre-v0.1.1-aarch64-apple-darwin/xre bin/xre 8726636cc27f0c21a5289acab0be14467a42a6ac26e56196f6a82668dd7cba80
+tmux-fzf-url darwin-x86_64 https://github.com/wfxr/xre/releases/download/v0.1.1/xre-v0.1.1-x86_64-apple-darwin.tar.gz 81cedc4a041c127ac3cddd5b9edb8745367d215ad22d585d2273dc1dfc9b0b8a xre-v0.1.1-x86_64-apple-darwin/xre bin/xre 154e3c70fba42c21e56d77a494c49e91cc17d1227598221b3e0091e2c12bc0f1
+tmux-fzf-url linux-x86_64 https://github.com/wfxr/xre/releases/download/v0.1.1/xre-v0.1.1-x86_64-unknown-linux-musl.tar.gz f6996f8ef5f3f0e420423e619763a8f8b961bac7630a93c5f214ba5290fddd45 xre-v0.1.1-x86_64-unknown-linux-musl/xre bin/xre 62af73c6f399ecd13c61165cd20276088e0c51f95c6cfeee27151a53374d6c57
+tmux-fzf-url linux-arm64 https://github.com/wfxr/xre/releases/download/v0.1.1/xre-v0.1.1-aarch64-unknown-linux-musl.tar.gz a14d33370283b472cc9c7aa0c6fd6428907dccfcd5fda93242e99289bfb62593 xre-v0.1.1-aarch64-unknown-linux-musl/xre bin/xre c618f2b09e53dd2f80ddf1737fd709708b140f54fcfd635a63918cad06a7b74d

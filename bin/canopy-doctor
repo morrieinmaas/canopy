@@ -160,9 +160,9 @@ else
   # `canopy reboot-check`, whose entire job is to judge that, not to
   # doctor, whose job is to describe.
   if canopy_have bash; then
-    printf '  bash (both plugins are bash scripts): yes\n'
+    printf '  bash (nine of the ten plugins are bash scripts): yes\n'
   else
-    printf '  bash (both plugins are bash scripts): dormant (bash not found, the layer loads nothing)\n'
+    printf '  bash (nine of the ten plugins are bash scripts): dormant (bash not found, only tmux-which-key loads)\n'
   fi
 
   # ps is the other half of the same story and the nastier half. An absent
@@ -244,6 +244,39 @@ else
       warnings=$((warnings + 1))
     fi
   done
+
+  # The release binaries canopy install puts into a tree (plugins/ARTIFACTS),
+  # which the tree digest leaves out and which are checked here instead,
+  # each against its own sha256. A missing one is a plugin that would
+  # otherwise fetch it from the network.
+  doctor_artifacts="$(canopy_plugin_artifacts)"
+  if [ -n "$doctor_artifacts" ]; then
+    while read -r art_name _ _ _ art_dest art_sum; do
+      art_path="$CANOPY_STORE/plugins/$art_name/$art_dest"
+      if [ ! -f "$art_path" ]; then
+        printf '  %s: %s MISSING (provision with: canopy install)\n' "$art_name" "$art_dest"
+        warnings=$((warnings + 1))
+      elif [ "$(canopy_sha256 "$art_path")" = "$art_sum" ]; then
+        printf '  %s: %s provisioned, matches\n' "$art_name" "$art_dest"
+      else
+        printf '  %s: %s MODIFIED since it was provisioned (re-provision: delete it, then canopy install)\n' "$art_name" "$art_dest"
+        warnings=$((warnings + 1))
+      fi
+    done <<DOCTOR_ARTIFACTS_EOF
+$doctor_artifacts
+DOCTOR_ARTIFACTS_EOF
+  fi
+
+  # What the last load pass skipped, from the loader's own log. Dormant is
+  # a description of the machine, as for every optional layer above, so it
+  # is reported and not counted as a warning.
+  doctor_plugin_log="$(canopy_plugin_log)"
+  if [ -s "$doctor_plugin_log" ]; then
+    printf '  last plugin load:\n'
+    while IFS= read -r doctor_line; do
+      printf '    %s\n' "$doctor_line"
+    done <"$doctor_plugin_log"
+  fi
 fi
 printf '\n'
 
