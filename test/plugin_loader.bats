@@ -201,8 +201,11 @@ prefix_binding() {
 # One spot check per plugin, each something only that plugin's load does.
 loaded() {
   case "$1" in
+    # resurrect binds its save; tmux.conf and the grofe fragment then point
+    # continuum's saves at canopy's one-at-a-time wrapper.
     tmux-resurrect)
-      [ "$(srv show -gv @resurrect-save-script-path)" = "$CANOPY_STORE/plugins/tmux-resurrect/scripts/save.sh" ]
+      [[ "$(prefix_binding M-s)" == *"tmux-resurrect/scripts/save.sh"* ]] &&
+        [ "$(srv show -gv @resurrect-save-script-path)" = "$CANOPY_STORE/plugins/strategies/canopy_save.sh" ]
       ;;
     # continuum swaps #{continuum_status} for a #(continuum_status.sh).
     # grofe under its own name shows a #() as the status source it
@@ -248,11 +251,36 @@ assert_loaded_except() {
 
 plugin_log() { cat "$CANOPY_STATE/plugins.log" 2>/dev/null || true; }
 
-# On grofe, two entry points run and then stop at a form grofe does not
-# answer yet: which-key's `source-file` of its tmux-syntax menu, and
-# claude-session-manager's `set-hook -g alert-bell`. Both are logged as
-# failed, and neither stops the plugins after it. Nothing else may be.
-assert_grofe_log() {
+# Whether this grofe answers the two forms which-key and
+# claude-session-manager stopped at before grofe fixed them (M3.7 lane 1): a
+# tmux-syntax `source-file` and `set-hook -g alert-bell`. Asked of the
+# running server, through the tmux name the plugins call it by.
+grofe_runs_all_ten() {
+  local sock probe
+  sock="$(srv display-message -p '#{socket_path}')" || return 1
+  probe="$BATS_TEST_TMPDIR/probe.conf"
+  printf 'set -g @canopy_probe 1\n' >"$probe"
+  "$bin/tmux" -S "$sock" source-file "$probe" >/dev/null 2>&1 &&
+    [ "$("$bin/tmux" -S "$sock" show -gv @canopy_probe 2>/dev/null)" = 1 ] &&
+    "$bin/tmux" -S "$sock" set-hook -g alert-bell 'display-message probe' >/dev/null 2>&1 &&
+    "$bin/tmux" -S "$sock" set-hook -gu alert-bell >/dev/null 2>&1
+}
+
+# On a grofe with lane 1's fixes all ten load and plugins.log is empty. On
+# one without, two entry points stop at the forms above, which-key before
+# it binds: both are logged as failed, and neither stops the plugins after
+# it. Nothing else may be.
+assert_grofe_load() {
+  if grofe_runs_all_ten; then
+    assert_loaded_except
+    run plugin_log
+    [ -z "$output" ] || {
+      printf 'unexpected plugins.log:\n%s\n' "$output"
+      return 1
+    }
+    return 0
+  fi
+  assert_loaded_except tmux-which-key
   run plugin_log
   local line
   while IFS= read -r line; do
@@ -493,9 +521,7 @@ EOF
   copy_store
   start grofe-tmux
   wait_loaded
-  # The two grofe gaps assert_grofe_log names stop which-key before it binds.
-  assert_loaded_except tmux-which-key
-  assert_grofe_log
+  assert_grofe_load
   assert_no_load_miss
   run plugin_log
   [[ "$output" != *"dormant"* ]]
@@ -510,8 +536,7 @@ EOF
   copy_store
   start grofe
   wait_loaded
-  assert_loaded_except tmux-which-key
-  assert_grofe_log
+  assert_grofe_load
   run plugin_log
   [[ "$output" != *"dormant"* ]]
 }
