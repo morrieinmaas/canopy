@@ -191,6 +191,17 @@ store_copy() {
   [ -f "$out/10-canopy-keys.toml" ]
 }
 
+@test "the nav fragment binds the navigator's copy-mode-vi keys to select-pane, as the plugin does on tmux" {
+  canopy-grofe generate --out "$out"
+  run awk '/^\[keys\.copy-mode-vi\]$/ { on = 1; next } /^\[/ { on = 0 } on && NF' "$out/40-canopy-nav.toml"
+  [ "${#lines[@]}" -eq 5 ]
+  zoomed="if-shell -F '#{&&:#{window_zoomed_flag},#{==:#{@tmux_navigator_disable_when_zoomed},1}}' ''"
+  for row in 'C-h -L' 'C-j -D' 'C-k -U' 'C-l -R' '"C-\\" -l'; do
+    [[ "$output" == *"${row% *} = { cmd = \"$zoomed 'select-pane ${row#* }'\""* ]] ||
+      { printf 'missing: %s\n%s\n' "$row" "$output"; false; }
+  done
+}
+
 @test "both pill glyphs are byte-for-byte intact in the status fragment" {
   canopy-grofe generate --out "$out"
   run od -An -tx1 "$out/20-canopy-status.toml"
