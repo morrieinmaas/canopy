@@ -30,6 +30,17 @@ setup_canopy_env() {
   (umask 077 && mkdir -p "$TMUX_TMPDIR")
   CANOPY_SCRATCH_TMPDIR="$TMUX_TMPDIR"
   export TMUX_TMPDIR CANOPY_SCRATCH_TMPDIR
+  # Nor the user's session bus or systemd. continuum runs
+  # `systemctl --user disable tmux.service` each time it loads with
+  # @continuum-boot off, and a machine may ship a unit by that name.
+  # systemctl is also stubbed on the suite's PATH (test/setup_suite.bash);
+  # these two keep a systemctl reached some other way from finding the
+  # user's manager. A runtime directory a test made for itself stays.
+  unset DBUS_SESSION_BUS_ADDRESS
+  case "${XDG_RUNTIME_DIR-}" in
+    "$CANOPY_TEST_SOCKS"/* | "$BATS_TEST_TMPDIR"/*) ;;
+    *) unset XDG_RUNTIME_DIR ;;
+  esac
   # No plugin loads unless a test is about loading them
   # (test/plugin_loader.bats), and canopy install provisions no release
   # binary: it would reach the network and write into this checkout.

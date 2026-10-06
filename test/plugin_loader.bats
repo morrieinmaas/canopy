@@ -859,3 +859,28 @@ EOF
   run "$CANOPY_TEST_SOCKS/bin/tmux" -L nothing-here ls
   [ "$status" -ne 97 ]
 }
+
+@test "the suite's tmux reads the attached -S/path and -Lname forms too" {
+  CANOPY_SHIM_REFUSALS="$BATS_TEST_TMPDIR/refused"
+  export CANOPY_SHIM_REFUSALS
+  # A TMUX naming one of the suite's sockets must not let an attached -S
+  # elsewhere through.
+  run env TMUX="$CANOPY_TEST_SOCKS/x,1,0" "$CANOPY_TEST_SOCKS/bin/tmux" -S/nowhere/else ls
+  [ "$status" -eq 97 ]
+  [ "$(cat "$CANOPY_SHIM_REFUSALS")" = "-S/nowhere/else ls" ]
+  run env -u TMUX "$CANOPY_TEST_SOCKS/bin/tmux" "-S$TMUX_TMPDIR/nothing-here" ls
+  [ "$status" -ne 97 ]
+  run env -u TMUX "$CANOPY_TEST_SOCKS/bin/tmux" -Lnothing-here ls
+  [ "$status" -ne 97 ]
+  run env -u TMUX TMUX_TMPDIR=/nowhere "$CANOPY_TEST_SOCKS/bin/tmux" -Lnothing-here ls
+  [ "$status" -eq 97 ]
+}
+
+@test "the suite's systemctl only records, so continuum never reaches the user's manager" {
+  [ "$(command -v systemctl)" = "$CANOPY_TEST_SOCKS/bin/systemctl" ]
+  [ -z "${DBUS_SESSION_BUS_ADDRESS+x}" ]
+  : >"$CANOPY_TEST_SOCKS/systemctl.log"
+  run bash "$real_store/plugins/tmux-continuum/scripts/handle_tmux_automatic_start/systemd_disable.sh"
+  [ "$status" -eq 0 ]
+  [ "$(cat "$CANOPY_TEST_SOCKS/systemctl.log")" = "--user disable tmux.service" ]
+}

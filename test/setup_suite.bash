@@ -58,6 +58,8 @@ for a in "\$@"; do
   fi
   case "\$a" in
     -S | -L | -f | -c | -T) named="\$a" ;;
+    -S?*) sock="\${a#-S}" ;;
+    -L?*) sock="\$dir/\${a#-L}" ;;
     -V) version=1 ;;
     -*) ;;
     *) break ;;
@@ -81,6 +83,21 @@ EOF
   chmod +x "$CANOPY_TEST_SOCKS/bin/tmux"
 }
 
+# canopy_write_systemctl_stub
+# A systemctl that records its arguments and does nothing else. continuum
+# runs `systemctl --user enable|disable tmux.service` each time it loads on
+# a machine whose pid 1 is systemd, and no test may reach the user's
+# manager. Calls land in $CANOPY_TEST_SOCKS/systemctl.log, one per line.
+canopy_write_systemctl_stub() {
+  mkdir -p "$CANOPY_TEST_SOCKS/bin"
+  cat >"$CANOPY_TEST_SOCKS/bin/systemctl" <<EOF
+#!/bin/sh
+printf '%s\\n' "\$*" >>'$CANOPY_TEST_SOCKS/systemctl.log'
+exit 0
+EOF
+  chmod +x "$CANOPY_TEST_SOCKS/bin/systemctl"
+}
+
 setup_suite() {
   # Resolved, because tmux names its sockets by the real path (/private/tmp
   # on macOS), and the shim compares against this.
@@ -90,6 +107,7 @@ setup_suite() {
   local real
   real="$(command -v tmux)" || return 1
   canopy_write_tmux_shim "$real"
+  canopy_write_systemctl_stub
   PATH="$CANOPY_TEST_SOCKS/bin:$PATH"
   export PATH
   canopy_guard_snapshot >"$BATS_SUITE_TMPDIR/guard-before"
