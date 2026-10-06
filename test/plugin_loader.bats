@@ -809,6 +809,27 @@ EOF
   [ ! -e "$BATS_TEST_TMPDIR/calls" ]
 }
 
+@test "a plugin with ARTIFACTS rows only for other platforms is dormant" {
+  fzf_url_gate
+  printf 'tmux-fzf-url not-this-machine https://fixture.invalid/x %s xre bin/xre %s\n' \
+    "$(printf 0%.0s $(seq 64))" "$(canopy_sha256 "$store/plugins/tmux-fzf-url/bin/xre")" >"$CANOPY_ARTIFACTS"
+  canopy_load_plugins tmux-fzf-url
+  [ ! -e "$BATS_TEST_TMPDIR/calls" ]
+  run plugin_log
+  [ "${#lines[@]}" -eq 1 ]
+  [[ "${lines[0]}" == *" tmux-fzf-url: dormant, plugins/ARTIFACTS has no release binaries for this platform" ]]
+}
+
+@test "on a machine ARTIFACTS names no platform for, opensessions and tmux-fzf-url are dormant" {
+  fzf_url_gate
+  CANOPY_ARTIFACTS="$real_store/plugins/ARTIFACTS"
+  canopy_platform() { return 1; }
+  canopy_load_plugins tmux-fzf-url opensessions
+  [ ! -e "$BATS_TEST_TMPDIR/calls" ]
+  [[ "$(plugin_log)" == *" tmux-fzf-url: dormant, plugins/ARTIFACTS has no release binaries for this platform"* ]]
+  [[ "$(plugin_log)" == *" opensessions: dormant, plugins/ARTIFACTS has no release binaries for this platform"* ]]
+}
+
 @test "a symlinked *.tmux entry point is refused" {
   fzf_url_gate
   mv "$store/plugins/tmux-fzf-url/fzf-url.tmux" "$store/plugins/tmux-fzf-url/real.sh"
