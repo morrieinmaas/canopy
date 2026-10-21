@@ -106,6 +106,10 @@ setup_suite() {
   export CANOPY_TEST_SOCKS
   local real
   real="$(command -v tmux)" || return 1
+  # For the one test that needs a server whose argv[0] is `tmux`, as a
+  # user's is; through the shim every server shows its absolute path.
+  CANOPY_TEST_REAL_TMUX="$real"
+  export CANOPY_TEST_REAL_TMUX
   canopy_write_tmux_shim "$real"
   canopy_write_systemctl_stub
   PATH="$CANOPY_TEST_SOCKS/bin:$PATH"
