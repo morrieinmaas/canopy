@@ -19,6 +19,7 @@ M2 added the `agent` group.
 | [`canopy index`](#canopy-index) | Generate the command index from metadata headers | core |
 | [`canopy install`](#canopy-install) | Install canopy, migrating any existing tmux config | core |
 | [`canopy restore`](#canopy-restore) | Roll back transactions canopy recorded | core |
+| [`canopy server-path`](#canopy-server-path) | Make bare `tmux` in a server job mean this server's binary | core |
 | [`canopy version`](#canopy-version) | Print the canopy version | core |
 | [`canopy adopt`](#canopy-adopt) | Restart agent panes in place so each one carries its own resume command | agent |
 | [`canopy agent`](#canopy-agent) | Report an agent's state into its pane, and install adapters | agent |
@@ -578,6 +579,54 @@ layer is built on exactly that.
 | Exit | Meaning |
 |---|---|
 | 0 | Rendered |
+| 1 | Unknown argument |
+
+---
+
+## `canopy server-path`
+
+```
+canopy server-path
+```
+
+Makes bare `tmux` inside a server job mean the binary this server is actually
+running. Run from `conf.d/00-core.conf` on every config load; you should never
+need to run it yourself.
+
+Every tmux plugin is a shell script that calls bare `tmux`, dozens to hundreds of
+times while it loads. Which binary that resolves to is decided by the tmux
+*server's* `PATH`, and that is a snapshot taken from whichever shell first started
+the server, never refreshed afterwards. Two things go wrong when it disagrees with
+the server it belongs to:
+
+- **Speed.** A version manager's shim (mise, asdf, rtx and pyenv all install one
+  per tool they have ever installed, including tools they no longer manage) makes
+  every call pay that manager's startup first. Measured: 134ms through a shim
+  against 5.8ms direct, which turned one `prefix r` reload into 32 seconds of
+  frozen server.
+- **Correctness.** A second installation at a different version answers to bare
+  `tmux` just as readily, and then plugin scripts speak a different client version
+  to the server than the server is running.
+
+The correction is narrow. canopy keeps one directory, `$CANOPY_RUNTIME/bin`,
+holding one symlink named `tmux` that points at this server's own binary, and puts
+only that directory first on the server's `PATH`. Nothing else is shadowed, and
+re-running it never stacks a second copy on `PATH`.
+
+It is installed unconditionally rather than only where PATH looks wrong, because
+"is bare `tmux` already the server's binary" has no portable answer: Homebrew,
+nanobrew and Nix all put a symlink on `PATH` pointing into a store, so the path a
+job resolves and the executable the kernel mapped are routinely different strings
+for the same file. On a healthy machine the correction changes nothing a job can
+see.
+
+`canopy doctor` reports this as **bare tmux in a server job**, and warns when a job
+resolves something other than canopy's shadow, which means an old server predating
+this canopy, or a `user.conf` that set `PATH` afterwards.
+
+| Exit | Meaning |
+|---|---|
+| 0 | `PATH` corrected, already correct, or no server to correct |
 | 1 | Unknown argument |
 
 ---
