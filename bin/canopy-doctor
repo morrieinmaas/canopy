@@ -374,6 +374,54 @@ if [ -r "$CANOPY_CONFIG/user.conf" ] &&
     "it greps one level below the entry point and user.conf is two, so it loads nothing" \
     "declare them in one option instead: set -g @tpm_plugins 'owner/repo owner/repo'"
 fi
+
+# Which tmux a server job actually runs, which is not necessarily the one
+# running the server. Every plugin is a shell script calling bare `tmux`
+# dozens to hundreds of times as it loads, and what that resolves to comes
+# from the server's PATH: a snapshot of whichever shell started the server,
+# never refreshed. A version-manager shim sitting ahead of the real binary
+# there costs its manager's whole startup per call (measured: 134ms against
+# 5.8ms, a 32-second `prefix r`), and a second installation at a different
+# version makes those scripts speak a different client version to the server
+# than the server is.
+#
+# Probed through run-shell rather than by reading doctor's own $PATH,
+# because doctor is normally run from an interactive shell whose PATH is not
+# the server's; the server's is the only one that decides this.
+#
+# What it compares against is canopy's own shadow rather than the server
+# binary's path, and that is deliberate. Homebrew, nanobrew and Nix all put
+# a symlink on PATH pointing into a store, so the path a job resolves and
+# the executable the kernel mapped are routinely different strings for one
+# file; comparing those two reported a mismatch between a path and itself.
+# canopy-server-path owns $CANOPY_RUNTIME/bin/tmux and points it at the
+# server's binary every load, so "is that what a job gets" is the same
+# question with an exact answer.
+#
+# Only asked of a server THIS store configured, which is both of the guards
+# below. Outside a server, bare `tmux` reaches whichever one happens to be
+# on the default socket; inside one configured from a different store, the
+# runtime directory compared against belongs to a different canopy, and the
+# mismatch would be the comparison's fault rather than the machine's. That
+# is not hypothetical: it is what the test suite looks like from here, since
+# bats inherits $TMUX from the developer's own session.
+doctor_server_store="$(tmux show-environment -g CANOPY_STORE 2>/dev/null |
+  sed -n 's/^CANOPY_STORE=//p')"
+if [ -n "${TMUX:-}" ] && [ "$doctor_server_store" = "$CANOPY_STORE" ]; then
+  doctor_job_tmux="$(tmux run-shell 'command -v tmux' 2>/dev/null || true)"
+  if [ -z "$doctor_job_tmux" ]; then
+    : # could not probe the job environment; nothing honest to report
+  elif [ "$doctor_job_tmux" = "$CANOPY_RUNTIME/bin/tmux" ]; then
+    doctor_verdict ok "bare tmux in a server job" "ok"
+  else
+    doctor_verdict warn "bare tmux in a server job" \
+      "WARNING, it is not the binary this server runs" \
+      "a job resolves: $doctor_job_tmux" \
+      "canopy's shadow: $CANOPY_RUNTIME/bin/tmux" \
+      "every plugin call pays the difference, and a shim can cost 100ms+ each" \
+      "reload the config, or restart a server started before this canopy"
+  fi
+fi
 printf '\n'
 
 # --- Restore points ----------------------------------------------------

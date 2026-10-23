@@ -1,0 +1,92 @@
+#!/bin/sh
+# canopy:summary=Make bare `tmux` in a server job mean this server's binary
+# canopy:group=core
+# shellcheck disable=SC2154  # CANOPY_RUNTIME is exported by lib/env.sh's canopy_paths
+#
+# Why this exists, because the failure it prevents is silent and large.
+#
+# A tmux plugin is a shell script, and every one of them calls bare `tmux`,
+# dozens to hundreds of times while it loads. Which binary that resolves to
+# is decided by the PATH of the tmux SERVER, and the server's environment is
+# a snapshot taken from whichever shell happened to start it, never
+# refreshed afterwards. Nothing in tmux, and nothing a distribution can ship
+# as config alone, makes that snapshot agree with the server it belongs to.
+#
+# When it disagrees, two things go wrong at once:
+#
+#   Speed. If the first `tmux` on that PATH is a version-manager shim
+#   (mise, asdf, rtx and pyenv all install one for every tool they have ever
+#   installed, including tools they no longer manage), every call pays that
+#   manager's startup before reaching the real binary. Measured on the
+#   machine this was written for: 134ms through a mise shim against 5.8ms
+#   direct, which turned one `prefix r` reload into 32 seconds of frozen
+#   server. A stale shim for a tool the manager does not even manage any
+#   more costs exactly the same, because the cost is in deciding that.
+#
+#   Correctness. A second installation at a different version answers to
+#   bare `tmux` just as readily, and then plugin scripts are speaking a
+#   different client version to the server than the server itself is.
+#
+# The fix is deliberately narrow. Rather than reordering the server's PATH,
+# which would shadow every other tool the user put ahead of it, canopy keeps
+# one directory holding one symlink named `tmux`, pointing at the binary
+# this server is actually running, and puts only that directory first. The
+# blast radius is the single name that was wrong.
+#
+# It is installed unconditionally, rather than only on a machine that looks
+# wrong, because "does bare tmux already mean the server's binary" is a
+# question that cannot be answered portably. Homebrew, nanobrew and Nix all
+# put a symlink on PATH pointing into a store, so the path a job resolves
+# and the executable the kernel has mapped are routinely different strings
+# for the same file, and `ps` and `lsof` disagree about which of the two to
+# report. Comparing them produces false positives on ordinary machines.
+# Pointing the name at the server's own binary is correct whether or not it
+# was already, and on a healthy machine it changes nothing a job can see.
+set -eu
+
+: "${CANOPY_STORE:=$(cd "$(dirname "$0")/.." && pwd)}"
+# shellcheck source=../lib/env.sh
+# shellcheck disable=SC1091
+. "$CANOPY_STORE/lib/env.sh"
+# shellcheck source=../lib/tmux.sh
+# shellcheck disable=SC1091
+. "$CANOPY_STORE/lib/tmux.sh"
+canopy_paths
+
+if [ $# -gt 0 ]; then
+  canopy_die "canopy-server-path: unknown argument: $1"
+fi
+
+# No reachable server means there is no job environment to correct. Exit 0,
+# not an error: this runs from the config on every load, including loads
+# that happen before a server is answering, and a config layer that fails
+# there would take every later layer down with it.
+server_bin="$(canopy_tmux_server_binary)" || exit 0
+[ -n "$server_bin" ] || exit 0
+
+canopy_bin="$CANOPY_RUNTIME/bin"
+
+# Is canopy already the first thing on PATH? Checked against PATH rather
+# than against what `tmux` resolves to, because once this has run the answer
+# to the latter is canopy's own symlink, which never equals $server_bin as a
+# string. Comparing those would re-prepend on every reload and grow PATH
+# without bound.
+canopy_path_first=0
+case "$PATH" in
+  "$canopy_bin":*) canopy_path_first=1 ;;
+  *) ;;
+esac
+
+canopy_runtime_ensure
+mkdir -p "$canopy_bin"
+
+# Rewritten only when it is wrong, so the usual reload touches no files.
+canopy_link="$canopy_bin/tmux"
+if [ "$(readlink "$canopy_link" 2>/dev/null || true)" != "$server_bin" ]; then
+  rm -f "$canopy_link"
+  ln -s "$server_bin" "$canopy_link"
+fi
+
+if [ "$canopy_path_first" -eq 0 ]; then
+  tmux set-environment -g PATH "$canopy_bin:$PATH"
+fi

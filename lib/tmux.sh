@@ -102,7 +102,15 @@ canopy_tmux_validate() {
     return 1
   fi
   sock="canopy-verify-$$"
-  err="$(canopy_tmux_bare "$tmux_bin" -L "$sock" -f /dev/null new-session -d 'sleep 600' \; set -g @continuum-restore-max-delay 0 \; source-file "$conf" 2>&1)"
+  # @canopy_skip_server_path, for the same class of reason as the
+  # @continuum-restore-max-delay above it: a throwaway server exists to
+  # parse a config, not to run jobs in. 00-core's PATH correction would
+  # otherwise fire here, and `new-session -d` returns before the queued
+  # run-shell finishes, so the kill-server two lines down lands first and
+  # the job's next `tmux` call auto-starts a FRESH server on the socket
+  # just removed. The socket that leaves behind is short-lived and so was
+  # the test for it: intermittent, and blamed on everything but this.
+  err="$(canopy_tmux_bare "$tmux_bin" -L "$sock" -f /dev/null new-session -d 'sleep 600' \; set -g @continuum-restore-max-delay 0 \; set -g @canopy_skip_server_path 1 \; source-file "$conf" 2>&1)"
   rc=$?
   canopy_tmux_bare "$tmux_bin" -L "$sock" kill-server >/dev/null 2>&1
   # kill-server stops the server and leaves its socket file behind, one per
@@ -187,6 +195,7 @@ canopy_tmux_loaded_option() {
   canopy_tmux_bare "$tmux_bin" -L "$sock" -f /dev/null \
     new-session -d 'sleep 600' \; \
     set -g @continuum-restore-max-delay 0 \; \
+    set -g @canopy_skip_server_path 1 \; \
     source-file "$conf" >"$out" 2>&1 || rc=$?
   if [ "$rc" -eq 0 ]; then
     canopy_tmux_bare "$tmux_bin" -L "$sock" \
@@ -201,4 +210,56 @@ canopy_tmux_loaded_option() {
   value="$(cat "$out" 2>/dev/null)" || value=""
   rm -f "$out"
   printf '%s\n' "$value"
+}
+
+# canopy_tmux_server_binary
+# Prints the absolute path of the binary the RUNNING server was started
+# from, or nothing (status 1) when it cannot be determined.
+#
+# Asked of the process rather than of $PATH, because the whole point of
+# every caller is that $PATH may be lying. Whichever tmux a job resolves
+# can be a version-manager shim, a wrapper, or a second installation at a
+# different version; the server's own executable is the only authority on
+# what this server is.
+#
+# Three sources, cheapest first, because none of them answers everywhere:
+# /proc/<pid>/exe is the kernel's own answer and does not exist on macOS;
+# `ps -o comm=` is 3ms and prints a full path on macOS, but only when the
+# server was exec'd with one (a server started as bare `tmux` reports just
+# "tmux", and on Linux that field is the truncated command name either
+# way); lsof's text-segment entry is 29ms and reports the executable
+# actually mapped, whatever argv[0] claimed.
+canopy_tmux_server_binary() {
+  canopy_server_pid="$(tmux display-message -p '#{pid}' 2>/dev/null)" || return 1
+  case "$canopy_server_pid" in
+    '' | *[!0-9]*) return 1 ;;
+    *) ;;
+  esac
+
+  canopy_server_bin=''
+
+  if [ -r "/proc/$canopy_server_pid/exe" ]; then
+    canopy_server_bin="$(readlink -f "/proc/$canopy_server_pid/exe" 2>/dev/null || true)"
+  fi
+
+  # Taken only when it is absolute, rather than trusted on sight.
+  if [ -z "$canopy_server_bin" ]; then
+    canopy_server_bin="$(ps -o comm= -p "$canopy_server_pid" 2>/dev/null || true)"
+    case "$canopy_server_bin" in
+      /*) ;;
+      *) canopy_server_bin='' ;;
+    esac
+  fi
+
+  if [ -z "$canopy_server_bin" ] && command -v lsof >/dev/null 2>&1; then
+    canopy_server_bin="$(lsof -p "$canopy_server_pid" -a -d txt -Fn 2>/dev/null |
+      sed -n 's/^n//p' | head -n 1)"
+  fi
+
+  case "$canopy_server_bin" in
+    /*) ;;
+    *) return 1 ;;
+  esac
+  [ -x "$canopy_server_bin" ] || return 1
+  printf '%s' "$canopy_server_bin"
 }
