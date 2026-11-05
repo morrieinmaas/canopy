@@ -58,9 +58,12 @@ setup() {
   [ "$status" -eq 0 ]
 
   sock="canopy-config-$$"
+  # bare_tmux throughout, so every call reaches the socket the server was
+  # started on: a plain tmux would look under the harness's TMUX_TMPDIR,
+  # find nothing when that is set, and leave this server running.
   bare_tmux -L "$sock" -f "$(canopy_entry_point)" new-session -d
-  run env TMUX= tmux -L "$sock" run-shell "canopy config"
-  kill_tmux_server "$sock"
+  TMUX= run bare_tmux -L "$sock" run-shell "canopy config"
+  bare_tmux_cleanup "$sock"
 
   # run-shell prints the command's stdout into the client, so the table
   # arrives here the same way a person sees it.
