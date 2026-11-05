@@ -17,10 +17,13 @@ jobs:
       matrix:
         os: [ubuntu-latest, macos-latest]
     runs-on: ${{ matrix.os }}
+    env:
+      # Loads mise.ci.toml, which pins tmux for CI only.
+      MISE_ENV: ci
     steps:
       - uses: actions/checkout@v4
-      # mise-action installs the toolchain mise.toml pins, tmux included,
-      # so the tests run against the same tmux on both runners.
+      # mise-action installs the toolchain mise.toml pins, plus tmux from
+      # mise.ci.toml (MISE_ENV=ci), so both runners test the same tmux.
       - uses: jdx/mise-action@v2
       # The task names, not the commands behind them. A contributor runs
       # `mise run lint` and `mise run test` and gets exactly this.
