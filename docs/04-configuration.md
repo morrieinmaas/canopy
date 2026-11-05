@@ -103,6 +103,7 @@ canopy config --all      # including the internal group
 | `@theme_grey` | `#a89984` | Inactive windows and the date pill |
 | `@theme_muted` | `#7c6f64` | Window names that are not current |
 | `@theme_red` | `#cc241d` | Anything wrong: a low battery, a disconnected network |
+| `@canopy_persistence` | `grofe` or `resurrect` | Which persistence the plugin layer chose for this server. On grofe it is `grofe`, none of the resurrect and continuum options below are set, and `canopy config` shows them as `(not used on grofe)` ([07](07-persistence.md#two-backends-tmux-and-grofe)) |
 | `@continuum-restore` | `on` | Restore the last save when a new server starts. Upstream defaults this off, which is why canopy sets it |
 | `@continuum-save-interval` | `5` | Minutes between automatic saves. `0` stops autosaving |
 | `@resurrect-dir` | `$CANOPY_STATE/resurrect` | Where save files go. Moving it to an empty directory is how a reboot comes back with nothing |

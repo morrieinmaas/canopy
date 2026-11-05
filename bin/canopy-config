@@ -69,7 +69,9 @@ canopy_cf_live=1
 if [ "$canopy_cf_defaults" -eq 1 ]; then
   canopy_cf_live=0
 else
-  canopy_cf_format="$(awk -F'\t' '{ printf "#{%s}\t", $1 }' "$canopy_cf_rows")"
+  # One field past the rows: which persistence the plugin layer chose, so
+  # the resurrect and continuum rows can be read against it below.
+  canopy_cf_format="$(awk -F'\t' '{ printf "#{%s}\t", $1 }' "$canopy_cf_rows")#{@canopy_persistence}"
   tmux display-message -p "$canopy_cf_format" >"$canopy_cf_values" 2>/dev/null ||
     canopy_cf_live=0
 fi
@@ -84,7 +86,8 @@ awk -F'\t' \
   BEGIN {
     if (live) {
       getline valueline < valuefile
-      split(valueline, value, "\t")
+      n = split(valueline, value, "\t")
+      grofe = (value[n] == "grofe")
     }
   }
   # One default in the table is written with a tmux variable in it, because
@@ -121,8 +124,13 @@ awk -F'\t' \
     #   code       the default is in a script and the option is normally
     #              unset, so unset IS the default being in effect.
     #   generated  computed at load, so there is no fixed value to compare.
+    #
+    # On grofe the plugin layer loads neither resurrect nor continuum and
+    # sets none of their options, so their rows being unset is the design
+    # and not a setting that did not take.
+    unused = grofe && $1 ~ /^@(resurrect|continuum)-/
     mark = " "
-    if (live && $3 == "layer" && cur != def) mark = "*"
+    if (live && !unused && $3 == "layer" && cur != def) mark = "*"
     if (live && $3 == "code" && cur != "" && cur != def) mark = "*"
     if (mark == "*") changed++
 
@@ -131,7 +139,8 @@ awk -F'\t' \
       group = $4
       printf "%s:\n", group
     }
-    printf "  %s %-34s %-28s %s\n", mark, $1, live_text(cur, $3), default_text(def, $3)
+    shown = unused ? "(not used on grofe)" : live_text(cur, $3)
+    printf "  %s %-34s %-28s %s\n", mark, $1, shown, default_text(def, $3)
   }
   END {
     if (!live) {

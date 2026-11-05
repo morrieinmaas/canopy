@@ -111,6 +111,20 @@ plugins_dir() { printf '%s' "$CANOPY_STORE/plugins"; }
   [[ "$output" == *"tmux-continuum/scripts/continuum_status.sh"* ]]
 }
 
+@test "on real tmux the layer records resurrect as the persistence backend" {
+  # The other half of test/grofe.bats: there the layer must choose grofe
+  # and load neither plugin, here it must choose the plugins. Real tmux
+  # expands the #{grofe_version} the choice rests on to nothing.
+  sock="cnp-plg-p-$$"
+  tmux -L "$sock" -f /dev/null new-session -d
+  tmux -L "$sock" source-file "$CANOPY_STORE/tmux/conf.d/30-plugins.conf"
+  run tmux -L "$sock" show -gqv @canopy_persistence
+  [ "$status" -eq 0 ]
+  [ "$output" = "resurrect" ]
+  run tmux -L "$sock" show -gqv @continuum-restore
+  [ "$output" = "on" ]
+}
+
 @test "the plugin paths come from the store, not from a plugin manager" {
   # The binding resurrect installs must name this checkout's own tree. A
   # path under ~/.tmux/plugins or ~/.local/share/tmux/plugins would mean

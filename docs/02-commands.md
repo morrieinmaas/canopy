@@ -206,10 +206,17 @@ Sections, and what each one is actually checking:
 | Capabilities | A direct read of `05-caps.conf`. Doctor never re-probes; run `canopy caps` for that |
 | Layers | The same data, named by feature. M1 ships no gated layer yet, so this says what each capability *will* enable |
 | Plugins | Each vendored plugin's pinned commit from `plugins/VERSIONS`, and whether the tree on disk still matches the digest `plugins/vendor.sh` recorded in `plugins/CHECKSUMS`. Also whether `bash`, which both plugins need, is present at all, and whether this machine's `ps` can report a process's parent, which is how an agent pane is recognised. `ps` is probed by running it: BusyBox ships one that exists and cannot answer |
-| Load-bearing settings | tmux 3.4 floor; the installed entry point loading from a bare environment; `@continuum-restore` being on in the config this machine actually loads, without which a reboot restores nothing; `user.conf` being the last `source-file` in the store's `tmux.conf` |
+| Load-bearing settings | tmux 3.4 floor; the installed entry point loading from a bare environment; which persistence that config chose (`@canopy_persistence`), and on real tmux `@continuum-restore` being on in it, without which a reboot restores nothing; `user.conf` being the last `source-file` in the store's `tmux.conf` |
 | Restore points | How many committed points exist, whether the pinned pre-install one is among them, and any transaction interrupted before it committed |
 | Commands | Every `bin/canopy-*` carries a `canopy:summary=` header |
 | Keybindings | Deliberately stubbed. The key table does not exist until M4, so there is nothing to cross-reference `list-keys` against |
+
+On grofe (a multiplexer that answers to `tmux`), the Environment section adds a
+`running server: grofe <version>, answering to tmux` line, the Plugins section
+says no continuum autosave hook is needed, and the load-bearing section reports
+`persistence: grofe-native` in place of the `@continuum-restore` check, because on
+grofe canopy loads neither resurrect nor continuum. See
+[07 Persistence](07-persistence.md#two-backends-tmux-and-grofe).
 
 The entry point check is the one that matters most. It starts tmux on a throwaway
 socket from an environment holding only `HOME`, `PATH` and `TMUX_TMPDIR`, and loads
@@ -695,6 +702,12 @@ canopy reboot-check
 Says which agent panes will survive a reboot and why the rest will not, read
 off what tmux-resurrect actually saved rather than off what canopy intended to
 save.
+
+On grofe it prints `persistence: grofe-native`, then the output of
+`grofe -S <this server's socket> reboot-check`, and exits with grofe's status,
+which has the same three meanings as below. If the server is grofe and no grofe
+binary can be found to ask (not the server's own executable, not `CANOPY_GROFE`,
+not `grofe` on `PATH`), it says so and exits 2.
 
 | Exit | Meaning |
 |---|---|

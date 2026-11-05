@@ -74,6 +74,15 @@ if tmux_raw="$(tmux -V 2>/dev/null)"; then
 else
   printf '  tmux: not found\n'
 fi
+# grofe under the tmux name prints tmux's version above, by design, so the
+# running server is asked what it really is. Said here because every
+# persistence line below depends on the answer.
+# shellcheck disable=SC2310  # a question, so a non-zero return is the answer and not a failure to abort on
+if doctor_grofe_version="$(canopy_tmux_grofe_version)"; then
+  printf '  running server: grofe %s, answering to tmux\n' "$doctor_grofe_version"
+else
+  doctor_grofe_version=""
+fi
 printf '  shell: %s\n' "$(command -v sh 2>/dev/null || printf 'sh')"
 printf '  store: %s\n' "$CANOPY_STORE"
 printf '  config: %s\n' "$CANOPY_CONFIG"
@@ -207,7 +216,13 @@ else
   # hook whenever another tmux server is running, which is true of every
   # machine that is using tmux right now. The live server is both the
   # honest place to ask and the only place the answer matters.
-  if tmux list-sessions >/dev/null 2>&1; then
+  #
+  # Not asked of a grofe server at all. On grofe canopy loads no continuum
+  # (see 30-plugins.conf), grofe snapshots on change rather than on a
+  # status redraw, and a missing hook there is the design, not a fault.
+  if [ -n "$doctor_grofe_version" ]; then
+    printf '  persistence on the running server: grofe-native, so no continuum autosave hook is needed\n'
+  elif tmux list-sessions >/dev/null 2>&1; then
     doctor_status_right="$(tmux show -gv status-right 2>/dev/null)" || doctor_status_right=""
     case "$doctor_status_right" in
       *continuum_save.sh*)
@@ -317,10 +332,31 @@ else
   # refused has no loaded value to report, so asking would add a second
   # failure line for one cause and point the reader at the wrong file: the
   # setting is not missing, the config it lives in never ran.
+  #
+  # Not asked at all when that config chose grofe's own persistence. The
+  # plugin layer records its choice in @canopy_persistence, and on grofe it
+  # loads neither plugin and sets none of their options, so
+  # @continuum-restore is unset there by design. Read off the same loaded
+  # config, for the same reason: it is the branch this machine takes that
+  # matters, not the branch canopy would take somewhere else.
+  # shellcheck disable=SC2310  # a state question, so a non-zero return is the answer and not a failure to abort on
+  if [ "$entry_point_loads" -eq 1 ]; then
+    doctor_persistence="$(canopy_tmux_loaded_option "$entry_point" @canopy_persistence)" ||
+      doctor_persistence=""
+  else
+    doctor_persistence=""
+  fi
+  if [ "$doctor_persistence" = "resurrect" ]; then
+    doctor_verdict info "persistence" "tmux-resurrect and tmux-continuum"
+  fi
   # shellcheck disable=SC2310  # a state question, so a non-zero return is the answer and not a failure to abort on
   if [ "$entry_point_loads" -eq 0 ]; then
     doctor_verdict info "@continuum-restore is on" \
       "not checked, the entry point does not load"
+  elif [ "$doctor_persistence" = "grofe" ]; then
+    doctor_verdict ok "persistence" \
+      "grofe-native: tmux-resurrect and tmux-continuum are not loaded, and @continuum-restore does not apply" \
+      "whether each pane survives a reboot: canopy reboot-check, which asks grofe reboot-check"
   elif restore_option="$(canopy_tmux_loaded_option "$entry_point" @continuum-restore)" &&
     [ "$restore_option" = "on" ]; then
     doctor_verdict ok "@continuum-restore is on" "ok"
