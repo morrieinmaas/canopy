@@ -164,16 +164,19 @@ EOF
   # held a CI run open for ten minutes after every test had passed.
   #
   # A return of this bug shows up as this test never finishing, and as the
-  # surviving server the last assertion looks for.
+  # surviving server the last assertion looks for. A scratch server is
+  # started with -S inside a /tmp/canopy-tmux.* directory, and the server
+  # process keeps that command line, so a survivor is a process naming one.
   . "$CANOPY_STORE/lib/tmux.sh"
   broken="$BATS_TEST_TMPDIR/broken.conf"
   printf 'this-is-not-a-tmux-command\n' >"$broken"
+  before="$(pgrep -f '/tmp/canopy-tmux[.]' || true)"
 
   run canopy_tmux_loaded_option "$broken" @canopy_probe
   [ "$status" -ne 0 ]
 
-  run bare_tmux -L "canopy-option-$$" list-sessions
-  [ "$status" -ne 0 ]
+  after="$(pgrep -f '/tmp/canopy-tmux[.]' || true)"
+  [ "$before" = "$after" ]
 }
 
 # core_options <option>...
