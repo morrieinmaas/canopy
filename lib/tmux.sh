@@ -263,3 +263,57 @@ canopy_tmux_server_binary() {
   [ -x "$canopy_server_bin" ] || return 1
   printf '%s' "$canopy_server_bin"
 }
+
+# canopy_tmux_grofe_version
+# Prints grofe's own version and returns 0 when the server a bare `tmux`
+# reaches is grofe, the multiplexer that answers to the name tmux. Returns 1
+# for a real tmux server, and for no server at all.
+#
+# Not from `tmux -V`. grofe run under the tmux name gives tmux's identity
+# all the way down: `-V` prints tmux's compat level (`tmux 3.7b`), and so do
+# #{version} and TERM_PROGRAM_VERSION. What it keeps is #{grofe_version},
+# which grofe expands under either identity, and which real tmux, like every
+# variable it does not know, expands to the empty string. So the question is
+# asked of the running server, and the answer is exact on both.
+canopy_tmux_grofe_version() {
+  canopy_grofe_version="$(tmux display-message -p '#{grofe_version}' 2>/dev/null)" || return 1
+  [ -n "$canopy_grofe_version" ] || return 1
+  printf '%s' "$canopy_grofe_version"
+}
+
+# canopy_grofe_binary
+# Prints the path of a grofe binary to run grofe's own verbs with, or
+# returns 1 when there is none.
+#
+# Needed because grofe's own verbs, `reboot-check` among them, exist only
+# under the name grofe: under the tmux name grofe is tmux's CLI, and tmux
+# has no such command. So the `tmux` canopy calls everywhere else cannot
+# be used, and the binary has to be reached by its real name.
+#
+# $CANOPY_GROFE wins when it is set, and is then the only candidate: an
+# override that quietly fell back to something else would be no override.
+# Otherwise the running server's own executable, resolved through any
+# symlink, because the server is the authority on which grofe it is; taken
+# only when its name is grofe, since on macOS the process table can report
+# the `tmux` symlink the server was started through. Then grofe on PATH.
+canopy_grofe_binary() {
+  if [ -n "${CANOPY_GROFE:-}" ]; then
+    [ -x "$CANOPY_GROFE" ] || return 1
+    printf '%s' "$CANOPY_GROFE"
+    return 0
+  fi
+  # shellcheck disable=SC2310  # a question, so a non-zero return is the answer and not a failure to abort on
+  if canopy_grofe_candidate="$(canopy_tmux_server_binary)"; then
+    canopy_grofe_resolved="$(readlink -f "$canopy_grofe_candidate" 2>/dev/null || true)"
+    [ -n "$canopy_grofe_resolved" ] || canopy_grofe_resolved="$canopy_grofe_candidate"
+    case "${canopy_grofe_resolved##*/}" in
+      grofe)
+        printf '%s' "$canopy_grofe_resolved"
+        return 0
+        ;;
+      *) ;;
+    esac
+  fi
+  canopy_grofe_candidate="$(command -v grofe 2>/dev/null)" || return 1
+  printf '%s' "$canopy_grofe_candidate"
+}
