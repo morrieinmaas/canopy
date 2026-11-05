@@ -175,6 +175,17 @@ g_start() {
   [[ "$output" != *"continuum autosave hook in status-right"* ]]
 }
 
+@test "config on grofe reads the unset resurrect and continuum rows as unused, not as changed" {
+  g_start
+  run canopy config
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"@continuum-restore"*"(not used on grofe)"* ]]
+  [[ "$output" == *"@resurrect-dir"*"(not used on grofe)"* ]]
+  [[ "$output" != *"* @continuum-restore"* ]]
+  [[ "$output" != *"* @resurrect-"* ]]
+  [[ "$output" == *"@canopy_persistence"*"grofe"* ]]
+}
+
 @test "on grofe the save-now and restore-now keys run nothing of resurrect's" {
   g_start
   # Each row's command, run on this server exactly as the key would run it.
