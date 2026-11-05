@@ -175,6 +175,29 @@ g_start() {
   [[ "$output" != *"continuum autosave hook in status-right"* ]]
 }
 
+@test "a throwaway validation server on grofe leaves nothing in grofe's runtime or state dirs" {
+  # grofe keeps a .lock beside each socket and an instance directory and a
+  # log under its state dir, and keeps the socket on kill-server as tmux
+  # does. canopy's scratch servers are pointed into a directory of their
+  # own, so the user's grofe dirs (here, the test's) see none of it.
+  . "$CANOPY_STORE/lib/env.sh"
+  . "$CANOPY_STORE/lib/tmux.sh"
+  canopy_paths
+  before="$(find /tmp -maxdepth 1 -name 'canopy-tmux.*' 2>/dev/null | sort)"
+  run canopy_tmux_validate "$CANOPY_STORE/tmux/conf.d/00-core.conf"
+  [ "$status" -eq 0 ]
+  run canopy_tmux_loaded_option "$CANOPY_STORE/tmux/conf.d/30-plugins.conf" @canopy_persistence
+  [ "$status" -eq 0 ]
+  [ "$output" = "grofe" ]
+  # canopy's own runtime directory lives under XDG_RUNTIME_DIR too, and is
+  # not grofe's, so it is the one entry allowed there.
+  run find "$XDG_RUNTIME_DIR" "$XDG_STATE_HOME" -mindepth 1 -not -path "$CANOPY_RUNTIME" -not -path "$CANOPY_RUNTIME/*"
+  [ "$status" -eq 0 ]
+  [ -z "$output" ]
+  after="$(find /tmp -maxdepth 1 -name 'canopy-tmux.*' 2>/dev/null | sort)"
+  [ "$before" = "$after" ]
+}
+
 @test "config on grofe reads the unset resurrect and continuum rows as unused, not as changed" {
   g_start
   run canopy config
