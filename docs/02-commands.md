@@ -207,6 +207,9 @@ Sections, and what each one is actually checking:
 | Layers | The same data, named by feature. M1 ships no gated layer yet, so this says what each capability *will* enable |
 | Plugins | Each vendored plugin's pinned commit from `plugins/VERSIONS`, and whether the tree on disk still matches the digest `plugins/vendor.sh` recorded in `plugins/CHECKSUMS`. Also whether `bash`, which both plugins need, is present at all, and whether this machine's `ps` can report a process's parent, which is how an agent pane is recognised. `ps` is probed by running it: BusyBox ships one that exists and cannot answer |
 | Load-bearing settings | tmux 3.4 floor; the installed entry point loading from a bare environment; which persistence that config chose (`@canopy_persistence`), and on real tmux `@continuum-restore` being on in it, without which a reboot restores nothing; `user.conf` being the last `source-file` in the store's `tmux.conf` |
+| Restore points | How many committed points exist, whether the pinned pre-install one is among them, and any transaction interrupted before it committed |
+| Commands | Every `bin/canopy-*` carries a `canopy:summary=` header |
+| Keybindings | Deliberately stubbed. The key table does not exist until M4, so there is nothing to cross-reference `list-keys` against |
 
 On grofe (a multiplexer that answers to `tmux`), the Environment section adds a
 `running server: grofe <version>, answering to tmux` line, the Plugins section
@@ -214,9 +217,6 @@ says no continuum autosave hook is needed, and the load-bearing section reports
 `persistence: grofe-native` in place of the `@continuum-restore` check, because on
 grofe canopy loads neither resurrect nor continuum. See
 [07 Persistence](07-persistence.md#two-backends-tmux-and-grofe).
-| Restore points | How many committed points exist, whether the pinned pre-install one is among them, and any transaction interrupted before it committed |
-| Commands | Every `bin/canopy-*` carries a `canopy:summary=` header |
-| Keybindings | Deliberately stubbed. The key table does not exist until M4, so there is nothing to cross-reference `list-keys` against |
 
 The entry point check is the one that matters most. It starts tmux on a throwaway
 socket from an environment holding only `HOME`, `PATH` and `TMUX_TMPDIR`, and loads
