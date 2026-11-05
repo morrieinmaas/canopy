@@ -1,0 +1,5 @@
+# Loaded only when MISE_ENV=ci (set in .github/workflows/ci.yml), on top of
+# mise.toml. CI pins tmux through mise so both runners test the same tmux;
+# local machines use the system tmux. See the note in mise.toml.
+[tools]
+tmux = "latest"

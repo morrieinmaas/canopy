@@ -11,7 +11,12 @@ jq = "latest"
 # Bump this deliberately, run test/lint.sh, and commit the bump.
 shellcheck = "0.11.0"
 shfmt = "latest"
-tmux = "latest"
+# tmux is not pinned here but in mise.ci.toml, loaded only under MISE_ENV=ci.
+# Pinned here, mise installed it on every machine that ran mise in this repo,
+# and an installed tool gets a global shim: every `tmux` on the machine then
+# went through mise first (about half a second each, so a tmux status bar
+# calling tmux a few times per redraw kept a core busy). Locally the system
+# tmux is the one canopy runs under anyway.
 
 # Tasks, so the incantation a contributor types and the one CI runs are the
 # same string. They were drifting: docs/06 told a human to run
