@@ -152,8 +152,9 @@ g_start() {
 
 @test "reboot-check on grofe says so when no grofe binary can be found to ask" {
   g_start
-  # A server whose binary cannot be named, and no grofe on PATH: the
-  # server says it is grofe, and there is nothing to run its check with.
+  # CANOPY_GROFE, when set, is the only candidate, so naming a binary that
+  # is not there leaves nothing to run the check with even though the
+  # server's own executable is grofe.
   CANOPY_GROFE=/nonexistent/grofe run canopy-reboot-check
   [ "$status" -eq 2 ]
   [[ "$output" == *"no grofe binary"* ]]
