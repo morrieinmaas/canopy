@@ -12,16 +12,19 @@
 # path a user does, from a bare environment, and a user does not have the
 # project's toolchain on their PATH.
 #
-# Four packages, and each one is needed for a reason worth naming:
+# Five packages, and each one is needed for a reason worth naming:
 #   tmux       the thing being configured
 #   git        not called by canopy at all; needed to GET canopy
 #   procps-ng  canopy recognises an agent pane by asking ps what it runs
 #   diffutils  the scenario harness reports a failure as a unified diff,
 #              and Fedora's container images do not ship diff
+#   util-linux scenario 6 logs in as a second account with su. Since
+#              Fedora 45 the image carries only util-linux-core, which
+#              has no su, runuser or setpriv
 FROM fedora:latest
 
 RUN dnf install -y --setopt=install_weak_deps=False \
-      tmux git procps-ng diffutils \
+      tmux git procps-ng diffutils util-linux \
   && dnf clean all
 
 # The repository, copied in exactly as a user would have it checked out.
