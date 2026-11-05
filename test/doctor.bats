@@ -22,6 +22,12 @@ setup() {
   [ "$status" -eq 0 ]
   run canopy-doctor
   [ "$status" -eq 0 ]
+  # On real tmux the loaded config chose the plugins, and continuum's
+  # restore is still the setting doctor holds it to. test/grofe.bats holds
+  # the other branch.
+  [[ "$output" == *"persistence: tmux-resurrect and tmux-continuum"* ]]
+  [[ "$output" == *"@continuum-restore is on: ok"* ]]
+  [[ "$output" != *"grofe"* ]]
 }
 
 @test "TPM @plugin lines in user.conf are a warning, not a load-bearing failure" {
