@@ -134,10 +134,11 @@ EOF
 }
 
 @test "canopy_tmux_validate leaves no socket file behind" {
-  sock_dir="/tmp/tmux-$(id -u)"
-  before="$(find "$sock_dir" -name 'canopy-verify-*' 2>/dev/null | wc -l)"
+  # The scratch server's socket, and everything else it writes, lives in a
+  # /tmp/canopy-tmux.* directory of its own, removed afterwards.
+  before="$(find /tmp -maxdepth 1 -name 'canopy-tmux.*' 2>/dev/null | sort)"
   run canopy_tmux_validate "$CANOPY_STORE/tmux/conf.d/00-core.conf"
   [ "$status" -eq 0 ]
-  after="$(find "$sock_dir" -name 'canopy-verify-*' 2>/dev/null | wc -l)"
-  [ "$before" -eq "$after" ]
+  after="$(find /tmp -maxdepth 1 -name 'canopy-tmux.*' 2>/dev/null | sort)"
+  [ "$before" = "$after" ]
 }

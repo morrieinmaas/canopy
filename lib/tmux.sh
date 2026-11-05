@@ -34,9 +34,10 @@ canopy_tmux_version_ok() {
 # function relies on instead. The throwaway server is started with
 # `-f /dev/null` so it never consults a real default config file
 # (~/.tmux.conf or $XDG_CONFIG_HOME/tmux/tmux.conf).
-# canopy_tmux_bare <tmux-binary> [arg...]
+# canopy_tmux_bare <scratch-dir> <tmux-binary> [arg...]
 # Runs tmux with the four CANOPY_* roots removed from its environment and
-# everything else left alone, plus a named TMUX_TMPDIR.
+# everything else left alone, except that every directory a server keeps
+# files in is pointed into <scratch-dir>, made by canopy_tmux_scratch_dir.
 #
 # Those four are the whole point. tmux expands a variable reference in a
 # source-file path from the tmux SERVER's environment, which on a user's
@@ -52,17 +53,42 @@ canopy_tmux_version_ok() {
 # environment to find the binary it forwards to, and env -i took that away.
 # It is how milestone 1's macOS CI broke.
 #
-# TMUX_TMPDIR is named rather than inherited so the socket file's path is
-# known and can be removed afterwards.
+# Every caller is a throwaway server, and a throwaway server must leave
+# nothing behind. kill-server leaves the socket file, which is how roughly
+# 900 of them piled up under /tmp/tmux-<uid>/. grofe, answering to tmux,
+# also keeps a .lock beside the socket under XDG_RUNTIME_DIR and an
+# instance directory and a log under XDG_STATE_HOME, deliberately, as a
+# real server should. So TMUX_TMPDIR, XDG_RUNTIME_DIR and XDG_STATE_HOME
+# all point into the scratch directory, the caller names the socket inside
+# it with -S, and removing that one directory removes everything either
+# multiplexer wrote.
 canopy_tmux_bare() {
-  canopy_tmux_bin="$1"
-  shift
+  canopy_tmux_scratch="$1"
+  canopy_tmux_bin="$2"
+  shift 2
   (
     unset CANOPY_STORE CANOPY_CONFIG CANOPY_STATE CANOPY_RUNTIME
-    TMUX_TMPDIR=/tmp
-    export TMUX_TMPDIR
+    TMUX_TMPDIR="$canopy_tmux_scratch"
+    XDG_RUNTIME_DIR="$canopy_tmux_scratch/run"
+    XDG_STATE_HOME="$canopy_tmux_scratch/state"
+    export TMUX_TMPDIR XDG_RUNTIME_DIR XDG_STATE_HOME
     exec "$canopy_tmux_bin" "$@"
   )
+}
+
+# canopy_tmux_scratch_dir
+# Makes and prints a private directory for one throwaway server, with the
+# run and state directories canopy_tmux_bare points it at. Under /tmp
+# rather than $TMPDIR because the socket lives in it, and a socket path
+# has a length limit (104 bytes on macOS) that macOS's $TMPDIR alone
+# takes half of.
+canopy_tmux_scratch_dir() {
+  canopy_tmux_dir="$(mktemp -d /tmp/canopy-tmux.XXXXXX)" || return 1
+  (umask 077 && mkdir "$canopy_tmux_dir/run" "$canopy_tmux_dir/state") || {
+    rm -rf "$canopy_tmux_dir"
+    return 1
+  }
+  printf '%s' "$canopy_tmux_dir"
 }
 
 # canopy_tmux_validate <conf>
@@ -101,7 +127,11 @@ canopy_tmux_validate() {
     printf 'canopy_tmux_validate: tmux not found on PATH\n' >&2
     return 1
   fi
-  sock="canopy-verify-$$"
+  if ! scratch="$(canopy_tmux_scratch_dir)"; then
+    printf 'canopy_tmux_validate: cannot make a scratch directory under /tmp\n' >&2
+    return 1
+  fi
+  sock="$scratch/socket"
   # @canopy_skip_server_path, for the same class of reason as the
   # @continuum-restore-max-delay above it: a throwaway server exists to
   # parse a config, not to run jobs in. 00-core's PATH correction would
@@ -110,12 +140,10 @@ canopy_tmux_validate() {
   # the job's next `tmux` call auto-starts a FRESH server on the socket
   # just removed. The socket that leaves behind is short-lived and so was
   # the test for it: intermittent, and blamed on everything but this.
-  err="$(canopy_tmux_bare "$tmux_bin" -L "$sock" -f /dev/null new-session -d 'sleep 600' \; set -g @continuum-restore-max-delay 0 \; set -g @canopy_skip_server_path 1 \; source-file "$conf" 2>&1)"
+  err="$(canopy_tmux_bare "$scratch" "$tmux_bin" -S "$sock" -f /dev/null new-session -d 'sleep 600' \; set -g @continuum-restore-max-delay 0 \; set -g @canopy_skip_server_path 1 \; source-file "$conf" 2>&1)"
   rc=$?
-  canopy_tmux_bare "$tmux_bin" -L "$sock" kill-server >/dev/null 2>&1
-  # kill-server stops the server and leaves its socket file behind, one per
-  # call; that is how roughly 900 of them piled up under /tmp/tmux-<uid>/.
-  rm -f "/tmp/tmux-$(id -u)/$sock"
+  canopy_tmux_bare "$scratch" "$tmux_bin" -S "$sock" kill-server >/dev/null 2>&1
+  rm -rf "$scratch"
   # Anything tmux said counts as a failure, even when it exited 0.
   #
   # tmux does not report a sourced file's errors through the exit status
@@ -187,22 +215,23 @@ canopy_tmux_loaded_option() {
   [ -f "$conf" ] || return 1
   tmux_bin="$(command -v tmux)" || return 1
   canopy_runtime_ensure || return 1
-  sock="canopy-option-$$"
+  scratch="$(canopy_tmux_scratch_dir)" || return 1
+  sock="$scratch/socket"
   out="$CANOPY_RUNTIME/loaded-option.$$"
   rm -f "$out"
 
   rc=0
-  canopy_tmux_bare "$tmux_bin" -L "$sock" -f /dev/null \
+  canopy_tmux_bare "$scratch" "$tmux_bin" -S "$sock" -f /dev/null \
     new-session -d 'sleep 600' \; \
     set -g @continuum-restore-max-delay 0 \; \
     set -g @canopy_skip_server_path 1 \; \
     source-file "$conf" >"$out" 2>&1 || rc=$?
   if [ "$rc" -eq 0 ]; then
-    canopy_tmux_bare "$tmux_bin" -L "$sock" \
+    canopy_tmux_bare "$scratch" "$tmux_bin" -S "$sock" \
       show -gqv "$option" >"$out" 2>/dev/null || rc=$?
   fi
-  canopy_tmux_bare "$tmux_bin" -L "$sock" kill-server >/dev/null 2>&1
-  rm -f "/tmp/tmux-$(id -u)/$sock"
+  canopy_tmux_bare "$scratch" "$tmux_bin" -S "$sock" kill-server >/dev/null 2>&1
+  rm -rf "$scratch"
   if [ "$rc" -ne 0 ]; then
     rm -f "$out"
     return 1
@@ -262,4 +291,58 @@ canopy_tmux_server_binary() {
   esac
   [ -x "$canopy_server_bin" ] || return 1
   printf '%s' "$canopy_server_bin"
+}
+
+# canopy_tmux_grofe_version
+# Prints grofe's own version and returns 0 when the server a bare `tmux`
+# reaches is grofe, the multiplexer that answers to the name tmux. Returns 1
+# for a real tmux server, and for no server at all.
+#
+# Not from `tmux -V`. grofe run under the tmux name gives tmux's identity
+# all the way down: `-V` prints tmux's compat level (`tmux 3.7b`), and so do
+# #{version} and TERM_PROGRAM_VERSION. What it keeps is #{grofe_version},
+# which grofe expands under either identity, and which real tmux, like every
+# variable it does not know, expands to the empty string. So the question is
+# asked of the running server, and the answer is exact on both.
+canopy_tmux_grofe_version() {
+  canopy_grofe_version="$(tmux display-message -p '#{grofe_version}' 2>/dev/null)" || return 1
+  [ -n "$canopy_grofe_version" ] || return 1
+  printf '%s' "$canopy_grofe_version"
+}
+
+# canopy_grofe_binary
+# Prints the path of a grofe binary to run grofe's own verbs with, or
+# returns 1 when there is none.
+#
+# Needed because grofe's own verbs, `reboot-check` among them, exist only
+# under the name grofe: under the tmux name grofe is tmux's CLI, and tmux
+# has no such command. So the `tmux` canopy calls everywhere else cannot
+# be used, and the binary has to be reached by its real name.
+#
+# $CANOPY_GROFE wins when it is set, and is then the only candidate: an
+# override that quietly fell back to something else would be no override.
+# Otherwise the running server's own executable, resolved through any
+# symlink, because the server is the authority on which grofe it is; taken
+# only when its name is grofe, since on macOS the process table can report
+# the `tmux` symlink the server was started through. Then grofe on PATH.
+canopy_grofe_binary() {
+  if [ -n "${CANOPY_GROFE:-}" ]; then
+    [ -x "$CANOPY_GROFE" ] || return 1
+    printf '%s' "$CANOPY_GROFE"
+    return 0
+  fi
+  # shellcheck disable=SC2310  # a question, so a non-zero return is the answer and not a failure to abort on
+  if canopy_grofe_candidate="$(canopy_tmux_server_binary)"; then
+    canopy_grofe_resolved="$(readlink -f "$canopy_grofe_candidate" 2>/dev/null || true)"
+    [ -n "$canopy_grofe_resolved" ] || canopy_grofe_resolved="$canopy_grofe_candidate"
+    case "${canopy_grofe_resolved##*/}" in
+      grofe)
+        printf '%s' "$canopy_grofe_resolved"
+        return 0
+        ;;
+      *) ;;
+    esac
+  fi
+  canopy_grofe_candidate="$(command -v grofe 2>/dev/null)" || return 1
+  printf '%s' "$canopy_grofe_candidate"
 }

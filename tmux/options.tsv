@@ -42,6 +42,7 @@
 @theme_grey	#a89984	layer	theme	Inactive windows and the date pill
 @theme_muted	#7c6f64	layer	theme	Window names that are not current
 @theme_red	#cc241d	layer	theme	Anything wrong: a low battery, a disconnected network
+@canopy_persistence	grofe on grofe, resurrect on tmux	generated	persistence	Which persistence the plugin layer chose for this server. On grofe, grofe's own snapshot and restore, and neither plugin below is loaded or configured; on real tmux, tmux-resurrect and tmux-continuum. Read by canopy doctor
 @continuum-restore	on	layer	persistence	Restore the last save when a new server starts. Upstream continuum defaults this to off, which is why canopy sets it: without it every save is written and none is ever read
 @continuum-save-interval	5	layer	persistence	Minutes between automatic saves. 0 stops autosaving entirely
 @resurrect-dir	$CANOPY_STATE/resurrect	layer	persistence	Where save files are written. Moving it to an empty directory is how a reboot silently comes back with nothing

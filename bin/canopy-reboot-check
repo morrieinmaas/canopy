@@ -19,6 +19,9 @@ set -eu
 # shellcheck source=../lib/resume.sh
 # shellcheck disable=SC1091
 . "$CANOPY_STORE/lib/resume.sh"
+# shellcheck source=../lib/tmux.sh
+# shellcheck disable=SC1091
+. "$CANOPY_STORE/lib/tmux.sh"
 canopy_paths
 
 [ "$#" -eq 0 ] || canopy_die "canopy-reboot-check: unknown argument: $1"
@@ -91,6 +94,37 @@ printf '===================\n\n'
 if ! tmux list-panes -a -F '#{pane_id}' >/dev/null 2>&1; then
   printf 'No tmux server is running, so a reboot has nothing to lose.\n'
   exit 0
+fi
+
+# --- grofe -----------------------------------------------------------------
+# On grofe, grofe's own persistence replaces resurrect and continuum, and
+# canopy's plugin layer loads neither (see 30-plugins.conf). Everything
+# below this block reads resurrect's save file and continuum's options,
+# none of which exist there, so judged that way every grofe machine would
+# be "misconfigured". grofe answers the same question itself, from the
+# snapshot it actually wrote, with the same three exit statuses this
+# command has always had. So the answer is grofe's, unedited, and so is the
+# exit status.
+#
+# Through the name grofe, never through `tmux`: under the tmux name grofe
+# is tmux's CLI, and `tmux reboot-check` is an unknown command there, as it
+# is on tmux. -S names this server's socket, so the check is of the server
+# this command was asked about and not of grofe's default one.
+# shellcheck disable=SC2310  # a question, so a non-zero return is the answer and not a failure to abort on
+if canopy_rc_grofe="$(canopy_tmux_grofe_version)"; then
+  printf 'persistence: grofe-native (grofe %s), so tmux-resurrect and tmux-continuum are not used\n' "$canopy_rc_grofe"
+  if ! canopy_rc_grofe_bin="$(canopy_grofe_binary)"; then
+    printf '\nThis server is grofe, and no grofe binary was found to ask: not the\n'
+    printf "server's own executable, not \$CANOPY_GROFE, not grofe on PATH.\n"
+    printf 'Set CANOPY_GROFE to the grofe binary, or run: grofe reboot-check\n'
+    exit 2
+  fi
+  canopy_rc_socket="$(tmux display-message -p '#{socket_path}' 2>/dev/null)" || canopy_rc_socket=""
+  printf 'verdicts from: %s reboot-check\n\n' "$canopy_rc_grofe_bin"
+  if [ -n "$canopy_rc_socket" ]; then
+    exec "$canopy_rc_grofe_bin" -S "$canopy_rc_socket" reboot-check
+  fi
+  exec "$canopy_rc_grofe_bin" reboot-check
 fi
 
 canopy_rc_tab="$(printf '\t')"

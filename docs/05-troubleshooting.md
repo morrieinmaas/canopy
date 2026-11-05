@@ -164,6 +164,21 @@ files, precisely so that a `user.conf` override is caught here instead of after 
 reboot. It is not checked at all when the entry point does not load, because a
 config tmux refused has no loaded value to report.
 
+It is not checked on grofe either. There canopy loads neither resurrect nor
+continuum, `@continuum-restore` is unset by design, and doctor reports
+`persistence: grofe-native` instead. If you expected grofe and see this check,
+the `tmux` your machine runs is real tmux:
+`tmux display -p '#{grofe_version}'` prints nothing on real tmux.
+
+## On grofe: no autosave hook, no save file, and that is correct
+
+On grofe, `canopy doctor` says no continuum autosave hook is needed, there is no
+`$CANOPY_STATE/resurrect`, and `prefix M-s` saves nothing. grofe snapshots on its
+own, and `canopy reboot-check` asks `grofe reboot-check` for the verdicts. If
+reboot-check says no grofe binary was found, set `CANOPY_GROFE` to the grofe binary
+(the `tmux` symlink will not do: under that name grofe has no `reboot-check`). See
+[07-persistence.md](07-persistence.md#two-backends-tmux-and-grofe).
+
 ### `user.conf sourced last: FAILED`
 
 The store's `tmux/tmux.conf` has been edited so that something is sourced after

@@ -16,6 +16,53 @@ session id.
 This page describes what is built. Where something does not work, it says so
 rather than describing the intention.
 
+## Two backends: tmux and grofe
+
+canopy runs on real tmux, and on [grofe](https://github.com/morrieinmaas/grofe),
+a multiplexer that can run under the name `tmux`. Persistence is the one place
+the two differ, and the plugin layer picks one at load time:
+
+| Server | Persistence | What canopy loads |
+|---|---|---|
+| real tmux | tmux-resurrect saves, tmux-continuum autosaves and restores at server start, canopy's save strategy rewrites agent panes | both plugins, every setting in the table below, the generated `@resurrect-processes` |
+| grofe | grofe's own: it snapshots on change, restores at server start, and resumes each pane that has a resume command | neither plugin, none of their settings, no `@resurrect-processes` |
+
+On grofe, grofe's native persistence replaces resurrect and continuum (owner
+ruling 2026-11-05). Loading them as well would mean two save loops and two
+restores racing at server start. Everything from [The chain](#the-chain) down
+to [`canopy adopt`](#canopy-adopt) describes the tmux backend; on grofe, see
+grofe's own documentation for snapshots and `pane-set-resume`.
+
+**How canopy tells them apart.** Not by version: grofe under the `tmux` name
+answers `tmux -V`, `#{version}` and `TERM_PROGRAM_VERSION` with tmux's compat
+level (`tmux 3.7b`), on purpose. It also expands `#{grofe_version}`, under either
+identity, and real tmux expands any variable it does not know to the empty
+string. So the plugin layer tests `#{grofe_version}` on the server loading it,
+and records the answer:
+
+```
+tmux show -gv @canopy_persistence     # grofe, or resurrect
+```
+
+**What the commands do on each:**
+
+| Command | real tmux | grofe |
+|---|---|---|
+| `canopy doctor` | holds the loaded config to `@continuum-restore on`, and checks continuum's autosave hook in the running server's `status-right` | reports `persistence: grofe-native`, and checks neither |
+| `canopy reboot-check` | judges each agent pane against resurrect's last save, as below | prints `grofe reboot-check`'s verdicts for this server and exits with its status |
+
+`canopy reboot-check` runs grofe by its own name, because `reboot-check` is a
+grofe verb and under the `tmux` name grofe is tmux's CLI, which has no such
+command. It finds the binary from the running server's own executable, then
+`grofe` on `PATH`; set `CANOPY_GROFE` to a grofe binary to name one outright.
+grofe's exit statuses are the same three as below: 0 every pane that expects a
+resume will resume, 1 one will not, 2 persistence is misconfigured (for example
+`restore-on-start` off with no autostart unit).
+
+The vendored trees stay in `plugins/` on both, and `canopy doctor` still reports
+their digests: one store serves both backends, and switching back to real tmux
+needs nothing reinstalled.
+
 ## Requirements, and what happens without them
 
 | Needs | Why | Without it |
@@ -62,8 +109,11 @@ sleep 0.514 && claude --resume 3f2a…
 
 ## Settings canopy sets, and why
 
+On grofe none of these is set. `@canopy_persistence` is set on both.
+
 | Option | Value | Set by |
 |---|---|---|
+| `@canopy_persistence` | `grofe` on grofe, `resurrect` on real tmux | canopy's plugin layer, from `#{grofe_version}`, so `canopy doctor` can read which backend the loaded config chose |
 | `@continuum-restore` | `on` | canopy. Load-bearing: `canopy doctor` exits 2 if the config your machine loads leaves it off, and `canopy reboot-check` refuses to judge panes while it is off. |
 | `@resurrect-dir` | `$CANOPY_STATE/resurrect` | canopy, so saves live under canopy's own state rather than in your home |
 | `@resurrect-save-command-strategy` | canopy's strategy | canopy |
@@ -78,7 +128,10 @@ config your machine actually loads rather than off canopy's own layer files: a
 ## `canopy reboot-check`
 
 Answers "is it safe to reboot?" **before** the reboot, by reading what
-resurrect actually saved rather than what canopy intended to save.
+resurrect actually saved rather than what canopy intended to save. On grofe it
+hands the question to `grofe reboot-check` instead, which reads grofe's own
+snapshot; see [Two backends](#two-backends-tmux-and-grofe). The rest of this
+section is the tmux backend.
 
 ```
 canopy reboot-check
