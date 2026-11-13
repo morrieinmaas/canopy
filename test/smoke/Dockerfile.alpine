@@ -19,7 +19,7 @@
 # the reason `canopy doctor` now checks for them by name.
 FROM alpine:latest
 
-RUN apk add --no-cache tmux git procps bash
+RUN apk add --no-cache tmux git procps bash curl ca-certificates
 
 # The repository, copied in exactly as a user would have it checked out.
 # Last, so editing canopy does not invalidate the package layer.
