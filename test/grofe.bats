@@ -15,7 +15,7 @@ load helper
 # expands any variable it does not know to the empty string.
 #
 # These tests need a grofe binary and skip without one, loudly: set
-# CANOPY_TEST_GROFE to its path, or put `grofe` on PATH. The binary is
+# CANOPY_GROFE to its path, or put `grofe` on PATH. The binary is
 # reached through a `tmux` symlink in a scratch directory at the front of
 # PATH, so every bare `tmux` canopy runs is grofe under tmux identity, the
 # way it is on a machine that switched. grofe keeps its sockets and its
@@ -26,9 +26,11 @@ setup() {
   setup_canopy_env
   setup_canopy_home
 
-  grofe_bin="${CANOPY_TEST_GROFE:-$(command -v grofe 2>/dev/null || true)}"
+  # $CANOPY_GROFE names the binary, the same variable test/grofe_generate.bats
+  # and test/plugin_loader.bats read, so one export runs every grofe leg.
+  grofe_bin="$(command -v "${CANOPY_GROFE:-grofe}" 2>/dev/null || true)"
   if [ -z "$grofe_bin" ] || [ ! -x "$grofe_bin" ]; then
-    skip "no grofe binary: set CANOPY_TEST_GROFE to one"
+    skip "no grofe binary: set CANOPY_GROFE to one"
   fi
 
   grofe_path="$BATS_TEST_TMPDIR/grofe-path"
@@ -37,8 +39,15 @@ setup() {
   PATH="$grofe_path:$PATH"
   export PATH
 
-  XDG_RUNTIME_DIR="$BATS_TEST_TMPDIR/run-xdg"
-  XDG_STATE_HOME="$BATS_TEST_TMPDIR/state-xdg"
+  # Under the suite's own root, not $BATS_TEST_TMPDIR. grofe keeps its socket
+  # under XDG_RUNTIME_DIR, and a unix socket path is capped (104 bytes on
+  # macOS); $TMPDIR there is ~50 of them before bats adds its per-test
+  # directory, so every connect failed with "path must be shorter than
+  # SUN_LEN" and the whole file only passed when a developer happened to run
+  # it with TMPDIR=/tmp. test/setup_suite.bash makes its root under /tmp for
+  # the same reason, tmux's own socket naming.
+  XDG_RUNTIME_DIR="$CANOPY_SCRATCH_TMPDIR/run-xdg"
+  XDG_STATE_HOME="$CANOPY_SCRATCH_TMPDIR/state-xdg"
   export XDG_RUNTIME_DIR XDG_STATE_HOME
   (umask 077 && mkdir -p "$XDG_RUNTIME_DIR" "$XDG_STATE_HOME")
 
@@ -183,7 +192,8 @@ g_start() {
   . "$CANOPY_STORE/lib/env.sh"
   . "$CANOPY_STORE/lib/tmux.sh"
   canopy_paths
-  before="$(find /tmp -maxdepth 1 -name 'canopy-tmux.*' 2>/dev/null | sort)"
+  scratch_root="${CANOPY_SCRATCH_TMPDIR:-/tmp}"
+  before="$(find "$scratch_root" -maxdepth 1 -name 'canopy-tmux.*' 2>/dev/null | sort)"
   run canopy_tmux_validate "$CANOPY_STORE/tmux/conf.d/00-core.conf"
   [ "$status" -eq 0 ]
   run canopy_tmux_loaded_option "$CANOPY_STORE/tmux/conf.d/30-plugins.conf" @canopy_persistence
@@ -194,7 +204,7 @@ g_start() {
   run find "$XDG_RUNTIME_DIR" "$XDG_STATE_HOME" -mindepth 1 -not -path "$CANOPY_RUNTIME" -not -path "$CANOPY_RUNTIME/*"
   [ "$status" -eq 0 ]
   [ -z "$output" ]
-  after="$(find /tmp -maxdepth 1 -name 'canopy-tmux.*' 2>/dev/null | sort)"
+  after="$(find "$scratch_root" -maxdepth 1 -name 'canopy-tmux.*' 2>/dev/null | sort)"
   [ "$before" = "$after" ]
 }
 
@@ -226,4 +236,27 @@ g_start() {
   [ ! -e "$CANOPY_STATE/resurrect" ]
   [ ! -e "$HOME/.local/share/tmux/resurrect" ]
   [ ! -e "$HOME/.tmux/resurrect" ]
+
+}
+
+@test "on grofe the save-now key the server holds is the key table's own row" {
+  run canopy install
+  [ "$status" -eq 0 ]
+  g_start
+  # The test above sources the row itself, so it passes whatever the server
+  # is actually holding. This is the other half: tmux.conf rebinds M-s to
+  # canopy's save wrapper after the loader, which is right on real tmux and
+  # must not reach here. The row says grofe saves by itself; a wrapper would
+  # write a resurrect save grofe never reads, and a later restore could put
+  # that over a live layout.
+  #
+  # The whole table, matched here: a bare key argument to list-keys filters
+  # only with -1, on grofe and on tmux 3.7b alike, so `list-keys -T prefix
+  # M-s` prints nothing on either and would have passed for the wrong reason.
+  run tmux list-keys -T prefix
+  [ "$status" -eq 0 ]
+  ms="$(printf '%s\n' "$output" | awk '$0 ~ / M-s /')"
+  [ -n "$ms" ]
+  [[ "$ms" == *'if-shell -F "#{grofe_version}"'* ]]
+  [[ "$ms" == *"grofe saves on its own"* ]]
 }

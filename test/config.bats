@@ -45,7 +45,7 @@ setup() {
   # such as /nonexistent, and it falls back to the default socket directory
   # instead, where a real server may well be listening: the test then passes
   # or fails depending on whether the person running it has tmux open.
-  empty_sockets="$BATS_TEST_TMPDIR/no-server-here"
+  empty_sockets="$TMUX_TMPDIR/no-server-here"
   mkdir -p "$empty_sockets"
   run env -u TMUX TMUX_TMPDIR="$empty_sockets" canopy config
   [ "$status" -eq 0 ]

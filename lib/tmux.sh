@@ -62,6 +62,12 @@ canopy_tmux_version_ok() {
 # all point into the scratch directory, the caller names the socket inside
 # it with -S, and removing that one directory removes everything either
 # multiplexer wrote.
+#
+# The directory is made under $CANOPY_SCRATCH_TMPDIR, /tmp unless something
+# names another. The test suite names one inside its own root (test/helper.bash)
+# because its tmux shim refuses any call naming a socket outside it: a scratch
+# server under /tmp would be refused, and the config validation it exists to
+# perform would fail for a reason that has nothing to do with the config.
 canopy_tmux_bare() {
   canopy_tmux_scratch="$1"
   canopy_tmux_bin="$2"
@@ -83,7 +89,7 @@ canopy_tmux_bare() {
 # has a length limit (104 bytes on macOS) that macOS's $TMPDIR alone
 # takes half of.
 canopy_tmux_scratch_dir() {
-  canopy_tmux_dir="$(mktemp -d /tmp/canopy-tmux.XXXXXX)" || return 1
+  canopy_tmux_dir="$(mktemp -d "${CANOPY_SCRATCH_TMPDIR:-/tmp}/canopy-tmux.XXXXXX")" || return 1
   (umask 077 && mkdir "$canopy_tmux_dir/run" "$canopy_tmux_dir/state") || {
     rm -rf "$canopy_tmux_dir"
     return 1
@@ -117,6 +123,10 @@ canopy_tmux_scratch_dir() {
 # user's saved session onto a throwaway socket and start every agent in it
 # for the second before the socket is killed. Zero means continuum does
 # not consider this server freshly booted, which is the truth.
+#
+# @canopy_plugins off keeps the plugin loader from running any plugin on
+# the scratch server, for the same kind of reason: their loads write to
+# $HOME and /tmp, and validating must leave the home as it found it.
 canopy_tmux_validate() {
   conf="$1"
   if [ ! -f "$conf" ]; then
@@ -128,7 +138,7 @@ canopy_tmux_validate() {
     return 1
   fi
   if ! scratch="$(canopy_tmux_scratch_dir)"; then
-    printf 'canopy_tmux_validate: cannot make a scratch directory under /tmp\n' >&2
+    printf 'canopy_tmux_validate: cannot make a scratch directory under %s\n' "${CANOPY_SCRATCH_TMPDIR:-/tmp}" >&2
     return 1
   fi
   sock="$scratch/socket"
@@ -140,7 +150,7 @@ canopy_tmux_validate() {
   # the job's next `tmux` call auto-starts a FRESH server on the socket
   # just removed. The socket that leaves behind is short-lived and so was
   # the test for it: intermittent, and blamed on everything but this.
-  err="$(canopy_tmux_bare "$scratch" "$tmux_bin" -S "$sock" -f /dev/null new-session -d 'sleep 600' \; set -g @continuum-restore-max-delay 0 \; set -g @canopy_skip_server_path 1 \; source-file "$conf" 2>&1)"
+  err="$(canopy_tmux_bare "$scratch" "$tmux_bin" -S "$sock" -f /dev/null new-session -d 'sleep 600' \; set -g @continuum-restore-max-delay 0 \; set -g @canopy_plugins off \; set -g @canopy_skip_server_path 1 \; source-file "$conf" 2>&1)"
   rc=$?
   canopy_tmux_bare "$scratch" "$tmux_bin" -S "$sock" kill-server >/dev/null 2>&1
   rm -rf "$scratch"
@@ -223,7 +233,7 @@ canopy_tmux_loaded_option() {
   rc=0
   canopy_tmux_bare "$scratch" "$tmux_bin" -S "$sock" -f /dev/null \
     new-session -d 'sleep 600' \; \
-    set -g @continuum-restore-max-delay 0 \; \
+    set -g @continuum-restore-max-delay 0 \; set -g @canopy_plugins off \; \
     set -g @canopy_skip_server_path 1 \; \
     source-file "$conf" >"$out" 2>&1 || rc=$?
   if [ "$rc" -eq 0 ]; then

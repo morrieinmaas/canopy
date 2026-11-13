@@ -16,6 +16,9 @@ set -eu
 # shellcheck source=../lib/tmux.sh
 # shellcheck disable=SC1091
 . "$CANOPY_STORE/lib/tmux.sh"
+# shellcheck source=../lib/plugins.sh
+# shellcheck disable=SC1091
+. "$CANOPY_STORE/lib/plugins.sh"
 canopy_paths
 
 yes=0
@@ -27,6 +30,18 @@ for arg in "$@"; do
     *) canopy_die "canopy-install: unknown argument: $arg" ;;
   esac
 done
+
+# The release binaries two vendored plugins would otherwise fetch from the
+# network when they load or run (plugins/ARTIFACTS). Into the store, not
+# the home, so it is not part of the restore point, and before the
+# already-installed check, so rerunning install is how a machine that was
+# offline the first time gets them. A failure is not fatal: those plugins
+# then lack a binary, which canopy doctor reports.
+if [ "$dry_run" -eq 0 ]; then
+  if ! canopy_provision_artifacts; then
+    printf 'canopy: some plugin binaries are missing; canopy doctor lists them, and rerunning canopy install tries again\n'
+  fi
+fi
 
 # tmux's own precedence: ~/.tmux.conf wins when present, else the XDG path.
 xdg_conf_home="${XDG_CONFIG_HOME:-$HOME/.config}"

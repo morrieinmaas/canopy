@@ -47,10 +47,32 @@ canopy_save_default() {
   exec "$default" "$pane_pid"
 }
 
-# Prints the resume command for the pane holding $pane_pid, or fails. Run
-# inside a command substitution, so a canopy_die in any library it loads,
-# or an unset variable under set -u, ends this lookup and not the save.
-canopy_save_resume_command() {
+# canopy_save_children <pid> <tty>
+# What resurrect's own `ps` strategy prints for <pid>: the command line of
+# each child it has, one per line, nothing for an idle shell.
+#
+# Asked of the pane's own terminal, never of the whole process table.
+# resurrect runs a strategy once per pane, and its own answer reads every
+# process on the machine each time, which is cheap on an idle laptop and is
+# not on a busy one: a save over a few dozen panes then outlasted
+# continuum's interval, continuum started the next save regardless, and
+# they piled up for hours, each one adding to the load slowing the rest.
+# A process on the pane's terminal is what `ps -a` lists for it anyway,
+# and the parent test is `==` where resurrect's is a prefix match, the
+# same as lib/pane.sh's.
+canopy_save_children() {
+  [ -n "$2" ] || return 1
+  ps -o ppid=,args= -t "${2#/dev/}" 2>/dev/null |
+    awk -v p="$1" '$1 == p { sub(/^ *[0-9]+ /, ""); print }'
+}
+
+# Prints the line to record for the pane holding $pane_pid: its resume
+# command for an agent pane, else what resurrect's own strategy would have
+# printed (nothing, for an idle shell). Fails when neither can be worked
+# out, and resurrect's own strategy answers instead. Run inside a command
+# substitution, so a canopy_die in any library it loads, or an unset
+# variable under set -u, ends this lookup and not the save.
+canopy_save_answer() {
   [ -n "$pane_pid" ] || return 1
   [ -n "$store" ] || return 1
 
@@ -82,21 +104,33 @@ canopy_save_resume_command() {
   # value, and the session id is last so that a value carrying one anyway
   # cannot shift the fields before it.
   panes="$(tmux list-panes -a -F \
-    '#{pane_pid}|#{pane_id}|#{@canopy_agent_source}|#{@canopy_agent_session}' \
+    '#{pane_pid}|#{pane_id}|#{pane_tty}|#{@canopy_agent_source}|#{@canopy_agent_session}' \
     2>/dev/null)" || return 1
 
   pane=""
+  tty=""
   adapter=""
   session=""
-  while IFS='|' read -r line_pid line_pane line_source line_session; do
+  while IFS='|' read -r line_pid line_pane line_tty line_source line_session; do
     [ "$line_pid" = "$pane_pid" ] || continue
     pane="$line_pane"
+    tty="$line_tty"
     adapter="$line_source"
     session="$line_session"
     break
   done <<EOF
 $panes
 EOF
+  [ -n "$pane" ] || return 1
+  default="$(canopy_save_children "$pane_pid" "$tty")" || return 1
+
+  # lib/pane.sh's lookup of the running command reads the whole process
+  # table. This pane's children are already known, so it is answered from
+  # them instead.
+  # shellcheck disable=SC2329  # called by canopy_pane_command in lib/pane.sh
+  canopy_pane_running_command() {
+    printf '%s\n' "$default" | head -n 1
+  }
 
   # A session id with no source beside it: the three options are written by
   # more than one caller, and a hook that reports only a state leaves the
@@ -105,9 +139,8 @@ EOF
   # start command and falls back to the running process, because a restored
   # pane has the second and not the first.
   if [ -z "$adapter" ]; then
-    adapter="$(canopy_pane_adapter "$pane" 2>/dev/null)" || return 1
+    adapter="$(canopy_pane_adapter "$pane" 2>/dev/null)" || adapter=""
   fi
-  [ -n "$adapter" ] || return 1
 
   # A pane restored from a save carries no pane options, because resurrect
   # saves none, so the id has to be read back out of the command the pane
@@ -115,16 +148,18 @@ EOF
   # strategy fell in behind it, saving the running command verbatim:
   # right by luck, and stripped of the stagger wrapper, so the reboot
   # after that started every agent in the same second.
-  if [ -z "$session" ]; then
+  if [ -n "$adapter" ] && [ -z "$session" ]; then
     session="$(canopy_adapter_id_from_command "$adapter" \
       "$(canopy_pane_command "$pane" 2>/dev/null)" 2>/dev/null)" || session=""
   fi
 
   # No session id anywhere means no conversation to resume, whatever else
   # the pane may be running. That is most panes, and they all end up here.
-  [ -n "$session" ] || return 1
-
-  out="$(canopy_adapter_resume_command "$adapter" "$session" 2>/dev/null)" || return 1
+  if [ -z "$adapter" ] || [ -z "$session" ] ||
+    ! out="$(canopy_adapter_resume_command "$adapter" "$session" 2>/dev/null)"; then
+    printf '%s\n' "$default"
+    return 0
+  fi
 
   # The wait goes in front of the command that is about to be saved, not
   # around the restore, because the saved line is the only thing resurrect
@@ -136,15 +171,15 @@ EOF
   # carrying a control character would not come back as itself; it would
   # take the rest of the file's shape with it.
   case "$out" in
-    '' | *[[:cntrl:]]*) return 1 ;;
+    '' | *[[:cntrl:]]*) out="$default" ;;
     *) ;;
   esac
 
   printf '%s\n' "$out"
 }
 
-if resumed="$(canopy_save_resume_command 2>/dev/null)" && [ -n "$resumed" ]; then
-  printf '%s\n' "$resumed"
+if answer="$(canopy_save_answer 2>/dev/null)"; then
+  [ -z "$answer" ] || printf '%s\n' "$answer"
 else
   canopy_save_default
 fi

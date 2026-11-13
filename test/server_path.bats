@@ -43,14 +43,13 @@ start_scratch_server() {
 }
 
 server_path_option() {
-  env TMUX="$sock_path,0,0" TMUX_TMPDIR=/tmp \
-    tmux -L "$sock" show-environment -g PATH 2>/dev/null || true
+  env TMUX="$sock_path,0,0" tmux -L "$sock" show-environment -g PATH 2>/dev/null || true
 }
 
 @test "bare tmux in a job becomes a symlink to the server's own binary" {
   start_scratch_server
 
-  run env TMUX="$sock_path,0,0" TMUX_TMPDIR=/tmp canopy-server-path
+  run env TMUX="$sock_path,0,0" canopy-server-path
   [ "$status" -eq 0 ]
 
   # A symlink, never a copy: a tmux upgraded underneath this must be what
@@ -62,9 +61,8 @@ server_path_option() {
 
   # It is this server's binary, which is the whole claim: ask the thing the
   # symlink points at which server it reaches, and get this one back.
-  expected="$(env TMUX="$sock_path,0,0" TMUX_TMPDIR=/tmp \
-    tmux -L "$sock" display-message -p '#{pid}')"
-  run env TMUX="$sock_path,0,0" TMUX_TMPDIR=/tmp \
+  expected="$(env TMUX="$sock_path,0,0" tmux -L "$sock" display-message -p '#{pid}')"
+  run env TMUX="$sock_path,0,0" \
     "$CANOPY_RUNTIME/bin/tmux" -L "$sock" display-message -p '#{pid}'
   [ "$status" -eq 0 ]
   [ "$output" = "$expected" ]
@@ -82,7 +80,7 @@ server_path_option() {
   printf '#!/bin/sh\nexec %s "$@"\n' "$real_tmux" >"$shim_dir/tmux"
   chmod +x "$shim_dir/tmux"
 
-  run env TMUX="$sock_path,0,0" TMUX_TMPDIR=/tmp PATH="$shim_dir:$PATH" \
+  run env TMUX="$sock_path,0,0" PATH="$shim_dir:$PATH" \
     canopy-server-path
   [ "$status" -eq 0 ]
 
@@ -106,7 +104,7 @@ server_path_option() {
   printf '#!/bin/sh\nexec %s "$@"\n' "$real_tmux" >"$shim_dir/tmux"
   chmod +x "$shim_dir/tmux"
 
-  run env TMUX="$sock_path,0,0" TMUX_TMPDIR=/tmp PATH="$shim_dir:$PATH" \
+  run env TMUX="$sock_path,0,0" PATH="$shim_dir:$PATH" \
     canopy-server-path
   [ "$status" -eq 0 ]
 
@@ -114,7 +112,7 @@ server_path_option() {
   # shape of a reload: the correction is already in front.
   corrected="$(server_path_option)"
   corrected="${corrected#PATH=}"
-  run env TMUX="$sock_path,0,0" TMUX_TMPDIR=/tmp PATH="$corrected" \
+  run env TMUX="$sock_path,0,0" PATH="$corrected" \
     canopy-server-path
   [ "$status" -eq 0 ]
 

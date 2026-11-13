@@ -135,10 +135,14 @@ EOF
 
 @test "canopy_tmux_validate leaves no socket file behind" {
   # The scratch server's socket, and everything else it writes, lives in a
-  # /tmp/canopy-tmux.* directory of its own, removed afterwards.
-  before="$(find /tmp -maxdepth 1 -name 'canopy-tmux.*' 2>/dev/null | sort)"
+  # canopy-tmux.* directory of its own under $CANOPY_SCRATCH_TMPDIR, removed
+  # afterwards. The suite names that root inside its own tree, so looking
+  # under /tmp here would watch a directory nothing writes to and pass on
+  # an empty set either way.
+  scratch_root="${CANOPY_SCRATCH_TMPDIR:-/tmp}"
+  before="$(find "$scratch_root" -maxdepth 1 -name 'canopy-tmux.*' 2>/dev/null | sort)"
   run canopy_tmux_validate "$CANOPY_STORE/tmux/conf.d/00-core.conf"
   [ "$status" -eq 0 ]
-  after="$(find /tmp -maxdepth 1 -name 'canopy-tmux.*' 2>/dev/null | sort)"
+  after="$(find "$scratch_root" -maxdepth 1 -name 'canopy-tmux.*' 2>/dev/null | sort)"
   [ "$before" = "$after" ]
 }
