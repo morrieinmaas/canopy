@@ -42,7 +42,7 @@ teardown() {
   tmux -L "$sock" set -g @canopy_status_net off
   tmux -L "$sock" set -g @canopy_status_battery off
   sock_path="$(tmux -L "$sock" display-message -p '#{socket_path}')"
-  run env TMUX="$sock_path,0,0" TMUX_TMPDIR=/tmp canopy-status --plain
+  run env TMUX="$sock_path,0,0" TMUX_TMPDIR="$TMUX_TMPDIR" canopy-status --plain
   [ "$status" -eq 0 ]
   # What is left is the date and the clock, so a weekday and a colon.
   [[ "$output" =~ [0-9][0-9]:[0-9][0-9] ]]
@@ -81,7 +81,7 @@ teardown() {
   tmux -L "$sock" -f /dev/null new-session -d
   tmux -L "$sock" set -g status-right "no hook here"
   sock_path="$(tmux -L "$sock" display-message -p '#{socket_path}')"
-  run env TMUX="$sock_path,0,0" TMUX_TMPDIR=/tmp canopy-doctor
+  run env TMUX="$sock_path,0,0" TMUX_TMPDIR="$TMUX_TMPDIR" canopy-doctor
   [[ "$output" == *"autosave hook"* ]]
   [[ "$output" == *"set -ag"* ]]
 }

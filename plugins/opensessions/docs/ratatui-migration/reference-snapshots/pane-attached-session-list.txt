@@ -1,0 +1,56 @@
+Sessions                          6
+
+   01  plane-feat-edit-pages-from-p
+       feat/edit-pages-from-pi
+
+   02  plane-feat-background-export
+       feat-background-exports
+
+   03  learning
+       main
+
+▌  04  opensessions
+       devpulse
+
+›  05  plane-pdf-word-formatting
+       chore-relation-pqls
+
+   06  dotfiles_public
+       main
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+ ──────────────────────────────────
+ agents 2                 a:current
+ …-wt/pdf-word-formatting
+
+  ● Review GitHub PR for Plane
+    done · amp
+
+  ○ amp
+    idle · amp
+ ──────────────────────────────────
+ ⇥ cycle  ⏎ go  → agents  f
+ filter  d hide  x kill
+

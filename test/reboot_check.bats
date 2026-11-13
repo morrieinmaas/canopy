@@ -329,7 +329,13 @@ rc_save() {
   rc_start
   rc_save
   other="cnp-reboot-other-$$-${BATS_TEST_NUMBER}"
-  tmux -L "$other" -f /dev/null new-session -d
+  # continuum, and so reboot-check, count processes whose command starts
+  # with `tmux`. The shim execs tmux by its absolute path, so a server
+  # started through it is never counted, and the test passed only when
+  # some unrelated `tmux` process happened to be running. This server is
+  # started as `tmux`, the way a user's is; its -L socket is under the
+  # suite's own TMUX_TMPDIR, which is all the shim would check.
+  (exec -a tmux "$CANOPY_TEST_REAL_TMUX" -L "$other" -f /dev/null new-session -d)
   run canopy-reboot-check
   kill_tmux_server "$other"
   [[ "$output" == *"another tmux server"* ]]

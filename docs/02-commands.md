@@ -550,6 +550,52 @@ reports a layer that was not regenerated after the table grew.
 
 ---
 
+## `canopy grofe`
+
+```
+canopy grofe generate [--out <dir>]
+canopy grofe validate [--user <file>] [<dir>]
+```
+
+canopy's backend for grofe, a terminal multiplexer that reads TOML config in
+layers: `config.toml`, then `conf.d/*.toml` in lexical order, then
+`user.toml`. canopy owns only its own `conf.d` fragments, `NN-canopy-*.toml`.
+
+`generate` writes one fragment per file in `grofe/templates/`, under the same
+name, into `<dir>` (default `${XDG_CONFIG_HOME:-~/.config}/grofe/conf.d`), and
+removes any other `NN-canopy-*.toml` there, so a layer canopy stopped shipping
+stops loading. It touches no other file. The key fragment is generated from
+`tmux/keys.tsv`, the same table `canopy keys` reads, with each row's name,
+group and description; `grofe/keys.tsv` lists the rows whose grofe command
+differs (`canopy-reload` runs grofe's `reload`), or that grofe does not bind
+(none today), each with its reason. The same fragments are
+checked in under `grofe/conf.d/`; after editing a template or the key table,
+regenerate them with `canopy grofe generate --out grofe/conf.d`.
+
+The fragments are rendered into a staging directory and loaded there with
+`grofe show-config --file` first; if grofe refuses one, its errors are printed
+and nothing in `<dir>` changes. With no grofe binary, `generate` writes them
+and says they are unchecked. A CRLF line ending in the key tables is read as
+LF; any other control character in a column is refused.
+
+`validate` loads every fragment in `<dir>` (default the checked-in
+`grofe/conf.d`), then `--user <file>` if given, with `grofe show-config
+--file`, which resolves the config without a server. `XDG_CONFIG_HOME` is an
+empty directory for the run, so the tree is checked on its own. Any error, or
+a fragment grofe skipped for its `requires` header, fails it, and grofe's own
+messages are printed. `$CANOPY_GROFE` names the grofe binary.
+
+| Exit | Meaning |
+|---|---|
+| 0 | Fragments written, or the tree loads |
+| 1 | No templates, key table or `grofe/keys.tsv` in the store |
+| 1 | A key table row is malformed or holds a control character, or `grofe/keys.tsv` names a row that does not exist; nothing written |
+| 1 | grofe refuses a rendered fragment; nothing written |
+| 1 | grofe reported an error or skipped a file, or there is no grofe binary |
+| 1 | Unknown subcommand or argument |
+
+---
+
 ## `canopy status`
 
 ```

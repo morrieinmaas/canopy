@@ -1,0 +1,14 @@
+{
+  "name": "tmux-claude-hatch",
+  "owner": {
+    "name": "Takuya Matsuyama",
+    "email": "hi@craftz.dog"
+  },
+  "plugins": [
+    {
+      "name": "tmux-claude-hatch",
+      "source": "./plugins/tmux-claude-hatch",
+      "description": "Companion hooks for tmux-claude-hatch: ring the terminal bell when an agent needs you, and keep the picker's agent cache fresh."
+    }
+  ]
+}
