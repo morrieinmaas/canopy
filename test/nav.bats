@@ -58,13 +58,15 @@ is_vim_condition() {
 
 @test "the condition sees Neovim, Vim and fzf on the pane's tty and nothing else" {
   mkdir "$BATS_TEST_TMPDIR/bin"
-  for p in nvim vim fzf less; do ln -s "$(command -v sleep)" "$BATS_TEST_TMPDIR/bin/$p"; done
+  # bash under each name, not sleep: uutils' sleep (Ubuntu 26.04) is a
+  # multi-call binary that refuses a name it does not know.
+  for p in nvim vim fzf less; do ln -s "$(command -v bash)" "$BATS_TEST_TMPDIR/bin/$p"; done
   cond="$(is_vim_condition)"
   [ -n "$cond" ]
-  tmux -L "$sock" -f /dev/null new-session -d -x 80 -y 24 "exec $BATS_TEST_TMPDIR/bin/less 60"
+  tmux -L "$sock" -f /dev/null new-session -d -x 80 -y 24 "exec $BATS_TEST_TMPDIR/bin/less -c 'sleep 60; :'"
   tmux -L "$sock" set -g remain-on-exit off
   for p in nvim vim fzf; do
-    tmux -L "$sock" new-window -d -n "$p" "exec $BATS_TEST_TMPDIR/bin/$p 60"
+    tmux -L "$sock" new-window -d -n "$p" "exec $BATS_TEST_TMPDIR/bin/$p -c 'sleep 60; :'"
   done
   sleep 1
   for p in nvim vim fzf less; do

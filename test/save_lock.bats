@@ -50,10 +50,12 @@ hold_lock() {
 }
 
 # A long-running process whose command line names canopy_save, as a
-# running wrapper's does.
+# running wrapper's does. bash under that name, not sleep: uutils' sleep
+# (Ubuntu 26.04) is a multi-call binary that refuses a name it does not
+# know, and a renamed copy of a signed macOS binary is killed.
 canopy_save_lookalike() {
-  cp "$(command -v sleep)" "$BATS_TEST_TMPDIR/canopy_save-sleeper"
-  "$BATS_TEST_TMPDIR/canopy_save-sleeper" 30 &
+  ln -s "$(command -v bash)" "$BATS_TEST_TMPDIR/canopy_save-sleeper"
+  "$BATS_TEST_TMPDIR/canopy_save-sleeper" -c 'sleep 30; :' &
   lookalike=$!
 }
 
