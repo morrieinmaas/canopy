@@ -619,6 +619,40 @@ EOF
   mv "$BATS_TEST_TMPDIR/tmux-which-key.aside" "$store/plugins/tmux-which-key"
 }
 
+# continuum restores at server start only while it counts at most one tmux
+# process besides the server, and it counts every process of this user
+# whose command line starts with "tmux"
+# (plugins/tmux-continuum/scripts/helpers.sh). It counts in the background
+# just after its own entry point starts it, while that entry point or the
+# next one is still loading. So no process of the load may be one it
+# counts: a client the loader leaves waiting on an entry point, plus any one
+# tmux call a plugin makes, is two, and the reboot restores nothing.
+@test "tmux 3.7b: while an entry point loads, no process of the loader is one continuum counts as a tmux" {
+  need_tmux37
+  copy_store
+  ln -sf "$tmux37" "$bin/tmux"
+  seen="$BATS_TEST_TMPDIR/seen"
+  mkdir -p "$store/plugins/probe"
+  cat >"$store/plugins/probe/probe.tmux" <<EOF
+#!/bin/sh
+ps -ww -u "\$(id -u)" -o command= >"$seen"
+EOF
+  chmod +x "$store/plugins/probe/probe.tmux"
+  srv() { env -u TMUX -u TMUX_PANE "$tmux37" -L canopy-loader-count "$@"; }
+  servers="$servers $tmux37:canopy-loader-count"
+  srv -f /dev/null new-session -d -s main 'sleep 600'
+  sock="$(srv display-message -p '#{socket_path}')"
+  srv run-shell '. "$CANOPY_STORE/lib/env.sh"; . "$CANOPY_STORE/lib/plugins.sh"; canopy_load_plugins probe'
+  [ -s "$seen" ]
+  run grep -F -- "$sock" "$seen"
+  [ "$status" -eq 0 ]
+  run grep "^tmux" <<<"$output"
+  [ "$status" -eq 1 ] || {
+    printf 'continuum would count:\n%s\n' "$output"
+    false
+  }
+}
+
 # --- release artifacts, and files written into a tree ----------------------
 
 @test "every ARTIFACTS row is well formed, and every dest is in LOCAL" {
