@@ -1,9 +1,10 @@
 #!/bin/sh
 # canopy:summary=Report an agent's state into its pane, and install adapters
 # canopy:group=agent
-# canopy:args=report <state> [--source <id>] [--session-id <id>] | install <adapter-id>
+# canopy:args=report <state> [--source <id>] [--session-id <id>] | install <adapter-id> [--yes] [--dry-run] [--remove]
 # canopy:examples=canopy agent report working --source claude-code
 # shellcheck disable=SC2154,SC2153  # CANOPY_STATE/CANOPY_CONFIG are exported by lib/env.sh's canopy_paths
+# shellcheck disable=SC2310  # the grofe helpers are questions, so a non-zero return is the answer and not a failure to abort on
 set -eu
 
 : "${CANOPY_STORE:=$(cd "$(dirname "$0")/.." && pwd)}"
@@ -19,6 +20,27 @@ set -eu
 canopy_paths
 
 states='idle working blocked completed exited'
+
+# --- grofe -----------------------------------------------------------------
+
+# canopy_agent_grofe_bin
+# Prints grofe's path when this runs under grofe ($GROFE is set in every grofe
+# pane and shell) and a grofe binary can be found, and returns 1 otherwise, in
+# which case the tmux path is the one to take.
+canopy_agent_grofe_bin() {
+  [ -n "${GROFE:-}" ] || return 1
+  command -v "${CANOPY_GROFE:-grofe}"
+}
+
+# canopy_agent_grofe_kind <adapter-or-source-id>
+# grofe's name for an agent: it calls claude-code "claude". Fails for an id
+# grofe has no kind for.
+canopy_agent_grofe_kind() {
+  case "$1" in
+    claude-code | claude) printf 'claude' ;;
+    *) return 1 ;;
+  esac
+}
 
 # --- report ----------------------------------------------------------------
 
@@ -92,6 +114,24 @@ canopy_agent_report() {
     esac
   fi
 
+  # Under grofe the report is grofe's to apply, with its ordering, binding
+  # and notifications. A source grofe has a kind for is sent as a hook, with
+  # whatever arrived on stdin; without one there is no payload to wait for.
+  # Never an error: as everywhere here, a failed report is not the agent's
+  # problem.
+  if grofe_bin="$(canopy_agent_grofe_bin)"; then
+    [ "$state" != completed ] || state="done"
+    set -- agent report "$state"
+    [ -z "$session_id" ] || set -- "$@" --session-id "$session_id"
+    if kind="$(canopy_agent_grofe_kind "$source_id")" && [ ! -t 0 ]; then
+      set -- "$@" --hook "$kind"
+    elif [ -n "$kind" ]; then
+      set -- "$@" --kind "$kind"
+    fi
+    "$grofe_bin" "$@" || :
+    exit 0
+  fi
+
   pane="${TMUX_PANE-}"
   [ -n "$pane" ] || exit 0
 
@@ -157,6 +197,22 @@ canopy_agent_install() {
   [ $# -gt 0 ] || canopy_die "canopy-agent: install needs an adapter id"
   id="$1"
   shift
+
+  # Under grofe, grofe edits the agent's own configuration itself, with its
+  # own backup and its own --remove, so none of canopy's transaction
+  # machinery applies. The flags are grofe's, passed straight through.
+  if grofe_bin="$(canopy_agent_grofe_bin)"; then
+    kind="$(canopy_agent_grofe_kind "$id")" ||
+      canopy_die "canopy-agent: grofe has no setup for $id; it sets up claude"
+    for arg in "$@"; do
+      case "$arg" in
+        --yes | --dry-run | --remove) ;;
+        *) canopy_die "canopy-agent: unknown argument: $arg" ;;
+      esac
+    done
+    exec "$grofe_bin" agent setup "$kind" "$@"
+  fi
+
   [ $# -eq 0 ] || canopy_die "canopy-agent: unknown argument: $1"
 
   if ! dir="$(canopy_adapter_dir "$id")"; then
