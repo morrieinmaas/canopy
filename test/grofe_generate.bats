@@ -218,6 +218,21 @@ store_copy() {
   [[ "${output//[[:space:]]/}" == *"ee82b4"* ]]
 }
 
+@test "the status fragment shows grofe's agents badge as a clickable pill, only when there is one" {
+  canopy-grofe generate --out "$out"
+  right="$(grep '^right = ' "$out/20-canopy-status.toml")"
+  # Wrapped in a condition on the badge, so no empty pill is drawn, and in the
+  # range the badge's click is routed by.
+  [[ "$right" == 'right = "#{?#{agents_badge},#[range=user|agents]'* ]]
+  [[ "$right" == *'#[norange] ,}#{@canopy-status}"' ]]
+  # canopy's own per-pane state is not read on grofe.
+  absent -qF canopy_agent_state "$out/20-canopy-status.toml"
+  # Commas inside a conditional's branch are escaped, or the branch ends there.
+  branch="${right#*#{agents_badge},}"
+  branch="${branch%%#[norange]*}"
+  [[ "$branch" != *[!#],bg=* ]]
+}
+
 @test "the plugin layer sets every resurrect and continuum option 30-plugins.conf sets, to its value" {
   canopy-grofe generate --out "$out"
   plugins="$out/30-canopy-plugins.toml"
