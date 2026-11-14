@@ -8,6 +8,9 @@ load helper
 # scratch $HOME. Nothing here may reach the default socket: on a developer's
 # machine that is their real session, holding real work.
 setup() {
+  # A test run from inside a grofe pane inherits $GROFE, which would send every
+  # report down the grofe path; the tmux tests are about the tmux path.
+  unset GROFE GROFE_PANE
   setup_canopy_env
   setup_canopy_home
   . "$CANOPY_STORE/lib/env.sh"
@@ -326,6 +329,105 @@ wait_for_pane_command() {
   [ "$status" -eq 0 ]
   [ "$(pane_opt @canopy_agent_state)" = "completed" ]
   [ "$(pane_opt @canopy_agent_session)" = "" ]
+}
+
+# --- report and install under grofe ----------------------------------------
+
+# A stand-in grofe that records what it was asked and what came in on stdin.
+# Under grofe a pane's environment holds $GROFE; the tmux path is not to be
+# touched, so these tests start no tmux at all.
+fake_grofe() {
+  grofe_bin="$BATS_TEST_TMPDIR/grofebin"
+  grofe_log="$BATS_TEST_TMPDIR/grofe.log"
+  mkdir -p "$grofe_bin"
+  cat >"$grofe_bin/grofe" <<'EOF'
+#!/bin/sh
+{ printf '%s\n' "$*"; cat; printf '\n--\n'; } >>"$GROFE_LOG"
+EOF
+  chmod +x "$grofe_bin/grofe"
+  PATH="$grofe_bin:$PATH"
+  GROFE=1
+  GROFE_LOG="$grofe_log"
+  export PATH GROFE GROFE_LOG
+  unset TMUX_PANE
+}
+
+@test "report.sh under grofe forwards the hook and its payload to grofe agent report" {
+  fake_grofe
+  run sh -c 'printf "%s" "{\"session_id\":\"s1\",\"hook_event_name\":\"PostToolUse\"}" | "$1" working' \
+    sh "$CANOPY_STORE/adapters/claude-code/report.sh"
+  [ "$status" -eq 0 ]
+  [ "$output" = "" ]
+  [ "$(head -1 "$grofe_log")" = "agent report working --hook claude" ]
+  [[ "$(cat "$grofe_log")" == *'"session_id":"s1"'* ]]
+}
+
+@test "report.sh under grofe maps canopy's completed to grofe's done" {
+  fake_grofe
+  run sh -c 'printf "{}" | "$1" completed' sh "$CANOPY_STORE/adapters/claude-code/report.sh"
+  [ "$status" -eq 0 ]
+  [ "$(head -1 "$grofe_log")" = "agent report done --hook claude" ]
+}
+
+@test "report.sh under grofe exits 0 when grofe fails, and never falls through to tmux" {
+  fake_grofe
+  printf '#!/bin/sh\nexit 3\n' >"$grofe_bin/grofe"
+  run sh -c 'printf "{}" | "$1" working' sh "$CANOPY_STORE/adapters/claude-code/report.sh"
+  [ "$status" -eq 0 ]
+}
+
+@test "report.sh with GROFE set but no grofe binary keeps the tmux path" {
+  agent_tmux_start
+  GROFE=1
+  CANOPY_GROFE=/nonexistent/grofe
+  PATH="$(printf '%s' "$PATH" | tr ':' '\n' | grep -v grofebin | paste -sd: -)"
+  export GROFE CANOPY_GROFE PATH
+  command -v grofe >/dev/null && skip "a real grofe is on PATH"
+  run sh -c 'printf "{}" | "$1" working' sh "$CANOPY_STORE/adapters/claude-code/report.sh"
+  [ "$status" -eq 0 ]
+  [ "$(pane_opt @canopy_agent_state)" = "working" ]
+}
+
+@test "canopy-agent report under grofe forwards to grofe agent report with stdin" {
+  fake_grofe
+  run sh -c 'printf "%s" "{\"hook_event_name\":\"Stop\"}" | canopy-agent report completed --source claude-code --session-id abc-1'
+  [ "$status" -eq 0 ]
+  [ "$(head -1 "$grofe_log")" = "agent report done --session-id abc-1 --hook claude" ]
+  [[ "$(cat "$grofe_log")" == *hook_event_name* ]]
+}
+
+@test "canopy-agent report under grofe still rejects an invalid state" {
+  fake_grofe
+  run canopy-agent report bogus
+  [ "$status" -eq 1 ]
+  [ ! -e "$grofe_log" ]
+}
+
+@test "canopy-agent install under grofe calls grofe agent setup claude and passes the flags through" {
+  fake_grofe
+  run canopy-agent install claude-code --yes
+  [ "$status" -eq 0 ]
+  [ "$(head -1 "$grofe_log")" = "agent setup claude --yes" ]
+  run canopy-agent install claude-code --dry-run
+  grep -qx 'agent setup claude --dry-run' "$grofe_log"
+  run canopy-agent install claude-code --remove
+  grep -qx 'agent setup claude --remove' "$grofe_log"
+}
+
+@test "canopy-agent install under grofe does not touch the claude settings" {
+  fake_grofe
+  mkdir -p "$CLAUDE_CONFIG_DIR"
+  run canopy-agent install claude-code --yes
+  [ "$status" -eq 0 ]
+  [ ! -e "$CLAUDE_CONFIG_DIR/settings.json" ]
+}
+
+@test "canopy-agent install under grofe for an adapter grofe has no kind for is refused" {
+  fake_grofe
+  install_fake_adapter
+  run canopy-agent install fake-agent
+  [ "$status" -eq 1 ]
+  [ ! -e "$grofe_log" ]
 }
 
 # --- agent install ---------------------------------------------------------

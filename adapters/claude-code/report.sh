@@ -40,6 +40,20 @@ state="$1"
 agent="$CANOPY_STORE/bin/canopy-agent"
 
 payload="$(cat)"
+
+# Under grofe the hook goes to grofe itself, which reads the payload on
+# stdin, binds the report to the pane and applies it in order. canopy's own
+# five states are grofe's except completed, which grofe calls done. A grofe
+# that cannot be found falls through to the tmux path below.
+if [ -n "${GROFE:-}" ] && grofe_bin="$(command -v "${CANOPY_GROFE:-grofe}")"; then
+  case "$state" in
+    completed) state="done" ;;
+    *) ;;
+  esac
+  printf '%s' "$payload" | "$grofe_bin" agent report "$state" --hook claude || :
+  exit 0
+fi
+
 # A flat string field, read without a JSON parser: a hook on every tool use
 # is not the place to require jq, and this script is on that path.
 session="$(
