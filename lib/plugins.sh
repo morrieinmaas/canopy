@@ -387,7 +387,7 @@ canopy_load_plugin() {
         ;;
       *) ;;
     esac
-    if ! tmux -S "$canopy_load_socket" run-shell "$(canopy_shell_quote "$entry")" >/dev/null 2>&1; then
+    if ! "$canopy_load_tmux" -S "$canopy_load_socket" run-shell "$(canopy_shell_quote "$entry")" >/dev/null 2>&1; then
       canopy_plugin_note "$name" "entry point ${entry##*/} failed"
     fi
   done
@@ -417,6 +417,14 @@ canopy_load_plugins() {
     return 0
   fi
   canopy_load_socket="${TMUX%%,*}"
+  # The client that runs an entry point waits on it, and on what it leaves
+  # running in the background. continuum's restore runs there, and first
+  # counts every process of this user whose command line starts with "tmux"
+  # (plugins/tmux-continuum/scripts/helpers.sh) while continuum's entry
+  # point is still making tmux calls. Called as plain tmux, this client is
+  # one of them, one such call makes two, and continuum skips the restore
+  # as if another server were running. Called by its path it is not counted.
+  canopy_load_tmux="$(command -v tmux 2>/dev/null)" || canopy_load_tmux=tmux
   if [ "${CANOPY_PLUGINS:-}" = off ] ||
     [ "$(tmux -S "$canopy_load_socket" show-option -gqv @canopy_plugins 2>/dev/null)" = off ]; then
     return 0
