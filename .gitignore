@@ -8,3 +8,4 @@
 /plugins/tmux-fzf-url/bin/xre
 /plugins/tmux-which-key/config.yaml
 /plugins/tmux-which-key/plugin/init.tmux
+.superlite/
