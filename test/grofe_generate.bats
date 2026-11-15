@@ -218,6 +218,21 @@ store_copy() {
   [[ "${output//[[:space:]]/}" == *"ee82b4"* ]]
 }
 
+@test "the status fragment shows grofe's agents badge as a clickable pill, only when there is one" {
+  canopy-grofe generate --out "$out"
+  right="$(grep '^right = ' "$out/20-canopy-status.toml")"
+  # Wrapped in a condition on the badge, so no empty pill is drawn, and in the
+  # range the badge's click is routed by.
+  [[ "$right" == 'right = "#{?#{agents_badge},#[range=user|agents]'* ]]
+  [[ "$right" == *'#[norange] ,}#{@canopy-status}"' ]]
+  # canopy's own per-pane state is not read on grofe.
+  absent -qF canopy_agent_state "$out/20-canopy-status.toml"
+  # Commas inside a conditional's branch are escaped, or the branch ends there.
+  branch="${right#*#{agents_badge},}"
+  branch="${branch%%#[norange]*}"
+  [[ "$branch" != *[!#],bg=* ]]
+}
+
 @test "the plugin layer sets every resurrect and continuum option 30-plugins.conf sets, to its value" {
   canopy-grofe generate --out "$out"
   plugins="$out/30-canopy-plugins.toml"
@@ -269,12 +284,15 @@ store_copy() {
   plugins="$out/30-canopy-plugins.toml"
   grep -v '^ *#' "$plugins" >"$BATS_TEST_TMPDIR/body"
   # In load-commands, in this order: the process list, the loader over the
-  # plugin list, and prefix C-s taken back from opensessions.
+  # plugin list. grofe has its own agent list, sidebar and key menu, so the
+  # plugins that were canopy's stand-ins are not loaded, and nothing takes
+  # prefix C-s back from them.
   run grep -n 'canopy_restore_processes.sh\|canopy_load_plugins\|bind-key C-s send-prefix' "$BATS_TEST_TMPDIR/body"
-  [ "${#lines[@]}" -eq 3 ]
+  [ "${#lines[@]}" -eq 2 ]
   [[ "${lines[0]}" == *'"""if-shell '*canopy_restore_processes.sh* ]]
   [[ "${lines[1]}" == *"canopy_load_plugins tmux-resurrect tmux-continuum "* ]]
-  [[ "${lines[2]}" == *'"bind-key C-s send-prefix",' ]]
+  [[ "${lines[1]}" == *"canopy_load_plugins tmux-resurrect tmux-continuum tmux-sensible tmux-yank tmux-fzf tmux-sessionx tmux-fzf-url'"* ]]
+  absent -qF -e opensessions -e which-key -e claude-session-manager "$BATS_TEST_TMPDIR/body"
   # No plugin is named by its own path: the loader finds the entry points.
   absent -qF -e resurrect.tmux -e continuum.tmux "$BATS_TEST_TMPDIR/body"
   # And no M-s of its own. The tmux layer rebinds it to canopy's save wrapper

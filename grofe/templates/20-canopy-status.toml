@@ -54,8 +54,13 @@ style = "bg=default,fg=#{@theme_fg}"
 left-length = 40
 left = "#[fg=#{@theme_blue},bg=default]#{@pill_l}#[fg=#{@theme_bg},bg=#{@theme_blue},bold] #{session_name} #[fg=#{@theme_blue},bg=default,nobold]#{@pill_r} "
 
+# grofe's own agent badge, ahead of the aggregator's segments. It is empty
+# when no agent needs attention, so the pill is absent then, as the other
+# segments are when they have nothing to say; clicking it opens the
+# notification tray (range "agents"). canopy's own state count is not used on
+# grofe. The commas inside the conditional are escaped, as in tmux.
 right-length = 120
-right = "#{@canopy-status}"
+right = "#{?#{agents_badge},#[range=user|agents]#[fg=#{@theme_red}#,bg=default]#{@pill_l}#[fg=#{@theme_bg}#,bg=#{@theme_red}#,bold] #{agents_badge} #[fg=#{@theme_red}#,bg=default#,nobold]#{@pill_r}#[norange] ,}#{@canopy-status}"
 
 # The directory's name rather than the window's, matching what 00-core's
 # automatic-rename-format puts there.
