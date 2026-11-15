@@ -3,7 +3,7 @@ load helper
 
 # The plugin loader: canopy_load_plugins in lib/plugins.sh, called from
 # 30-plugins.conf on tmux and from the grofe plugin fragment's
-# load-commands, over the ten vendored plugins.
+# load-commands, over the ten vendored plugins (seven of them on grofe).
 #
 # Every server here runs on a private socket in the suite's private socket
 # directory (test/setup_suite.bash), with a scratch $HOME and XDG tree, and
@@ -176,12 +176,14 @@ start() {
 # The loader is done when the last plugin's binding is there and the
 # prefix-send re-assert after the loop has run. tmux finishes before
 # source-file returns; grofe runs load commands after start.
+# The last plugin loaded is tmux-claude-session-manager on tmux, and
+# tmux-fzf-url on grofe (pass its name as $1), which leaves the other two out.
 wait_loaded() {
-  local i
+  local i last="${1:-tmux-claude-session-manager/scripts/launch.sh}"
   for i in $(seq 1 120); do
     keys="$(srv list-keys -T prefix 2>/dev/null)" || keys=""
     case "$keys" in
-      *tmux-claude-session-manager/scripts/launch.sh*)
+      *"$last"*)
         if printf '%s\n' "$keys" | grep -Eq 'prefix +C-s +send-prefix( |$)'; then
           return 0
         fi
@@ -253,57 +255,30 @@ assert_loaded_except() {
 
 plugin_log() { cat "$CANOPY_STATE/plugins.log" 2>/dev/null || true; }
 
-# Whether this grofe answers the two forms which-key and
-# claude-session-manager stopped at before grofe fixed them (M3.7 lane 1): a
-# tmux-syntax `source-file` and `set-hook -g alert-bell`. Asked of the
-# running server, through the tmux name the plugins call it by.
-grofe_runs_all_ten() {
-  local sock probe
-  sock="$(srv display-message -p '#{socket_path}')" || return 1
-  probe="$BATS_TEST_TMPDIR/probe.conf"
-  printf 'set -g @canopy_probe 1\n' >"$probe"
-  "$bin/tmux" -S "$sock" source-file "$probe" >/dev/null 2>&1 &&
-    [ "$("$bin/tmux" -S "$sock" show -gv @canopy_probe 2>/dev/null)" = 1 ] &&
-    "$bin/tmux" -S "$sock" set-hook -g alert-bell 'display-message probe' >/dev/null 2>&1 &&
-    "$bin/tmux" -S "$sock" set-hook -gu alert-bell >/dev/null 2>&1
-}
-
-# Eight of the ten load on grofe. grofe snapshots, restores and resumes panes
+# Seven of the ten load on grofe. grofe snapshots, restores and resumes panes
 # itself, so resurrect and continuum are left dormant there (owner ruling
 # 2026-11-05), and the two lines saying so are the expected content of
-# plugins.log rather than noise. On a grofe with lane 1's fixes that is the
-# whole log. On one without, two entry points stop at the forms above,
-# which-key before it binds: both are logged as failed, and neither stops the
-# plugins after it. Nothing else may be.
+# plugins.log rather than noise. grofe also has its own agent list, sidebar and
+# key menu, so opensessions, tmux-claude-session-manager and tmux-which-key are
+# not in its loader list at all: not loaded, and not logged. Nothing else may
+# be in the log.
 #
 # Not named GROFE_*: setup_canopy_env unsets "${!GROFE@}" so no grofe
 # variable of the developer's leaks into a test, and that net caught this
 # one too, leaving every plugin expected to load and the exclusion silent.
 DORMANT_ON_GROFE="tmux-resurrect tmux-continuum"
+NATIVE_ON_GROFE="opensessions tmux-claude-session-manager tmux-which-key"
 
 assert_grofe_load() {
-  local line all_ten=""
-  if grofe_runs_all_ten; then
-    all_ten=1
-    # shellcheck disable=SC2086
-    assert_loaded_except $DORMANT_ON_GROFE
-  else
-    # shellcheck disable=SC2086
-    assert_loaded_except $DORMANT_ON_GROFE tmux-which-key
-  fi
+  local line
+  # shellcheck disable=SC2086
+  assert_loaded_except $DORMANT_ON_GROFE $NATIVE_ON_GROFE
   run plugin_log
   while IFS= read -r line; do
     [ -n "$line" ] || continue
     case "$line" in
       *" tmux-resurrect: dormant, grofe snapshots and restores panes itself" | \
         *" tmux-continuum: dormant, grofe snapshots and restores panes itself") ;;
-      *" tmux-which-key: entry point plugin.sh.tmux failed" | \
-        *" tmux-claude-session-manager: entry point claude_hatch.tmux failed")
-        [ -z "$all_ten" ] || {
-          printf 'unexpected plugins.log line: %s\n' "$line"
-          return 1
-        }
-        ;;
       *)
         printf 'unexpected plugins.log line: %s\n' "$line"
         return 1
@@ -401,11 +376,15 @@ call_list() {
   tr '\n' ' ' <"$1" | sed -n 's/.*canopy_load_plugins \(.*\)/\1/p' | sed "s/'.*//; s/\\\\//g" | tr -s ' ' | sed 's/^ //; s/ $//'
 }
 
-@test "tmux.conf and the grofe fragment load the ten in VERSIONS order" {
+@test "tmux.conf loads the ten in VERSIONS order, the grofe fragment the seven" {
   want="$(canopy_plugin_names | tr '\n' ' ' | sed 's/ $//')"
   [ "$(call_list "$CANOPY_STORE/tmux/tmux.conf")" = "$want" ]
-  [ "$(call_list "$CANOPY_STORE/grofe/templates/30-canopy-plugins.toml")" = "$want" ]
-  [ "$(call_list "$CANOPY_STORE/grofe/conf.d/30-canopy-plugins.toml")" = "$want" ]
+  # grofe does agents and the key menu natively, so its list leaves out three.
+  gwant=" $want "
+  for name in $NATIVE_ON_GROFE; do gwant="${gwant/ $name / }"; done
+  gwant="$(printf '%s' "$gwant" | sed 's/^ //; s/ $//')"
+  [ "$(call_list "$CANOPY_STORE/grofe/templates/30-canopy-plugins.toml")" = "$gwant" ]
+  [ "$(call_list "$CANOPY_STORE/grofe/conf.d/30-canopy-plugins.toml")" = "$gwant" ]
 }
 
 @test "on tmux the plugins load after user.conf, and prefix C-s is taken back after them" {
@@ -550,11 +529,11 @@ EOF
 
 # --- a real server -----------------------------------------------------------
 
-@test "grofe as tmux: the ported config loads the eight, with no load error and no load miss" {
+@test "grofe as tmux: the ported config loads the seven, with no load error and no load miss" {
   need_grofe
   copy_store
   start grofe-tmux
-  wait_loaded
+  wait_loaded tmux-fzf-url/fzf-url.sh
   assert_grofe_load
   assert_no_load_miss
   run plugin_log
@@ -569,28 +548,28 @@ EOF
   need_grofe
   copy_store
   start grofe
-  wait_loaded
+  wait_loaded tmux-fzf-url/fzf-url.sh
   assert_grofe_load
   run plugin_log
   assert_dormant_count "$output" 2
 }
 
-@test "grofe: with tmux-which-key moved aside only it is dormant, and doctor calls it missing" {
+@test "grofe: with tmux-fzf-url moved aside only it is dormant, and doctor calls it missing" {
   need_grofe
   copy_store
-  mv "$store/plugins/tmux-which-key" "$BATS_TEST_TMPDIR/tmux-which-key.aside"
+  mv "$store/plugins/tmux-fzf-url" "$BATS_TEST_TMPDIR/tmux-fzf-url.aside"
   start grofe-tmux
-  wait_loaded
+  wait_loaded tmux-sessionx/scripts/sessionx.sh
   # shellcheck disable=SC2086
-  assert_loaded_except $DORMANT_ON_GROFE tmux-which-key
+  assert_loaded_except $DORMANT_ON_GROFE $NATIVE_ON_GROFE tmux-fzf-url
   run plugin_log
   printf '%s\n' "$output"
   assert_dormant_count "$output" 3
-  printf '%s\n' "$output" | grep -q " tmux-which-key: dormant, no executable \*.tmux in $store/plugins/tmux-which-key$"
+  printf '%s\n' "$output" | grep -q " tmux-fzf-url: dormant, no executable \*.tmux in $store/plugins/tmux-fzf-url$"
   run canopy-doctor
-  printf '%s\n' "$output" | grep -q '  tmux-which-key: pinned [0-9a-f]*, tree MISSING'
+  printf '%s\n' "$output" | grep -q '  tmux-fzf-url: pinned [0-9a-f]*, tree MISSING'
   [[ "$output" != *"MODIFIED"* ]]
-  mv "$BATS_TEST_TMPDIR/tmux-which-key.aside" "$store/plugins/tmux-which-key"
+  mv "$BATS_TEST_TMPDIR/tmux-fzf-url.aside" "$store/plugins/tmux-fzf-url"
 }
 
 @test "tmux 3.7b: the same loader loads all ten" {
