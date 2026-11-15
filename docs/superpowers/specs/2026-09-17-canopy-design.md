@@ -956,7 +956,7 @@ complete when its container scenario passes.
 ## 14. Relationship to grofe
 
 canopy is the tmux-based path to this experience and the requirements source for
-[grofe](https://github.com/morrieinmaas/grofe), a multiplexer written in Rust: what
+[grofe](https://github.com/termage/grofe), a multiplexer written in Rust: what
 canopy had to build around tmux, and what verifying it taught, is what grofe has to do
 natively. canopy remains the path until grofe reaches parity with it, and then gains a
 grofe backend.
