@@ -123,7 +123,9 @@ canopy_agent_report() {
     [ "$state" != completed ] || state="done"
     set -- agent report "$state"
     [ -z "$session_id" ] || set -- "$@" --session-id "$session_id"
-    if kind="$(canopy_agent_grofe_kind "$source_id")" && [ ! -t 0 ]; then
+    # Hook mode takes the session id only from the payload, so an id given
+    # explicitly goes through the plain form, which carries it.
+    if kind="$(canopy_agent_grofe_kind "$source_id")" && [ ! -t 0 ] && [ -z "$session_id" ]; then
       set -- "$@" --hook "$kind"
     elif [ -n "$kind" ]; then
       set -- "$@" --kind "$kind"

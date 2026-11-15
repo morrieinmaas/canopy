@@ -392,8 +392,22 @@ EOF
   fake_grofe
   run sh -c 'printf "%s" "{\"hook_event_name\":\"Stop\"}" | canopy-agent report completed --source claude-code --session-id abc-1'
   [ "$status" -eq 0 ]
-  [ "$(head -1 "$grofe_log")" = "agent report done --session-id abc-1 --hook claude" ]
+  [ "$(head -1 "$grofe_log")" = "agent report done --session-id abc-1 --kind claude" ]
+}
+
+@test "canopy-agent report under grofe without a session id uses hook mode with stdin" {
+  fake_grofe
+  run sh -c 'printf "%s" "{\"hook_event_name\":\"Stop\"}" | canopy-agent report completed --source claude-code'
+  [ "$status" -eq 0 ]
+  [ "$(head -1 "$grofe_log")" = "agent report done --hook claude" ]
   [[ "$(cat "$grofe_log")" == *hook_event_name* ]]
+}
+
+@test "report.sh under grofe passes --blocked permission for blocked" {
+  fake_grofe
+  run sh -c 'printf "{}" | "$1" blocked' sh "$CANOPY_STORE/adapters/claude-code/report.sh"
+  [ "$status" -eq 0 ]
+  [ "$(head -1 "$grofe_log")" = "agent report blocked --hook claude --blocked permission" ]
 }
 
 @test "canopy-agent report under grofe still rejects an invalid state" {
