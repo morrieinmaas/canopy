@@ -47,7 +47,7 @@ load-commands = [
   # Which saved commands resurrect may replay, generated from the installed
   # adapters, before resurrect loads.
   """if-shell '[ -x "$CANOPY_STORE/plugins/strategies/canopy_restore_processes.sh" ]' 'run-shell "$CANOPY_STORE/plugins/strategies/canopy_restore_processes.sh"'""",
-  # The plugin loader, over the ten names in tmux.conf's order. It loads into
+  # The plugin loader, over the seven names in tmux.conf's order. It loads into
   # the server in $TMUX and no other.
   '''run-shell 'f="$CANOPY_STORE/lib/plugins.sh"; [ -r "$f" ] || exit 0; . "$CANOPY_STORE/lib/env.sh"; . "$f"; canopy_load_plugins tmux-resurrect tmux-continuum tmux-sensible tmux-yank tmux-fzf tmux-sessionx tmux-fzf-url'''',
   # No save wrapper and no M-s rebind here, which is where the tmux layer

@@ -50,7 +50,11 @@ if [ -n "${GROFE:-}" ] && grofe_bin="$(command -v "${CANOPY_GROFE:-grofe}")"; th
     completed) state="done" ;;
     *) ;;
   esac
-  printf '%s' "$payload" | "$grofe_bin" agent report "$state" --hook claude || :
+  case "$state" in
+    blocked) set -- --blocked permission ;;
+    *) set -- ;;
+  esac
+  printf '%s' "$payload" | "$grofe_bin" agent report "$state" --hook claude "$@" || :
   exit 0
 fi
 
