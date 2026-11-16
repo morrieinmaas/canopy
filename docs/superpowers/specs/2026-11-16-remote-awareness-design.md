@@ -1,7 +1,7 @@
 # Remote awareness: design
 
 **Date:** 2026-11-16
-**Status:** Draft, awaiting review
+**Status:** Approved 2026-11-16, pre-implementation
 **Repo:** canopy
 **Build order:** 4 of 4, after athome's binary, keys and remote-machines specs
 (`docs/superpowers/specs/2026-11-16-*.md` in athome). Section 2 also needs canopy's themes
@@ -89,8 +89,11 @@ it to a box works like this:
   `grofe -r`, the box's `grofe proxy` only bridges bytes and the attach hello, environment
   included, comes from the laptop's client (grofe `docs/protocol-proxy.md`, the `attach`
   channel), so the box's server sees the laptop's value.
-- **Applying it:** a hook runs `canopy theme set --mux-only "$CANOPY_THEME"` when the value differs
-  from the box's current theme and the box has that theme. Unknown names are ignored. The
+- **Applying it:** a hook runs `canopy theme set --mux-only <name>` when the value differs
+  from the box's current theme and the box has that theme. The hook reads the name from the
+  session's environment with `show-environment -t <session> CANOPY_THEME`: `update-environment`
+  sets it there, and a hook's shell command runs with the server's environment, where a bare
+  `$CANOPY_THEME` would be empty or stale. Unknown names are ignored. The
   hook is on `client-session-changed`, which grofe and tmux fire on every attach, including
   the one that creates the session. `client-attached` alone would miss that first attach:
   grofe, like tmux, fires it only for `attach-session`.
@@ -119,7 +122,8 @@ Each test runs on both backends.
 - `canopy grofe generate` leaves `25-remote.toml` in place, and the checked-in
   `grofe/conf.d` is identical with and without `canopy remote set`.
 - The segment's text has no `@theme_bg` fill (a format check on the shipped status layers).
-- Theme following, once M5 lands: attach with a known theme name applies it; an unknown name
+- Theme following, once M5 lands: attach with a known theme name applies it; the name is
+  read from the session's environment, not the server's; an unknown name
   leaves the current theme; the first attach that creates a session applies it too.
 - Theme following over `grofe -r`, against athome's test container: the laptop's
   `CANOPY_THEME` reaches the box's session. grofe's ssh-remote work should carry its own
