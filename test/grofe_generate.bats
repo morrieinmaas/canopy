@@ -291,7 +291,7 @@ store_copy() {
   [ "${#lines[@]}" -eq 2 ]
   [[ "${lines[0]}" == *'"""if-shell '*canopy_restore_processes.sh* ]]
   [[ "${lines[1]}" == *"canopy_load_plugins tmux-resurrect tmux-continuum "* ]]
-  [[ "${lines[1]}" == *"canopy_load_plugins tmux-resurrect tmux-continuum tmux-sensible tmux-yank tmux-fzf tmux-sessionx tmux-which-key tmux-fzf-url'"* ]]
+  [[ "${lines[1]}" == *"canopy_load_plugins tmux-resurrect tmux-continuum tmux-sensible tmux-yank tmux-fzf tmux-sessionx tmux-which-key tmux-fzf-url; sh \"\$CANOPY_STORE/grofe/which-key-title.sh\"'"* ]]
   absent -qF -e opensessions -e claude-session-manager "$BATS_TEST_TMPDIR/body"
   # No plugin is named by its own path: the loader finds the entry points.
   absent -qF -e resurrect.tmux -e continuum.tmux "$BATS_TEST_TMPDIR/body"
