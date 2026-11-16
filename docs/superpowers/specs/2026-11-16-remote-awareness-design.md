@@ -34,22 +34,37 @@ same changes.
 
 ## 1. Machine and scope indicator
 
-athome writes `ATHOME_MACHINE`, `ATHOME_SCOPE` and `ATHOME_CONTEXT_COLOR` on each box (for
-example `acme-dev`, `work/acme`, `yellow`). canopy reads them **when it generates its
-config**, not at runtime: the server's environment depends on how it was started, and
-neither backend expands environment variables in status formats. When `ATHOME_MACHINE` is
-set at generation time, canopy writes three user options into the generated layer:
-`@canopy_machine`, `@canopy_scope`, `@canopy_context_color`. On the laptop they are unset
-and nothing below appears.
+A new command, `canopy remote`, records where this machine lives:
 
-- **Status line:** a separate segment before the session pill, `machine · scope`, drawn as
-  bold text in `@canopy_context_color` on the default background, with no pill fill. Text on
-  the default background stays readable with any theme; a hex `@theme_bg` on an ANSI fill
-  would not. The segment is added only when `@canopy_machine` is set, and
-  `status-left-length` is raised from 40 to 80 on remote machines so the session pill still
-  fits.
-- **Terminal title:** canopy turns on `set-titles` with `set-titles-string`
-  `#{@canopy_machine} · #S` on remote machines, so the laptop's terminal tab says where you
+```
+canopy remote set --machine acme-dev --scope work/acme --color yellow
+canopy remote clear
+```
+
+athome runs `set` on the box during bootstrap and every `machine sync`, after canopy is
+installed, passing the values as flags (the remote-machines spec names the step). Taking
+flags rather than reading `ATHOME_*` means it never depends on which shell or service
+environment it runs in. It writes two per-machine files, the same way `canopy-caps` writes
+`$CANOPY_STATE/05-caps.conf`:
+
+- **tmux:** `$CANOPY_STATE/25-remote.conf`, sourced by `tmux/tmux.conf` with
+  `source-file -q` after the status layer, so a machine without it loads nothing.
+- **grofe:** `~/.config/grofe/conf.d/25-remote.toml`. grofe loads `conf.d/*.toml` in
+  lexical order, so it lands after `20-canopy-status.toml`, and its name is outside the
+  `NN-canopy-*.toml` pattern that `canopy grofe generate` cleans up.
+
+Each file sets `@canopy_machine`, `@canopy_scope` and `@canopy_context_color`, plus the
+numeric and on/off settings below, which cannot be formats. The shipped layers stay
+machine-independent, so the checked-in `grofe/conf.d` and its generate test are unchanged.
+On the laptop nothing is written and nothing below appears.
+
+- **Status line:** the shipped `status-left` gains a conditional segment before the session
+  pill, `#{?@canopy_machine,...,}`, showing `machine · scope` as bold text in
+  `@canopy_context_color` on the default background, with no pill fill. Text on the default
+  background stays readable with any theme; a hex `@theme_bg` on an ANSI fill would not. The
+  per-machine file raises `status-left-length` from 40 to 80 so the session pill still fits.
+- **Terminal title:** the per-machine file turns on `set-titles` with `set-titles-string`
+  `#{@canopy_machine} · #S`, so the laptop's terminal tab says where you
   are. `allow-rename` stays off as today; titles are set by the server, not by programs.
 
 The ANSI colour comes from the terminal's palette, which is the laptop's terminal even on a
@@ -66,31 +81,40 @@ no `canopy theme` command, no `themes/` directory and no `current/theme` yet.
 Once themes exist, the active theme is the symlink `$CANOPY_STATE/current/theme`. Following
 it to a box works like this:
 
-- **On the laptop,** athome's zsh config exports `CANOPY_THEME` from that symlink, so every
-  grofe client started from a shell carries it.
+- **On the laptop,** athome's zsh config exports `CANOPY_THEME` as the theme's name, the
+  basename of the symlink's target, not a path (athome's remote-machines spec). Every
+  grofe client started from that shell carries it.
 - **On attach,** grofe copies the variables listed in `update-environment` from the client
   into the session. canopy adds `CANOPY_THEME` to that list on every machine. Over
   `grofe -r`, the box's `grofe proxy` only bridges bytes and the attach hello, environment
   included, comes from the laptop's client (grofe `docs/protocol-proxy.md`, the `attach`
   channel), so the box's server sees the laptop's value.
-- **Applying it:** a hook runs `canopy theme apply "$CANOPY_THEME"` when the value differs
+- **Applying it:** a hook runs `canopy theme set --mux-only "$CANOPY_THEME"` when the value differs
   from the box's current theme and the box has that theme. Unknown names are ignored. The
   hook is on `client-session-changed`, which grofe and tmux fire on every attach, including
   the one that creates the session. `client-attached` alone would miss that first attach:
   grofe, like tmux, fires it only for `attach-session`.
 
-A theme change reaches a box on the next attach from a shell that has the new value. grofe
-copies the environment only when a client attaches, so an attached client does not
-repaint the box when you switch theme on the laptop.
+`--mux-only` is a flag this spec adds to §9's `canopy theme set <name>`: it regenerates and
+reloads only the multiplexer layer, and leaves the ghostty and starship artifacts alone,
+which on a box belong to the laptop's terminal and to athome's prompt.
+
+A theme change reaches a box on the next attach or `switch-client` from a client whose
+start-up environment has the new value. grofe copies the environment only then, from the
+client's start-up environment, so an attached client does not repaint the box when you
+switch theme on the laptop.
 
 ## Testing
 
 Each test runs on both backends.
 
-- Indicator: generate with the three `ATHOME_*` variables set; the status line has the
-  segment in the right colour, `status-left-length` is 80, and the title shows machine and
-  session. Generate without them: no segment, no title change, length 40.
-- The segment's text has no `@theme_bg` fill (a format check on the generated layer).
+- Indicator: after `canopy remote set`, the status line has the segment in the right colour,
+  `status-left-length` is 80, and the title shows machine and session. After
+  `canopy remote clear`, or on a machine where it never ran: no segment, no title change,
+  length 40.
+- `canopy grofe generate` leaves `25-remote.toml` in place, and the checked-in
+  `grofe/conf.d` is identical with and without `canopy remote set`.
+- The segment's text has no `@theme_bg` fill (a format check on the shipped status layers).
 - Theme following, once M5 lands: attach with a known theme name applies it; an unknown name
   leaves the current theme; the first attach that creates a session applies it too.
 - Theme following over `grofe -r`, against athome's test container: the laptop's
@@ -100,7 +124,8 @@ Each test runs on both backends.
 ## Docs
 
 - `docs/04-configuration.md`: the remote indicator, its three options, and the title.
-- `docs/02-commands.md`: `canopy theme apply` when M5 lands, and theme following.
+- `docs/02-commands.md`: `canopy remote set|clear`, and `canopy theme set --mux-only` with
+  theme following when M5 lands.
 - `README.md`: one line that canopy marks remote athome machines.
 
 ## Open questions
