@@ -18,7 +18,7 @@ rather than describing the intention.
 
 ## Two backends: tmux and grofe
 
-canopy runs on real tmux, and on [grofe](https://github.com/morrieinmaas/grofe),
+canopy runs on real tmux, and on [grofe](https://github.com/termage/grofe),
 a multiplexer that can run under the name `tmux`. Persistence is the one place
 the two differ, and the plugin layer picks one at load time:
 
