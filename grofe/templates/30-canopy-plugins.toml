@@ -6,7 +6,7 @@ requires = "grofe >= 0.1"
 #
 # Every vendored plugin runs on grofe unchanged, through the same loader the
 # tmux layer calls: canopy_load_plugins in lib/plugins.sh, over the same
-# names as tmux.conf, minus the three grofe does natively (below). Each runs as tmux ran it, through `tmux
+# names as tmux.conf, minus the two grofe does natively (below). Each runs as tmux ran it, through `tmux
 # run-shell`, which grofe answers to the tmux name.
 #
 # Two of them do not load here. grofe snapshots, restores and resumes
@@ -23,9 +23,11 @@ requires = "grofe >= 0.1"
 # source-file, and layer by layer, so user.toml's own run after these. Every
 # option below is set before any of them runs.
 #
-# opensessions, tmux-claude-session-manager and tmux-which-key are not in the
-# loader list either: grofe has its own agent list, sidebar and key menu. The
-# tmux layer still loads them.
+# opensessions and tmux-claude-session-manager are not in the loader list
+# either: grofe has its own agent list and sidebar. The tmux layer still
+# loads them. tmux-which-key does load: its grouped prefix Space menu is
+# plain display-menu, which grofe draws as tmux does, and grofe's own key
+# menu lists every binding rather than grouping the common ones.
 
 load-commands = [
   # Which persistence this server got, the same answer 30-plugins.conf
@@ -44,9 +46,9 @@ load-commands = [
   # Which saved commands resurrect may replay, generated from the installed
   # adapters, before resurrect loads.
   """if-shell '[ -x "$CANOPY_STORE/plugins/strategies/canopy_restore_processes.sh" ]' 'run-shell "$CANOPY_STORE/plugins/strategies/canopy_restore_processes.sh"'""",
-  # The plugin loader, over the seven names in tmux.conf's order. It loads into
+  # The plugin loader, over the eight names in tmux.conf's order. It loads into
   # the server in $TMUX and no other.
-  '''run-shell 'f="$CANOPY_STORE/lib/plugins.sh"; [ -r "$f" ] || exit 0; . "$CANOPY_STORE/lib/env.sh"; . "$f"; canopy_load_plugins tmux-resurrect tmux-continuum tmux-sensible tmux-yank tmux-fzf tmux-sessionx tmux-fzf-url'''',
+  '''run-shell 'f="$CANOPY_STORE/lib/plugins.sh"; [ -r "$f" ] || exit 0; . "$CANOPY_STORE/lib/env.sh"; . "$f"; canopy_load_plugins tmux-resurrect tmux-continuum tmux-sensible tmux-yank tmux-fzf tmux-sessionx tmux-which-key tmux-fzf-url'''',
   # No save wrapper and no M-s rebind here, which is where the tmux layer
   # has both: neither resurrect nor continuum loads on grofe, so there is no
   # save loop to serialise, and the key table's own M-s says grofe saves by
@@ -67,3 +69,6 @@ resurrect-save-command-strategy = "../../strategies/canopy_save_command"
 # takes canopy's prefix-send binding.
 resurrect-save = "M-s"
 resurrect-restore = "M-r"
+# which-key loads its prebuilt default menu: its build imports a git
+# submodule vendoring leaves out.
+tmux-which-key-disable-autobuild = "1"
