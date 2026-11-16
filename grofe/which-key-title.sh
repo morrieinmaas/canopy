@@ -4,8 +4,8 @@
 # the title says grofe. Run after which-key has loaded; with no which-key
 # binding it changes nothing.
 #
-# `list-keys -T prefix Space` would print just the one binding on tmux, but
-# grofe's answers to that form are empty, so the whole table is filtered.
+# tmux 3.7b (and grofe, as it) prints nothing for `list-keys -T prefix
+# Space`, so the whole table is filtered for the one binding.
 tmp="${TMPDIR:-/tmp}/canopy-wk-title.$$"
 trap 'rm -f "$tmp"' EXIT
 {
