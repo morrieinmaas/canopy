@@ -284,15 +284,15 @@ store_copy() {
   plugins="$out/30-canopy-plugins.toml"
   grep -v '^ *#' "$plugins" >"$BATS_TEST_TMPDIR/body"
   # In load-commands, in this order: the process list, the loader over the
-  # plugin list. grofe has its own agent list, sidebar and key menu, so the
-  # plugins that were canopy's stand-ins are not loaded, and nothing takes
-  # prefix C-s back from them.
+  # plugin list. grofe has its own agent list and sidebar, so the plugins
+  # that were canopy's stand-ins are not loaded, and nothing takes prefix C-s
+  # back from them. which-key's grouped menu does load.
   run grep -n 'canopy_restore_processes.sh\|canopy_load_plugins\|bind-key C-s send-prefix' "$BATS_TEST_TMPDIR/body"
   [ "${#lines[@]}" -eq 2 ]
   [[ "${lines[0]}" == *'"""if-shell '*canopy_restore_processes.sh* ]]
   [[ "${lines[1]}" == *"canopy_load_plugins tmux-resurrect tmux-continuum "* ]]
-  [[ "${lines[1]}" == *"canopy_load_plugins tmux-resurrect tmux-continuum tmux-sensible tmux-yank tmux-fzf tmux-sessionx tmux-fzf-url'"* ]]
-  absent -qF -e opensessions -e which-key -e claude-session-manager "$BATS_TEST_TMPDIR/body"
+  [[ "${lines[1]}" == *"canopy_load_plugins tmux-resurrect tmux-continuum tmux-sensible tmux-yank tmux-fzf tmux-sessionx tmux-which-key tmux-fzf-url'"* ]]
+  absent -qF -e opensessions -e claude-session-manager "$BATS_TEST_TMPDIR/body"
   # No plugin is named by its own path: the loader finds the entry points.
   absent -qF -e resurrect.tmux -e continuum.tmux "$BATS_TEST_TMPDIR/body"
   # And no M-s of its own. The tmux layer rebinds it to canopy's save wrapper

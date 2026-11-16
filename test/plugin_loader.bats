@@ -3,7 +3,7 @@ load helper
 
 # The plugin loader: canopy_load_plugins in lib/plugins.sh, called from
 # 30-plugins.conf on tmux and from the grofe plugin fragment's
-# load-commands, over the ten vendored plugins (seven of them on grofe).
+# load-commands, over the ten vendored plugins (eight of them on grofe).
 #
 # Every server here runs on a private socket in the suite's private socket
 # directory (test/setup_suite.bash), with a scratch $HOME and XDG tree, and
@@ -255,19 +255,19 @@ assert_loaded_except() {
 
 plugin_log() { cat "$CANOPY_STATE/plugins.log" 2>/dev/null || true; }
 
-# Seven of the ten load on grofe. grofe snapshots, restores and resumes panes
+# Eight of the ten load on grofe. grofe snapshots, restores and resumes panes
 # itself, so resurrect and continuum are left dormant there (owner ruling
 # 2026-11-05), and the two lines saying so are the expected content of
-# plugins.log rather than noise. grofe also has its own agent list, sidebar and
-# key menu, so opensessions, tmux-claude-session-manager and tmux-which-key are
-# not in its loader list at all: not loaded, and not logged. Nothing else may
-# be in the log.
+# plugins.log rather than noise. grofe also has its own agent list and
+# sidebar, so opensessions and tmux-claude-session-manager are not in its
+# loader list at all: not loaded, and not logged. Nothing else may be in the
+# log.
 #
 # Not named GROFE_*: setup_canopy_env unsets "${!GROFE@}" so no grofe
 # variable of the developer's leaks into a test, and that net caught this
 # one too, leaving every plugin expected to load and the exclusion silent.
 DORMANT_ON_GROFE="tmux-resurrect tmux-continuum"
-NATIVE_ON_GROFE="opensessions tmux-claude-session-manager tmux-which-key"
+NATIVE_ON_GROFE="opensessions tmux-claude-session-manager"
 
 assert_grofe_load() {
   local line
@@ -376,10 +376,10 @@ call_list() {
   tr '\n' ' ' <"$1" | sed -n 's/.*canopy_load_plugins \(.*\)/\1/p' | sed "s/'.*//; s/\\\\//g" | tr -s ' ' | sed 's/^ //; s/ $//'
 }
 
-@test "tmux.conf loads the ten in VERSIONS order, the grofe fragment the seven" {
+@test "tmux.conf loads the ten in VERSIONS order, the grofe fragment the eight" {
   want="$(canopy_plugin_names | tr '\n' ' ' | sed 's/ $//')"
   [ "$(call_list "$CANOPY_STORE/tmux/tmux.conf")" = "$want" ]
-  # grofe does agents and the key menu natively, so its list leaves out three.
+  # grofe does agents and the sidebar natively, so its list leaves out two.
   gwant=" $want "
   for name in $NATIVE_ON_GROFE; do gwant="${gwant/ $name / }"; done
   gwant="$(printf '%s' "$gwant" | sed 's/^ //; s/ $//')"
@@ -529,7 +529,7 @@ EOF
 
 # --- a real server -----------------------------------------------------------
 
-@test "grofe as tmux: the ported config loads the seven, with no load error and no load miss" {
+@test "grofe as tmux: the ported config loads the eight, with no load error and no load miss" {
   need_grofe
   copy_store
   start grofe-tmux
@@ -559,7 +559,8 @@ EOF
   copy_store
   mv "$store/plugins/tmux-fzf-url" "$BATS_TEST_TMPDIR/tmux-fzf-url.aside"
   start grofe-tmux
-  wait_loaded tmux-sessionx/scripts/sessionx.sh
+  # which-key is the last to load with tmux-fzf-url aside.
+  wait_loaded show-wk-menu
   # shellcheck disable=SC2086
   assert_loaded_except $DORMANT_ON_GROFE $NATIVE_ON_GROFE tmux-fzf-url
   run plugin_log
