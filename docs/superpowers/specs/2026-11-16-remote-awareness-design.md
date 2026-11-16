@@ -95,6 +95,10 @@ it to a box works like this:
   the one that creates the session. `client-attached` alone would miss that first attach:
   grofe, like tmux, fires it only for `attach-session`.
 
+**Starship on a box.** When M5 adds the starship overlay (§9), canopy's merged config takes
+athome's rendered `~/.config/starship.toml` as its base and changes only colours, so
+athome's remote host segment survives (athome's remote-machines spec states the same rule).
+
 `--mux-only` is a flag this spec adds to §9's `canopy theme set <name>`: it regenerates and
 reloads only the multiplexer layer, and leaves the ghostty and starship artifacts alone,
 which on a box belong to the laptop's terminal and to athome's prompt.
