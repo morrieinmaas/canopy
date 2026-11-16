@@ -373,7 +373,7 @@ assert_no_load_miss() {
 
 # The names a call site passes to canopy_load_plugins.
 call_list() {
-  tr '\n' ' ' <"$1" | sed -n 's/.*canopy_load_plugins \(.*\)/\1/p' | sed "s/'.*//; s/\\\\//g" | tr -s ' ' | sed 's/^ //; s/ $//'
+  tr '\n' ' ' <"$1" | sed -n 's/.*canopy_load_plugins \(.*\)/\1/p' | sed "s/[';].*//; s/\\\\//g" | tr -s ' ' | sed 's/^ //; s/ $//'
 }
 
 @test "tmux.conf loads the ten in VERSIONS order, the grofe fragment the eight" {
@@ -536,6 +536,15 @@ EOF
   wait_loaded tmux-fzf-url/fzf-url.sh
   assert_grofe_load
   assert_no_load_miss
+  # which-key's menu says grofe, not the "tmux" of its prebuilt form, once
+  # the loader's shell has run grofe/which-key-title.sh after the plugins.
+  for _ in $(seq 1 40); do
+    srv list-keys -T prefix | grep -E 'prefix +Space ' | grep -qF ']grofe#[' && break
+    sleep 0.25
+  done
+  srv list-keys -T prefix | grep -E 'prefix +Space ' | grep -qF ']grofe#['
+  srv show-options -g command-alias | grep 'show-wk-menu=' | grep -qF ']grofe#['
+  ! srv show-options -g command-alias | grep 'show-wk-menu' | grep -qF ']tmux#[
   run plugin_log
   assert_dormant_count "$output" 2
   # No plugin wrote into its vendored tree.

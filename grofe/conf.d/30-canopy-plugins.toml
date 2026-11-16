@@ -50,8 +50,10 @@ load-commands = [
   # adapters, before resurrect loads.
   """if-shell '[ -x "$CANOPY_STORE/plugins/strategies/canopy_restore_processes.sh" ]' 'run-shell "$CANOPY_STORE/plugins/strategies/canopy_restore_processes.sh"'""",
   # The plugin loader, over the eight names in tmux.conf's order. It loads into
-  # the server in $TMUX and no other.
-  '''run-shell 'f="$CANOPY_STORE/lib/plugins.sh"; [ -r "$f" ] || exit 0; . "$CANOPY_STORE/lib/env.sh"; . "$f"; canopy_load_plugins tmux-resurrect tmux-continuum tmux-sensible tmux-yank tmux-fzf tmux-sessionx tmux-which-key tmux-fzf-url'''',
+  # the server in $TMUX and no other. Then which-key's menu, titled "tmux"
+  # in its prebuilt form, is retitled grofe, in the same shell so it runs
+  # once which-key has bound it.
+  '''run-shell 'f="$CANOPY_STORE/lib/plugins.sh"; [ -r "$f" ] || exit 0; . "$CANOPY_STORE/lib/env.sh"; . "$f"; canopy_load_plugins tmux-resurrect tmux-continuum tmux-sensible tmux-yank tmux-fzf tmux-sessionx tmux-which-key tmux-fzf-url; sh "$CANOPY_STORE/grofe/which-key-title.sh"'''',
   # No save wrapper and no M-s rebind here, which is where the tmux layer
   # has both: neither resurrect nor continuum loads on grofe, so there is no
   # save loop to serialise, and the key table's own M-s says grofe saves by
