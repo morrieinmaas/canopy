@@ -18,7 +18,7 @@ environment variables in the tmux **server** and sources one file, the store's
 | 5 | `25-remote.conf` | `$CANOPY_STATE` | Written by `canopy remote set` on a remote machine only ([below](#remote-machines)). Also `-q`, so a laptop loads nothing |
 | 6 | `user.conf` | `$CANOPY_CONFIG` | Yours. Sourced last, so it wins |
 
-Both generated layers live in `$CANOPY_STATE` rather than in the store's `conf.d`,
+The generated layers live in `$CANOPY_STATE` rather than in the store's `conf.d`,
 for one reason: the store is read-only by convention, and a generated file inside a
 git checkout shows up as a local modification on every machine.
 

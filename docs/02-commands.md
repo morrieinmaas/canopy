@@ -8,7 +8,7 @@ metadata header. `canopy` itself is a dispatcher: it reads those headers to rend
 help, and `exec`s the matching file. `canopy index` writes the same metadata to a TSV
 for later milestones to consume.
 
-There are ten: the dispatcher and nine subcommands. M1 shipped the `core` group,
+The dispatcher and its subcommands are listed below. M1 shipped the `core` group,
 M2 added the `agent` group.
 
 | Command | Summary | Group |
@@ -626,7 +626,9 @@ With them, the status line starts with `acme-dev · work/acme` in bold, in the g
 on the default background, and the terminal's title becomes `acme-dev · <session>`. Every
 attach also adopts the laptop's athome theme; see
 [04 Configuration](04-configuration.md#remote-machines). Both files take effect on the
-next config load: a server already running needs a reload (`prefix r`).
+next config load: after `set`, a server already running needs a reload (`prefix r`).
+A reload does not undo them, though: after `clear`, the machine options, the title, the
+`update-environment` entry and the hooks stay in a running server until it restarts.
 
 The values are checked, not escaped. `--machine` is letters, digits, `.`, `_` and `-`,
 starting with a letter or digit; `--scope` may also hold `/`; `--color` is one of the

@@ -270,8 +270,9 @@ exactly as it is today.
   `~/.local/bin/theme` is tried.
 - opensessions resets `client-session-changed` on tmux: canopy does not use that hook on
   tmux.
-- `canopy remote clear` while a server runs: the options stay until the next server start
-  or reload; documented.
+- `canopy remote clear` while a server runs: the options, title, `update-environment`
+  entry and hooks stay until the server restarts (a reload sets but never unsets them);
+  documented.
 
 ### Test list
 
@@ -326,6 +327,16 @@ other call.
 22. grofe end to end: a grofe server with the fragments and `25-remote.toml`, a client with
     `CANOPY_THEME=everforest` creating session `main`: logs `applied everforest`, and the
     expanded status-left has `acme-dev · work/acme`.
+23. grofe, never set and after `clear`: `status.left-length = 40`, `set-titles = false`, no
+    `CANOPY_THEME` and no hook in `show-config`.
+24. grofe end to end, `main` already exists and the client runs `attach-session -t main`:
+    logs `applied everforest` once.
+25. tmux end to end, the client creates session `a b'c`: logs `applied everforest`.
+26. `follow-theme` when `theme <name>` exits 3: exit 0.
+27. `set --machine one --machine acme-dev ...`: the file says `acme-dev`.
+28. `XDG_CONFIG_HOME` unset: the grofe file is `~/.config/grofe/conf.d/25-remote.toml`, and
+    `clear` removes it.
+29. grofe's `conf.d` cannot be created: `set` fails and the tmux file is not written either.
 
 ### Out of scope
 
