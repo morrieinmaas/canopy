@@ -1,6 +1,8 @@
 use std::collections::{HashMap, HashSet};
 use std::fs;
+use std::io::{Read, Seek, SeekFrom};
 use std::net::{SocketAddr, ToSocketAddrs};
+use std::os::unix::fs::MetadataExt;
 use std::path::Path;
 use std::path::PathBuf;
 use std::process;
@@ -12,10 +14,10 @@ use std::time::{Instant, SystemTime};
 use base64::{Engine, engine::general_purpose::STANDARD};
 use futures_util::{SinkExt, StreamExt};
 use opensessions_runtime::agent_watchers::{
-    AgentWatcherSnapshot, amp_snapshot_from_thread_json, claude_code_snapshot_from_jsonl,
-    codex_snapshot_from_jsonl, codex_thread_id_from_path, decode_claude_project_dir,
-    droid_snapshot_from_jsonl, opencode_snapshot_from_row, parse_codex_session_index,
-    pi_snapshot_from_jsonl,
+    AgentWatcherSnapshot, ClaudeCodeParseState, amp_snapshot_from_thread_json,
+    claude_code_fold_chunk, claude_code_snapshot_from_state, codex_snapshot_from_jsonl,
+    codex_thread_id_from_path, decode_claude_project_dir, droid_snapshot_from_jsonl,
+    opencode_snapshot_from_row, parse_codex_session_index, pi_snapshot_from_jsonl,
 };
 use opensessions_runtime::config::{
     OpensessionsConfig, load_config_from_home, save_config_to_home,
@@ -1790,15 +1792,21 @@ async fn run_agent_watcher_loop(
     let mut interval = tokio::time::interval(Duration::from_millis(AGENT_WATCHER_POLL_MS));
     interval.set_missed_tick_behavior(MissedTickBehavior::Skip);
     let mut last_seen = HashMap::<String, AgentWatcherFingerprint>::new();
+    let mut claude_cache = ClaudeScanCache::default();
 
     loop {
         tokio::select! {
             _ = shutdown_rx.recv() => return,
             _ = interval.tick() => {
                 let now = current_time_ms();
-                let snapshots = tokio::task::spawn_blocking(move || scan_agent_watcher_snapshots(now))
-                    .await
-                    .unwrap_or_default();
+                let mut cache = std::mem::take(&mut claude_cache);
+                let (snapshots, cache) = tokio::task::spawn_blocking(move || {
+                    let snapshots = scan_agent_watcher_snapshots(now, &mut cache);
+                    (snapshots, cache)
+                })
+                .await
+                .unwrap_or_default();
+                claude_cache = cache;
                 debug_log(format!(
                     "agent_watcher_loop: tick scanned {} snapshots",
                     snapshots.len()
@@ -1863,14 +1871,17 @@ fn agent_watcher_key(snapshot: &AgentWatcherSnapshot) -> String {
     )
 }
 
-fn scan_agent_watcher_snapshots(now_ms: u64) -> Vec<AgentWatcherSnapshot> {
+fn scan_agent_watcher_snapshots(
+    now_ms: u64,
+    claude_cache: &mut ClaudeScanCache,
+) -> Vec<AgentWatcherSnapshot> {
     let mut snapshots = Vec::new();
     let Some(home) = std::env::var_os("HOME").map(PathBuf::from) else {
         return snapshots;
     };
 
     scan_amp_threads(&home, now_ms, &mut snapshots);
-    scan_claude_code_projects(&home, now_ms, &mut snapshots);
+    scan_claude_code_projects_cached(&home, now_ms, claude_cache, &mut snapshots);
     scan_codex_sessions(&home, now_ms, &mut snapshots);
     scan_opencode_sessions(&home, now_ms, &mut snapshots);
     scan_pi_sessions(&home, now_ms, &mut snapshots);
@@ -1904,46 +1915,137 @@ fn scan_amp_threads(home: &Path, now_ms: u64, snapshots: &mut Vec<AgentWatcherSn
     }
 }
 
-fn scan_claude_code_projects(home: &Path, now_ms: u64, snapshots: &mut Vec<AgentWatcherSnapshot>) {
-    let projects_dir = home.join(".claude/projects");
-    let Ok(projects) = fs::read_dir(projects_dir) else {
-        return;
-    };
+#[derive(Debug, Default)]
+struct ClaudeScanEntry {
+    dev: u64,
+    ino: u64,
+    seen_len: u64,
+    offset: u64,
+    state: ClaudeCodeParseState,
+}
 
-    for project in projects.flatten() {
-        let project_path = project.path();
-        if !project_path.is_dir() {
-            continue;
+/// Per-file parse progress kept across watcher ticks, keyed by transcript path.
+#[derive(Debug, Default)]
+pub struct ClaudeScanCache {
+    entries: HashMap<PathBuf, ClaudeScanEntry>,
+    bytes_read_last_scan: u64,
+}
+
+impl ClaudeScanCache {
+    pub fn bytes_read_last_scan(&self) -> u64 {
+        self.bytes_read_last_scan
+    }
+
+    pub fn len(&self) -> usize {
+        self.entries.len()
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.entries.is_empty()
+    }
+}
+
+/// Reads `path` from `offset` to the end and folds its complete lines into the entry.
+/// Returns the number of bytes read.
+fn advance_claude_entry(entry: &mut ClaudeScanEntry, path: &Path, len: u64) -> u64 {
+    let mut tail = Vec::new();
+    let read = fs::File::open(path)
+        .and_then(|mut file| {
+            file.seek(SeekFrom::Start(entry.offset))?;
+            file.read_to_end(&mut tail)
+        })
+        .unwrap_or(0);
+    let chunk = String::from_utf8_lossy(&tail);
+    let state = std::mem::take(&mut entry.state);
+    entry.state = claude_code_fold_chunk(state, &chunk).0;
+    // Lossy conversion can change the length of invalid bytes, so measure the
+    // consumed prefix in the original bytes.
+    let consumed_bytes = tail
+        .iter()
+        .rposition(|byte| *byte == b'\n')
+        .map_or(0, |index| index + 1);
+    entry.offset += consumed_bytes as u64;
+    entry.seen_len = len;
+    read as u64
+}
+
+fn claude_entry_for(
+    cache: &mut ClaudeScanCache,
+    path: &Path,
+    meta: &fs::Metadata,
+) -> ClaudeScanEntry {
+    match cache.entries.remove(path) {
+        Some(entry)
+            if entry.dev == meta.dev()
+                && entry.ino == meta.ino()
+                && entry.seen_len <= meta.len() =>
+        {
+            entry
         }
-        let encoded = project.file_name().to_string_lossy().to_string();
-        let project_dir = decode_claude_project_dir(&encoded, |path| Path::new(path).is_dir());
-        let Ok(files) = fs::read_dir(project_path) else {
+        _ => ClaudeScanEntry {
+            dev: meta.dev(),
+            ino: meta.ino(),
+            ..ClaudeScanEntry::default()
+        },
+    }
+}
+
+fn claude_transcript_paths(home: &Path) -> Vec<(PathBuf, String)> {
+    let Ok(projects) = fs::read_dir(home.join(".claude/projects")) else {
+        return Vec::new();
+    };
+    projects
+        .flatten()
+        .filter(|project| project.path().is_dir())
+        .flat_map(|project| {
+            let encoded = project.file_name().to_string_lossy().to_string();
+            let project_dir = decode_claude_project_dir(&encoded, |path| Path::new(path).is_dir());
+            fs::read_dir(project.path())
+                .into_iter()
+                .flatten()
+                .flatten()
+                .map(|file| file.path())
+                .filter(|path| path.extension().and_then(|ext| ext.to_str()) == Some("jsonl"))
+                .map(|path| (path, project_dir.clone()))
+                .collect::<Vec<_>>()
+        })
+        .collect()
+}
+
+pub fn scan_claude_code_projects_cached(
+    home: &Path,
+    now_ms: u64,
+    cache: &mut ClaudeScanCache,
+    snapshots: &mut Vec<AgentWatcherSnapshot>,
+) {
+    let mut previous = std::mem::take(cache);
+    let mut bytes_read = 0;
+
+    for (path, project_dir) in claude_transcript_paths(home) {
+        let Ok(meta) = fs::metadata(&path) else {
             continue;
         };
-        for file in files.flatten() {
-            let path = file.path();
-            if path.extension().and_then(|ext| ext.to_str()) != Some("jsonl") {
-                continue;
-            }
-            let Some(mtime_ms) = file_mtime_ms(&path) else {
-                continue;
-            };
-            if now_ms.saturating_sub(mtime_ms) > AGENT_WATCHER_RECENT_MS {
-                continue;
-            }
-            let Some(thread_id) = path.file_stem().and_then(|stem| stem.to_str()) else {
-                continue;
-            };
-            let Ok(raw) = fs::read_to_string(&path) else {
-                continue;
-            };
-            if let Some(snapshot) =
-                claude_code_snapshot_from_jsonl(thread_id, &project_dir, &raw, mtime_ms, now_ms)
-            {
-                snapshots.push(snapshot);
-            }
+        let Some(mtime_ms) = file_mtime_ms(&path) else {
+            continue;
+        };
+        if now_ms.saturating_sub(mtime_ms) > AGENT_WATCHER_RECENT_MS {
+            continue;
         }
+        let Some(thread_id) = path.file_stem().and_then(|stem| stem.to_str()) else {
+            continue;
+        };
+        let mut entry = claude_entry_for(&mut previous, &path, &meta);
+        if entry.seen_len != meta.len() {
+            bytes_read += advance_claude_entry(&mut entry, &path, meta.len());
+        }
+        if let Some(snapshot) =
+            claude_code_snapshot_from_state(thread_id, &project_dir, &entry.state, mtime_ms, now_ms)
+        {
+            snapshots.push(snapshot);
+        }
+        cache.entries.insert(path, entry);
     }
+    cache.bytes_read_last_scan = bytes_read;
 }
 
 fn scan_codex_sessions(home: &Path, now_ms: u64, snapshots: &mut Vec<AgentWatcherSnapshot>) {
@@ -3148,7 +3250,12 @@ mod claude_scan_cache_tests {
         let path = transcript(&home, "a");
         fs::write(
             &path,
-            format!("{}{}{}", user_line("Old task"), assistant_done_line(), user_line("Old follow up")),
+            format!(
+                "{}{}{}",
+                user_line("Old task"),
+                assistant_done_line(),
+                user_line("Old follow up")
+            ),
         )
         .unwrap();
         let mut cache = ClaudeScanCache::default();
@@ -3180,7 +3287,10 @@ mod claude_scan_cache_tests {
         let snapshots = scan(&home, &mut cache);
 
         assert_eq!(snapshots.len(), 1);
-        assert_eq!(snapshots[0].thread_name.as_deref(), Some("Replacement task"));
+        assert_eq!(
+            snapshots[0].thread_name.as_deref(),
+            Some("Replacement task")
+        );
         assert_eq!(snapshots[0].status, AgentStatus::Done);
         assert_eq!(cache.bytes_read_last_scan(), replacement.len() as u64);
         fs::remove_dir_all(&home).ok();

@@ -52,48 +52,82 @@ pub fn amp_snapshot_from_thread_json(raw: &str, ts: u64) -> Option<AgentWatcherS
     })
 }
 
-pub fn claude_code_snapshot_from_jsonl(
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ClaudeCodeParseState {
+    pub status: AgentStatus,
+    pub thread_name: Option<String>,
+    pub last_user_prompt: Option<String>,
+    pub last_entry_is_tool_use: bool,
+    pub saw_entry: bool,
+}
+
+impl Default for ClaudeCodeParseState {
+    fn default() -> Self {
+        Self {
+            status: AgentStatus::Idle,
+            thread_name: None,
+            last_user_prompt: None,
+            last_entry_is_tool_use: false,
+            saw_entry: false,
+        }
+    }
+}
+
+/// Folds the complete lines of `chunk` into `state`. Returns the new state and
+/// the number of bytes consumed (through the last `\n`); a trailing partial
+/// line is left for the caller to present again once it is complete.
+pub fn claude_code_fold_chunk(
+    state: ClaudeCodeParseState,
+    chunk: &str,
+) -> (ClaudeCodeParseState, usize) {
+    let consumed = chunk.rfind('\n').map_or(0, |index| index + 1);
+    let state = chunk[..consumed]
+        .lines()
+        .filter(|line| !line.trim().is_empty())
+        .fold(state, claude_code_fold_line);
+    (state, consumed)
+}
+
+fn claude_code_fold_line(mut state: ClaudeCodeParseState, line: &str) -> ClaudeCodeParseState {
+    let Ok(entry) = serde_json::from_str::<Value>(line) else {
+        return state;
+    };
+    state.saw_entry = true;
+
+    if let Some(custom_title) = extract_claude_custom_title(&entry) {
+        state.thread_name = Some(custom_title);
+        return state;
+    }
+    if let Some(prompt) = extract_claude_user_prompt(&entry) {
+        if state.thread_name.is_none() {
+            state.thread_name = normalize_thread_name(&prompt);
+        }
+        state.last_user_prompt = Some(prompt);
+    }
+    if let Some(next_status) = determine_claude_code_status(&entry) {
+        state.status = next_status;
+    }
+    state.last_entry_is_tool_use = is_claude_tool_use_entry(&entry);
+    state
+}
+
+pub fn claude_code_snapshot_from_state(
     thread_id: &str,
     project_dir: &str,
-    raw: &str,
+    state: &ClaudeCodeParseState,
     mtime_ms: u64,
     now_ms: u64,
 ) -> Option<AgentWatcherSnapshot> {
-    let mut status = AgentStatus::Idle;
-    let mut thread_name = None;
-    let mut last_user_prompt = None;
-    let mut last_entry_is_tool_use = false;
-    let mut saw_entry = false;
-
-    for line in raw.lines().filter(|line| !line.trim().is_empty()) {
-        let Ok(entry) = serde_json::from_str::<Value>(line) else {
-            continue;
-        };
-        saw_entry = true;
-
-        if let Some(custom_title) = extract_claude_custom_title(&entry) {
-            thread_name = Some(custom_title);
-            continue;
-        }
-        if let Some(prompt) = extract_claude_user_prompt(&entry) {
-            if thread_name.is_none() {
-                thread_name = normalize_thread_name(&prompt);
-            }
-            last_user_prompt = Some(prompt);
-        }
-
-        if let Some(next_status) = determine_claude_code_status(&entry) {
-            status = next_status;
-        }
-        last_entry_is_tool_use = is_claude_tool_use_entry(&entry);
-    }
-
-    if !saw_entry {
+    if !state.saw_entry {
         return None;
     }
 
+    let mut status = state.status;
     let idle_for = now_ms.saturating_sub(mtime_ms);
-    if status == AgentStatus::Running && last_entry_is_tool_use && idle_for >= TOOL_USE_WAIT_MS {
+    if status == AgentStatus::Running
+        && state.last_entry_is_tool_use
+        && idle_for >= TOOL_USE_WAIT_MS
+    {
         status = AgentStatus::Waiting;
     }
     if matches!(status, AgentStatus::Running | AgentStatus::Waiting) && idle_for >= STUCK_MS {
@@ -103,12 +137,28 @@ pub fn claude_code_snapshot_from_jsonl(
     Some(AgentWatcherSnapshot {
         agent: "claude-code",
         thread_id: Some(thread_id.to_string()),
-        thread_name,
-        last_user_prompt,
+        thread_name: state.thread_name.clone(),
+        last_user_prompt: state.last_user_prompt.clone(),
         project_dir: Some(project_dir.to_string()),
         status,
         ts: mtime_ms,
     })
+}
+
+pub fn claude_code_snapshot_from_jsonl(
+    thread_id: &str,
+    project_dir: &str,
+    raw: &str,
+    mtime_ms: u64,
+    now_ms: u64,
+) -> Option<AgentWatcherSnapshot> {
+    let (state, _) = claude_code_fold_chunk(ClaudeCodeParseState::default(), raw);
+    // A final line without a newline is still a whole entry for a complete file.
+    let state = match raw.get(raw.rfind('\n').map_or(0, |index| index + 1)..) {
+        Some(tail) if !tail.trim().is_empty() => claude_code_fold_line(state, tail),
+        _ => state,
+    };
+    claude_code_snapshot_from_state(thread_id, project_dir, &state, mtime_ms, now_ms)
 }
 
 pub fn codex_snapshot_from_jsonl(
@@ -834,7 +884,11 @@ mod claude_incremental_tests {
         state
     }
 
-    fn snapshot(state: &ClaudeCodeParseState, mtime: u64, now: u64) -> Option<AgentWatcherSnapshot> {
+    fn snapshot(
+        state: &ClaudeCodeParseState,
+        mtime: u64,
+        now: u64,
+    ) -> Option<AgentWatcherSnapshot> {
         claude_code_snapshot_from_state("thread", "/repo", state, mtime, now)
     }
 
@@ -857,7 +911,10 @@ mod claude_incremental_tests {
         let expected = claude_code_snapshot_from_jsonl("thread", "/repo", TRANSCRIPT, 1_000, 1_100);
         let (a, rest) = TRANSCRIPT.split_at(40);
         let (b, c) = rest.split_at(200);
-        assert_eq!(snapshot(&fold_in_chunks(&[a, b, c]), 1_000, 1_100), expected);
+        assert_eq!(
+            snapshot(&fold_in_chunks(&[a, b, c]), 1_000, 1_100),
+            expected
+        );
     }
 
     #[test]
@@ -866,7 +923,8 @@ mod claude_incremental_tests {
         let (_, consumed) = claude_code_fold_chunk(ClaudeCodeParseState::default(), chunk);
         assert_eq!(consumed, chunk.find('\n').unwrap() + 1);
 
-        let (state, consumed) = claude_code_fold_chunk(ClaudeCodeParseState::default(), "no newline yet");
+        let (state, consumed) =
+            claude_code_fold_chunk(ClaudeCodeParseState::default(), "no newline yet");
         assert_eq!(consumed, 0);
         assert_eq!(state, ClaudeCodeParseState::default());
     }
@@ -944,8 +1002,17 @@ mod claude_incremental_tests {
             "\n",
         );
         let (state, _) = claude_code_fold_chunk(ClaudeCodeParseState::default(), line);
-        assert_eq!(snapshot(&state, 1_000, 1_100).unwrap().status, AgentStatus::Running);
-        assert_eq!(snapshot(&state, 1_000, 5_000).unwrap().status, AgentStatus::Waiting);
-        assert_eq!(snapshot(&state, 1_000, 60_000).unwrap().status, AgentStatus::Stale);
+        assert_eq!(
+            snapshot(&state, 1_000, 1_100).unwrap().status,
+            AgentStatus::Running
+        );
+        assert_eq!(
+            snapshot(&state, 1_000, 5_000).unwrap().status,
+            AgentStatus::Waiting
+        );
+        assert_eq!(
+            snapshot(&state, 1_000, 60_000).unwrap().status,
+            AgentStatus::Stale
+        );
     }
 }
