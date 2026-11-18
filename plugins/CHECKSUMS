@@ -1,7 +1,7 @@
 # Digest of each vendored tree as shipped: <name> <sha256>
 # Written by plugins/vendor.sh; doctor compares the tree on disk
 # against it. See lib/plugins.sh for how the digest is formed.
-opensessions 6fae826c06cf8bf70be03fc02d5703722d33940899391d3ebb2fef1e5fcbabc7
+opensessions ab99e45f91310ace1d220b1755b257f5fea10db79209bd7e9f8f20b415ab8b19
 tmux-claude-session-manager dcda2dd2437c6ef3ae3c818abac8c588edc6e527c210d13aeaaa2a4d15989c1f
 tmux-continuum 26c0b41fdbade59e46fd6e43bee1a04e42d0361a152f407328a64eac0f6d8bf0
 tmux-fzf 83476f5275596a25906b09fd522305cff627326e9e29bc209905268da05acb6e
