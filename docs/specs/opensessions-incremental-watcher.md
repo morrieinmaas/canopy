@@ -44,6 +44,17 @@ many agents that is hundreds of MB parsed every 2 s (measured: 25 files,
    recent window are removed.
 8. Existing `cargo test --workspace` stays green.
 
+## Delivery
+
+canopy installs opensessions from release binaries pinned in
+`plugins/ARTIFACTS`, so the fix ships as canopy's own release:
+`.github/workflows/opensessions-release.yml` builds the four platform tarballs
+from the vendored source on an `opensessions-v*` tag (same file names and
+layout as upstream), and a follow-up change points the opensessions lines in
+`plugins/ARTIFACTS` at that release. `bin/.opensessions-version` and
+package.json stay `0.2.0-alpha.12`, so the plugin's own downloader does not
+run. The fix is also offered upstream to Ataraxy-Labs/opensessions.
+
 ## Out of scope
 
 The Codex, pi, amp, opencode and droid scanners (same pattern, not running on
