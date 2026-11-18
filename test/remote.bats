@@ -38,7 +38,7 @@ setup() {
 #!/bin/sh
 case "\$1" in
   --list) printf 'gruvbox\neverforest\n' ;;
-  --current) cat '$theme_state' 2>/dev/null || echo gruvbox ;;
+  --current) echo current >>'$theme_log.current'; cat '$theme_state' 2>/dev/null || echo gruvbox ;;
   *) printf '%s\n' "\$1" >'$theme_state'; printf 'applied %s\n' "\$1" >>'$theme_log' ;;
 esac
 EOF
@@ -82,6 +82,15 @@ wait_for_log() {
   printf 'theme log never said [%s]; it holds:\n' "$1"
   cat "$theme_log" 2>/dev/null || printf '(nothing)\n'
   return 1
+}
+
+# ran_once: after a moment for any late hook, follow-theme reached `theme`
+# exactly once. --current is counted too, because a second run would stop
+# there (the theme is current by then) without logging an apply.
+ran_once() {
+  sleep 1
+  [ "$(grep -c . "$theme_log")" = "1" ]
+  [ "$(grep -c . "$theme_log.current")" = "1" ]
 }
 
 # A client needs a terminal. A pane of a second scratch server is one.
@@ -192,10 +201,10 @@ need_grofe() {
 }
 
 @test "no subcommand, or an unknown one, prints the usage" {
-  run canopy-remote
+  run canopy remote
   [ "$status" -eq 1 ]
   [ "$output" = "canopy: usage: canopy remote set --machine <name> --scope <scope> --color <colour> | clear" ]
-  run canopy-remote frob
+  run canopy remote frob
   [ "$status" -eq 1 ]
   [ "$output" = "canopy: usage: canopy remote set --machine <name> --scope <scope> --color <colour> | clear" ]
 }
@@ -278,8 +287,7 @@ need_grofe() {
   in_terminal "env -u TMUX -u TMUX_PANE CANOPY_THEME=everforest tmux -L $sock new-session -s main"
   wait_for_log "applied everforest"
   # Both tmux hooks could fire for one attach; the theme must still run once.
-  sleep 1
-  [ "$(grep -c . "$theme_log")" = "1" ]
+  ran_once
 }
 
 @test "tmux: a client attaching to an existing session applies the laptop's theme" {
@@ -288,7 +296,7 @@ need_grofe() {
   tmux -L "$sock" new-session -d -s main
   in_terminal "env -u TMUX -u TMUX_PANE CANOPY_THEME=everforest tmux -L $sock attach-session -t main"
   wait_for_log "applied everforest"
-  [ "$(grep -c . "$theme_log")" = "1" ]
+  ran_once
 }
 
 # --- follow-theme ------------------------------------------------------------
@@ -396,8 +404,7 @@ follow() {
   in_terminal "env -u TMUX -u TMUX_PANE CANOPY_THEME=everforest SHELL=/bin/sh '$grofe_bin' -L $gsock new-session -s main"
   wait_for_log "applied everforest"
   # grofe's one hook must fire once for the attach that creates the session.
-  sleep 1
-  [ "$(grep -c . "$theme_log")" = "1" ]
+  ran_once
   left="$("$grofe_bin" -L "$gsock" display-message -p -t main '#{T:status-left}')"
   [[ "$left" == *'#[fg=yellow]#[bg=default]#[bold]acme-dev · work/acme #[nobold]'* ]]
 }
@@ -409,7 +416,7 @@ follow() {
   SHELL=/bin/sh "$grofe_bin" -L "$gsock" new-session -d -s main
   in_terminal "env -u TMUX -u TMUX_PANE CANOPY_THEME=everforest '$grofe_bin' -L $gsock attach-session -t main"
   wait_for_log "applied everforest"
-  [ "$(grep -c . "$theme_log")" = "1" ]
+  ran_once
 }
 
 # --- edge cases --------------------------------------------------------------
@@ -419,8 +426,7 @@ follow() {
   start_tmux
   in_terminal "env -u TMUX -u TMUX_PANE CANOPY_THEME=everforest tmux -L $sock new-session -s \"a b'c\""
   wait_for_log "applied everforest"
-  sleep 1
-  [ "$(grep -c . "$theme_log")" = "1" ]
+  ran_once
 }
 
 @test "follow-theme exits 0 when theme itself fails" {
