@@ -339,7 +339,10 @@ other call.
 29. grofe's `conf.d` cannot be created: `set` fails and the tmux file is not written either.
 30. `follow-theme` with a `theme --list` that lists `a;b`, `../x`, `-eeverforest` and
     `.hidden`, each set in turn: nothing applied, exit 0.
-31. `25-remote.toml` exists as a directory: `set` exits 1 naming it, no tmux file.
+. `--machine café` and `--machine straße` under `LC_ALL=en_US.UTF-8`: exit 1 naming
+    `--machine`. The allowed characters are spelled out, not a locale range.
+33. The grofe rename fails after the tmux one (a stub `mv`): exit 1, `could not write
+    <file>; removed both remote files`, and neither file exists.
 
 ### Out of scope
 

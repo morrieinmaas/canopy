@@ -29,11 +29,15 @@ remote_usage() {
   canopy_die "usage: canopy remote set --machine <name> --scope <scope> --color <colour> | clear"
 }
 
+# Spelled out rather than A-Za-z0-9: a range is read by the locale, and
+# under some shells and locales it matches letters outside ASCII.
+remote_alnum=abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789
+
 # Values are checked rather than escaped: they land inside a tmux config and
 # a TOML file, and a name that needs quoting is not a machine name.
 remote_check() {
   case "$2" in
-    '' | [!A-Za-z0-9]* | *[!A-Za-z0-9._"$3"-]*)
+    '' | [!"$remote_alnum"]* | *[!"$remote_alnum"._"$3"-]*)
       canopy_die "canopy-remote: $1 must start with a letter or digit and hold only $4, got: $2"
       ;;
     *) ;;
@@ -117,7 +121,8 @@ remote_put_both() {
   remote_tmp_t="$remote_tmux.tmp.$$"
   remote_tmp_g="$remote_grofe.tmp.$$"
   trap 'rm -f "$remote_tmp_t" "$remote_tmp_g"' EXIT
-  mkdir -p "${remote_tmux%/*}" "${remote_grofe%/*}"
+  mkdir -p "${remote_tmux%/*}" "${remote_grofe%/*}" 2>/dev/null ||
+    canopy_die "canopy-remote: could not create ${remote_tmux%/*} or ${remote_grofe%/*}, nothing was written"
   remote_write_tmux "$@" >"$remote_tmp_t"
   remote_write_grofe "$@" >"$remote_tmp_g"
   mv "$remote_tmp_t" "$remote_tmux"
@@ -173,7 +178,7 @@ remote_follow_theme() {
   name="${line#CANOPY_THEME=}"
   [ "$name" != "$line" ] || return 0
   case "$name" in
-    '' | *[!A-Za-z0-9._-]* | .* | -*) return 0 ;;
+    '' | *[!"$remote_alnum"._-]* | .* | -*) return 0 ;;
     *) ;;
   esac
 

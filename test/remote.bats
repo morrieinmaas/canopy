@@ -395,7 +395,7 @@ follow() {
   start_grofe
   in_terminal "env -u TMUX -u TMUX_PANE CANOPY_THEME=everforest SHELL=/bin/sh '$grofe_bin' -L $gsock new-session -s main"
   wait_for_log "applied everforest"
-  # Both tmux hooks could fire for one attach; the theme must still run once.
+  # grofe's one hook must fire once for the attach that creates the session.
   sleep 1
   [ "$(grep -c . "$theme_log")" = "1" ]
   left="$("$grofe_bin" -L "$gsock" display-message -p -t main '#{T:status-left}')"
@@ -449,7 +449,8 @@ follow() {
   mkdir -p "$XDG_CONFIG_HOME/grofe"
   : >"$XDG_CONFIG_HOME/grofe/conf.d"
   run remote_set
-  [ "$status" -ne 0 ]
+  [ "$status" -eq 1 ]
+  [[ "$output" == "canopy: canopy-remote: could not create "*", nothing was written" ]]
   [ ! -e "$tmux_file" ]
   ls "$CANOPY_STATE" | grep -q tmp && false
   return 0
@@ -482,4 +483,31 @@ FAKE
   [ "$status" -eq 1 ]
   [[ "$output" == *"is a directory"* ]]
   [ ! -e "$tmux_file" ]
+}
+
+@test "a letter outside ASCII is refused, whatever the locale" {
+  for v in 'café' 'straße'; do
+    LC_ALL=en_US.UTF-8 run canopy-remote set --machine "$v" --scope work/acme --color yellow
+    [ "$status" -eq 1 ]
+    [[ "$output" == *"--machine"* ]]
+  done
+  [ ! -e "$tmux_file" ]
+}
+
+@test "if the grofe rename fails after the tmux one, both remote files are removed" {
+  remote_set
+  # A mv that refuses the grofe file and moves everything else.
+  mkdir -p "$BATS_TEST_TMPDIR/badmv"
+  real_mv="$(command -v mv)"
+  cat >"$BATS_TEST_TMPDIR/badmv/mv" <<EOF2
+#!/bin/sh
+case "\$2" in *.toml) exit 1 ;; esac
+exec '$real_mv' "\$@"
+EOF2
+  chmod +x "$BATS_TEST_TMPDIR/badmv/mv"
+  PATH="$BATS_TEST_TMPDIR/badmv:$PATH" run canopy-remote set --machine beta-dev --scope work/acme --color yellow
+  [ "$status" -eq 1 ]
+  [ "$output" = "canopy: canopy-remote: could not write $grofe_file; removed both remote files" ]
+  [ ! -e "$tmux_file" ]
+  [ ! -e "$grofe_file" ]
 }
