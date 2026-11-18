@@ -627,8 +627,9 @@ on the default background, and the terminal's title becomes `acme-dev · <sessio
 attach also adopts the laptop's athome theme; see
 [04 Configuration](04-configuration.md#remote-machines). Both files take effect on the
 next config load: after `set`, a server already running needs a reload (`prefix r`).
-A reload does not undo them, though: after `clear`, the machine options, the title, the
-`update-environment` entry and the hooks stay in a running server until it restarts.
+A reload does not fully undo them, though. After `clear`, the machine options, the title
+and the `update-environment` entry stay in a running server until it restarts; so do
+the hooks on tmux, while on grofe a reload drops the hook with the file.
 
 The values are checked, not escaped. `--machine` is letters, digits, `.`, `_` and `-`,
 starting with a letter or digit; `--scope` may also hold `/`; `--color` is one of the

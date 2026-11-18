@@ -271,8 +271,8 @@ exactly as it is today.
 - opensessions resets `client-session-changed` on tmux: canopy does not use that hook on
   tmux.
 - `canopy remote clear` while a server runs: the options, title, `update-environment`
-  entry and hooks stay until the server restarts (a reload sets but never unsets them);
-  documented.
+  entry stay until the server restarts (a reload sets but never unsets them), and so do
+  the hooks on tmux; grofe's reload drops a hook its config no longer names. Documented.
 
 ### Test list
 
@@ -337,6 +337,9 @@ other call.
 28. `XDG_CONFIG_HOME` unset: the grofe file is `~/.config/grofe/conf.d/25-remote.toml`, and
     `clear` removes it.
 29. grofe's `conf.d` cannot be created: `set` fails and the tmux file is not written either.
+30. `follow-theme` with a `theme --list` that lists `a;b`, `../x`, `-eeverforest` and
+    `.hidden`, each set in turn: nothing applied, exit 0.
+31. `25-remote.toml` exists as a directory: `set` exits 1 naming it, no tmux file.
 
 ### Out of scope
 
