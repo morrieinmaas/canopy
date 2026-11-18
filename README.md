@@ -92,6 +92,11 @@ in [adapters/contract.md](docs/adapters/contract.md), and adapters for opencode,
 and codex are planned. Also planned: a status view of what each agent is doing, a
 command palette, themes, and git worktree navigation.
 
+On a remote dev box set up by [athome](https://github.com/morrieinmaas/athome),
+`canopy remote` marks the status line and the terminal title with the machine and scope
+you are on, and the box picks up your laptop's theme when you attach
+([docs/04](docs/04-configuration.md#remote-machines)).
+
 ## Documentation
 
 - [Installation and removal](docs/01-installation-and-removal.md)

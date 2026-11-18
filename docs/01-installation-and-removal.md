@@ -155,6 +155,7 @@ transaction failed, and exits 1. Your original config is back before you see the
 ## Removal
 
 ```sh
+canopy remote clear                  # remote machines only: the two per-machine files
 canopy restore --all                 # every file back, byte for byte
 rm -rf ~/.config/canopy              # your canopy overrides
 rm -rf ~/.local/state/canopy         # restore points; the guarantee ends here
@@ -166,7 +167,7 @@ Then remove the `PATH` line from your shell rc.
 Order matters. `canopy restore --all` reads the restore points out of
 `~/.local/state/canopy`, so deleting that first leaves nothing to restore from.
 
-There is no `canopy uninstall` command in M1. The four lines above are the whole of
+There is no `canopy uninstall` command in M1. The lines above are the whole of
 it.
 
 ### What `canopy restore --all` leaves behind
@@ -184,6 +185,17 @@ None of it existed before canopy, so none of it is covered by the restore guaran
 and `backups/` has to survive for the guarantee to mean "forever". `~/.config/canopy`
 is removed if canopy created it and you left nothing in it; if you put your own files
 there, it stays, with them.
+
+On a remote machine where `canopy remote set` ran (see
+[02 Commands](02-commands.md#canopy-remote)), two more files are canopy's, and
+`canopy remote clear` removes both:
+
+```
+~/.local/state/canopy/25-remote.conf
+~/.config/grofe/conf.d/25-remote.toml
+```
+
+Neither is part of an install transaction, so `canopy restore` does not touch them.
 
 ### If a file was edited after install
 

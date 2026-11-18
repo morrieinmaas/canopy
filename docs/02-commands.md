@@ -8,7 +8,7 @@ metadata header. `canopy` itself is a dispatcher: it reads those headers to rend
 help, and `exec`s the matching file. `canopy index` writes the same metadata to a TSV
 for later milestones to consume.
 
-There are ten: the dispatcher and nine subcommands. M1 shipped the `core` group,
+The dispatcher and its subcommands are listed below. M1 shipped the `core` group,
 M2 added the `agent` group.
 
 | Command | Summary | Group |
@@ -19,6 +19,7 @@ M2 added the `agent` group.
 | [`canopy index`](#canopy-index) | Generate the command index from metadata headers | core |
 | [`canopy install`](#canopy-install) | Install canopy, migrating any existing tmux config | core |
 | [`canopy restore`](#canopy-restore) | Roll back transactions canopy recorded | core |
+| [`canopy remote`](#canopy-remote) | Say which machine and scope this is, and follow the laptop's theme | core |
 | [`canopy server-path`](#canopy-server-path) | Make bare `tmux` in a server job mean this server's binary | core |
 | [`canopy version`](#canopy-version) | Print the canopy version | core |
 | [`canopy adopt`](#canopy-adopt) | Restart agent panes in place so each one carries its own resume command | agent |
@@ -593,6 +594,62 @@ messages are printed. `$CANOPY_GROFE` names the grofe binary.
 | 1 | grofe refuses a rendered fragment; nothing written |
 | 1 | grofe reported an error or skipped a file, or there is no grofe binary |
 | 1 | Unknown subcommand or argument |
+
+---
+
+## `canopy remote`
+
+```
+canopy remote set --machine <name> --scope <scope> --color <colour>
+canopy remote clear
+canopy remote follow-theme <session>
+```
+
+Records where this machine lives, so that a dev box set up to look exactly like your
+laptop still says which machine it is. athome runs `set` on a box when it bootstraps or
+syncs it; on a laptop it never runs, and nothing below appears there.
+
+```
+$ canopy remote set --machine acme-dev --scope work/acme --color yellow
+```
+
+`set` writes two per-machine files, one per backend, each to a temporary name and moved
+into place:
+
+- `$CANOPY_STATE/25-remote.conf`, which `tmux.conf` sources after the numbered layers and
+  before `user.conf`;
+- `${XDG_CONFIG_HOME:-~/.config}/grofe/conf.d/25-remote.toml`, which grofe loads after
+  `20-canopy-status.toml`. Its name is outside the `NN-canopy-*.toml` pattern, so
+  `canopy grofe generate` leaves it alone.
+
+With them, the status line starts with `acme-dev · work/acme` in bold, in the given colour,
+on the default background, and the terminal's title becomes `acme-dev · <session>`. Every
+attach also adopts the laptop's athome theme; see
+[04 Configuration](04-configuration.md#remote-machines). Both files take effect on the
+next config load: after `set`, a server already running needs a reload (`prefix r`).
+A reload does not fully undo them, though. After `clear`, the machine options, the title
+and the `update-environment` entry stay in a running server until it restarts; so do
+the hooks on tmux, while on grofe a reload drops the hook with the file.
+
+The values are checked, not escaped. `--machine` is letters, digits, `.`, `_` and `-`,
+starting with a letter or digit; `--scope` may also hold `/`; `--color` is one of the
+terminal's 16 colours by tmux's name (`black`, `red`, `green`, `yellow`, `blue`,
+`magenta`, `cyan`, `white`, and each with `bright` in front). A palette colour, not a hex
+one, is what keeps the segment readable under any theme and matching athome's prompt,
+which uses the same name. All three flags are required.
+
+`clear` removes both files. It is not an error when they are already gone.
+
+`follow-theme` is what the hooks in those files run on attach; you do not need to type
+it. It reads `CANOPY_THEME` from the session's environment and runs athome's
+`theme <name>` when that knows the name and it is not already the active theme. Anything
+else, including no `theme` command at all, is silently left alone.
+
+| Exit | Meaning |
+|---|---|
+| 0 | Written, removed, or `follow-theme` done (it always exits 0 once it has a session) |
+| 1 | A missing or invalid flag, an unknown argument or subcommand; nothing written |
+| 1 | The grofe file could not be moved into place after the tmux one; both remote files are removed, so neither backend shows stale values |
 
 ---
 
