@@ -54,8 +54,11 @@ justify = "left"
 interval = 5
 style = "bg=default,fg=#{@theme_fg}"
 
+# Where you are, when `canopy remote set` wrote 25-remote.toml on this
+# machine, and nothing otherwise: see 20-status.conf. One attribute per
+# #[...], since grofe's own format dialect has no #, escape.
 left-length = 40
-left = "#[fg=#{@theme_blue},bg=default]#{@pill_l}#[fg=#{@theme_bg},bg=#{@theme_blue},bold] #{session_name} #[fg=#{@theme_blue},bg=default,nobold]#{@pill_r} "
+left = "#{?@canopy_machine,#[fg=#{@canopy_context_color}]#[bg=default]#[bold]#{@canopy_machine} · #{@canopy_scope} #[nobold],}#[fg=#{@theme_blue},bg=default]#{@pill_l}#[fg=#{@theme_bg},bg=#{@theme_blue},bold] #{session_name} #[fg=#{@theme_blue},bg=default,nobold]#{@pill_r} "
 
 # grofe's own agent badge, ahead of the aggregator's segments. It is empty
 # when no agent needs attention, so the pill is absent then, as the other
