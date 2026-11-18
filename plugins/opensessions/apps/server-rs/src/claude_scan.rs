@@ -469,11 +469,14 @@ mod claude_scan_cache_tests {
         // A directory opens fine but fails on read, whatever the user is.
         let path = transcript(&home, "a");
         fs::create_dir(&path).unwrap();
+        // A child entry gives the directory a nonzero size on filesystems like btrfs.
+        fs::write(path.join("x"), "").unwrap();
         let meta = fs::metadata(&path).unwrap();
-        if meta.len() < 2 {
-            fs::remove_dir_all(&home).ok();
-            return;
-        }
+        assert!(
+            meta.len() >= 2,
+            "directory length {} is too small for this test",
+            meta.len()
+        );
         // Strictly below the directory length, so the entry stays valid and a read is attempted.
         let cached = meta.len() - 1;
         let mut cache = ClaudeScanCache::default();
