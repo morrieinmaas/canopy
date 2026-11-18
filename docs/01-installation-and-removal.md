@@ -155,6 +155,7 @@ transaction failed, and exits 1. Your original config is back before you see the
 ## Removal
 
 ```sh
+canopy remote clear                  # remote machines only: the two per-machine files
 canopy restore --all                 # every file back, byte for byte
 rm -rf ~/.config/canopy              # your canopy overrides
 rm -rf ~/.local/state/canopy         # restore points; the guarantee ends here
@@ -166,7 +167,7 @@ Then remove the `PATH` line from your shell rc.
 Order matters. `canopy restore --all` reads the restore points out of
 `~/.local/state/canopy`, so deleting that first leaves nothing to restore from.
 
-There is no `canopy uninstall` command in M1. The four lines above are the whole of
+There is no `canopy uninstall` command in M1. The lines above are the whole of
 it.
 
 ### What `canopy restore --all` leaves behind
