@@ -1926,47 +1926,72 @@ struct ClaudeScanEntry {
 
 /// Per-file parse progress kept across watcher ticks, keyed by transcript path.
 #[derive(Debug, Default)]
-pub struct ClaudeScanCache {
+pub(crate) struct ClaudeScanCache {
     entries: HashMap<PathBuf, ClaudeScanEntry>,
     bytes_read_last_scan: u64,
 }
 
 impl ClaudeScanCache {
-    pub fn bytes_read_last_scan(&self) -> u64 {
+    #[cfg(test)]
+    fn bytes_read_last_scan(&self) -> u64 {
         self.bytes_read_last_scan
     }
 
-    pub fn len(&self) -> usize {
+    #[cfg(test)]
+    fn len(&self) -> usize {
         self.entries.len()
-    }
-
-    pub fn is_empty(&self) -> bool {
-        self.entries.is_empty()
     }
 }
 
-/// Reads `path` from `offset` to the end and folds its complete lines into the entry.
-/// Returns the number of bytes read.
-fn advance_claude_entry(entry: &mut ClaudeScanEntry, path: &Path, len: u64) -> u64 {
-    let mut tail = Vec::new();
-    let read = fs::File::open(path)
-        .and_then(|mut file| {
-            file.seek(SeekFrom::Start(entry.offset))?;
-            file.read_to_end(&mut tail)
-        })
-        .unwrap_or(0);
-    let chunk = String::from_utf8_lossy(&tail);
+/// The unread part of a transcript and the offset it starts at.
+struct ClaudeTail {
+    start: u64,
+    bytes: Vec<u8>,
+}
+
+/// True when the byte just before `offset` is a newline, i.e. the cached offset
+/// still sits on a line boundary of the file behind this handle.
+fn newline_before(file: &mut fs::File, offset: u64) -> std::io::Result<bool> {
+    let mut byte = [0u8; 1];
+    file.seek(SeekFrom::Start(offset - 1))?;
+    Ok(file.read(&mut byte)? == 1 && byte[0] == b'\n')
+}
+
+/// Reads from `offset` to the end, or from the start when the file was rewritten
+/// in place and no longer has a line boundary at `offset`.
+fn read_claude_tail(file: &mut fs::File, offset: u64) -> std::io::Result<ClaudeTail> {
+    let start = if offset > 0 && newline_before(file, offset)? {
+        offset
+    } else {
+        0
+    };
+    file.seek(SeekFrom::Start(start))?;
+    let mut bytes = Vec::new();
+    file.read_to_end(&mut bytes)?;
+    Ok(ClaudeTail { start, bytes })
+}
+
+/// Folds the complete lines not yet seen into the entry and returns the bytes
+/// read. On error the entry is left untouched so the next tick retries.
+fn advance_claude_entry(entry: &mut ClaudeScanEntry, file: &mut fs::File) -> std::io::Result<u64> {
+    let tail = read_claude_tail(file, entry.offset)?;
+    if tail.start == 0 {
+        entry.state = ClaudeCodeParseState::default();
+    }
+    let chunk = String::from_utf8_lossy(&tail.bytes);
     let state = std::mem::take(&mut entry.state);
     entry.state = claude_code_fold_chunk(state, &chunk).0;
     // Lossy conversion can change the length of invalid bytes, so measure the
     // consumed prefix in the original bytes.
     let consumed_bytes = tail
+        .bytes
         .iter()
         .rposition(|byte| *byte == b'\n')
         .map_or(0, |index| index + 1);
-    entry.offset += consumed_bytes as u64;
-    entry.seen_len = len;
-    read as u64
+    let read = tail.bytes.len() as u64;
+    entry.offset = tail.start + consumed_bytes as u64;
+    entry.seen_len = tail.start + read;
+    Ok(read)
 }
 
 fn claude_entry_for(
@@ -1978,7 +2003,8 @@ fn claude_entry_for(
         Some(entry)
             if entry.dev == meta.dev()
                 && entry.ino == meta.ino()
-                && entry.seen_len <= meta.len() =>
+                && entry.seen_len <= meta.len()
+                && entry.offset <= meta.len() =>
         {
             entry
         }
@@ -2012,7 +2038,50 @@ fn claude_transcript_paths(home: &Path) -> Vec<(PathBuf, String)> {
         .collect()
 }
 
-pub fn scan_claude_code_projects_cached(
+fn log_claude_io_error<T>(path: &Path, action: &str, result: std::io::Result<T>) -> Option<T> {
+    result
+        .map_err(|err| {
+            debug_log(format!(
+                "claude transcript {action} failed for {}: {err}",
+                path.display()
+            ))
+        })
+        .ok()
+}
+
+struct ClaudeTranscriptScan {
+    entry: ClaudeScanEntry,
+    mtime_ms: u64,
+    bytes_read: u64,
+}
+
+/// Scans one transcript through a single handle, so identity, length and mtime
+/// all describe the same file the bytes are read from.
+fn scan_claude_transcript(
+    previous: &mut ClaudeScanCache,
+    path: &Path,
+    now_ms: u64,
+) -> Option<ClaudeTranscriptScan> {
+    let mut file = log_claude_io_error(path, "open", fs::File::open(path))?;
+    let meta = log_claude_io_error(path, "stat", file.metadata())?;
+    let mtime_ms = metadata_mtime_ms(&meta)?;
+    if now_ms.saturating_sub(mtime_ms) > AGENT_WATCHER_RECENT_MS {
+        return None;
+    }
+    let mut entry = claude_entry_for(previous, path, &meta);
+    let bytes_read = if entry.seen_len == meta.len() {
+        0
+    } else {
+        log_claude_io_error(path, "read", advance_claude_entry(&mut entry, &mut file))?
+    };
+    Some(ClaudeTranscriptScan {
+        entry,
+        mtime_ms,
+        bytes_read,
+    })
+}
+
+pub(crate) fn scan_claude_code_projects_cached(
     home: &Path,
     now_ms: u64,
     cache: &mut ClaudeScanCache,
@@ -2022,28 +2091,23 @@ pub fn scan_claude_code_projects_cached(
     let mut bytes_read = 0;
 
     for (path, project_dir) in claude_transcript_paths(home) {
-        let Ok(meta) = fs::metadata(&path) else {
-            continue;
-        };
-        let Some(mtime_ms) = file_mtime_ms(&path) else {
-            continue;
-        };
-        if now_ms.saturating_sub(mtime_ms) > AGENT_WATCHER_RECENT_MS {
-            continue;
-        }
         let Some(thread_id) = path.file_stem().and_then(|stem| stem.to_str()) else {
             continue;
         };
-        let mut entry = claude_entry_for(&mut previous, &path, &meta);
-        if entry.seen_len != meta.len() {
-            bytes_read += advance_claude_entry(&mut entry, &path, meta.len());
-        }
-        if let Some(snapshot) =
-            claude_code_snapshot_from_state(thread_id, &project_dir, &entry.state, mtime_ms, now_ms)
-        {
+        let Some(scan) = scan_claude_transcript(&mut previous, &path, now_ms) else {
+            continue;
+        };
+        bytes_read += scan.bytes_read;
+        if let Some(snapshot) = claude_code_snapshot_from_state(
+            thread_id,
+            &project_dir,
+            &scan.entry.state,
+            scan.mtime_ms,
+            now_ms,
+        ) {
             snapshots.push(snapshot);
         }
-        cache.entries.insert(path, entry);
+        cache.entries.insert(path, scan.entry);
     }
     cache.bytes_read_last_scan = bytes_read;
 }
@@ -2248,9 +2312,11 @@ fn collect_jsonl_files(dir: &Path) -> Vec<PathBuf> {
 }
 
 fn file_mtime_ms(path: &Path) -> Option<u64> {
-    fs::metadata(path)
-        .ok()?
-        .modified()
+    metadata_mtime_ms(&fs::metadata(path).ok()?)
+}
+
+fn metadata_mtime_ms(meta: &fs::Metadata) -> Option<u64> {
+    meta.modified()
         .ok()?
         .duration_since(SystemTime::UNIX_EPOCH)
         .ok()
@@ -3329,6 +3395,103 @@ mod claude_scan_cache_tests {
 
         assert_eq!(snapshots.len(), 1);
         assert_eq!(cache.len(), 1);
+        fs::remove_dir_all(&home).ok();
+    }
+
+    #[test]
+    fn unreadable_file_is_retried_on_the_next_scan() {
+        use std::os::unix::fs::PermissionsExt;
+        let home = temp_home("unreadable");
+        let path = transcript(&home, "a");
+        fs::write(&path, user_line("Implement auth")).unwrap();
+        fs::set_permissions(&path, fs::Permissions::from_mode(0o000)).unwrap();
+        let mut cache = ClaudeScanCache::default();
+
+        let blocked = scan(&home, &mut cache);
+        fs::set_permissions(&path, fs::Permissions::from_mode(0o644)).unwrap();
+        let retried = scan(&home, &mut cache);
+
+        assert!(blocked.is_empty());
+        assert_eq!(retried.len(), 1);
+        assert_eq!(retried[0].thread_name.as_deref(), Some("Implement auth"));
+        fs::remove_dir_all(&home).ok();
+    }
+
+    #[test]
+    fn rewrite_shorter_than_the_observed_end_is_reread() {
+        let home = temp_home("short-rewrite");
+        let path = transcript(&home, "a");
+        let second = user_line("Second");
+        let first = user_line("Old");
+        fs::write(&path, format!("{first}{}", &second[..20])).unwrap();
+        let mut cache = ClaudeScanCache::default();
+        scan(&home, &mut cache);
+
+        let fresh = user_line("New");
+        assert!(fresh.len() >= first.len() && fresh.len() < first.len() + 20);
+        fs::write(&path, &fresh).unwrap();
+        let snapshots = scan(&home, &mut cache);
+
+        assert_eq!(snapshots[0].thread_name.as_deref(), Some("New"));
+        assert_eq!(cache.bytes_read_last_scan(), fresh.len() as u64);
+        fs::remove_dir_all(&home).ok();
+    }
+
+    #[test]
+    fn in_place_rewrite_to_larger_content_is_reread_from_the_start() {
+        let home = temp_home("inplace");
+        let path = transcript(&home, "a");
+        fs::write(
+            &path,
+            format!("{}{}", user_line("Old task"), assistant_done_line()),
+        )
+        .unwrap();
+        let mut cache = ClaudeScanCache::default();
+        scan(&home, &mut cache);
+
+        let rewritten = format!(
+            "{}{}{}",
+            user_line("Brand new and much longer task"),
+            assistant_done_line(),
+            user_line("Third")
+        );
+        let mut file = fs::OpenOptions::new().write(true).open(&path).unwrap();
+        file.write_all(rewritten.as_bytes()).unwrap();
+        drop(file);
+        let snapshots = scan(&home, &mut cache);
+
+        assert_eq!(
+            snapshots[0].thread_name.as_deref(),
+            Some("Brand new and much longer task")
+        );
+        assert_eq!(snapshots[0].last_user_prompt.as_deref(), Some("Third"));
+        assert_eq!(cache.bytes_read_last_scan(), rewritten.len() as u64);
+        fs::remove_dir_all(&home).ok();
+    }
+
+    #[test]
+    fn line_split_inside_a_multibyte_char_is_read_exactly() {
+        let home = temp_home("multibyte");
+        let path = transcript(&home, "a");
+        let line = user_line("\u{65e5}\u{672c}");
+        let split = line.find('\u{65e5}').unwrap() + 1;
+        let (head, tail) = line.as_bytes().split_at(split);
+        let mut body = user_line("First").into_bytes();
+        body.extend_from_slice(head);
+        fs::write(&path, body).unwrap();
+        let mut cache = ClaudeScanCache::default();
+        let snapshots = scan(&home, &mut cache);
+        assert_eq!(snapshots[0].last_user_prompt.as_deref(), Some("First"));
+
+        let mut file = fs::OpenOptions::new().append(true).open(&path).unwrap();
+        file.write_all(tail).unwrap();
+        drop(file);
+        let snapshots = scan(&home, &mut cache);
+
+        assert_eq!(
+            snapshots[0].last_user_prompt.as_deref(),
+            Some("\u{65e5}\u{672c}")
+        );
         fs::remove_dir_all(&home).ok();
     }
 }
