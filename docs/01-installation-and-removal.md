@@ -185,6 +185,17 @@ and `backups/` has to survive for the guarantee to mean "forever". `~/.config/ca
 is removed if canopy created it and you left nothing in it; if you put your own files
 there, it stays, with them.
 
+On a remote machine where `canopy remote set` ran (see
+[02 Commands](02-commands.md#canopy-remote)), two more files are canopy's, and
+`canopy remote clear` removes both:
+
+```
+~/.local/state/canopy/25-remote.conf
+~/.config/grofe/conf.d/25-remote.toml
+```
+
+Neither is part of an install transaction, so `canopy restore` does not touch them.
+
 ### If a file was edited after install
 
 `canopy restore --all` will not silently overwrite work you did after canopy wrote a
