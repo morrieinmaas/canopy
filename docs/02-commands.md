@@ -649,6 +649,7 @@ else, including no `theme` command at all, is silently left alone.
 |---|---|
 | 0 | Written, removed, or `follow-theme` done (it always exits 0 once it has a session) |
 | 1 | A missing or invalid flag, an unknown argument or subcommand; nothing written |
+| 1 | The grofe file could not be moved into place after the tmux one; both remote files are removed, so neither backend shows stale values |
 
 ---
 

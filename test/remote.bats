@@ -524,3 +524,10 @@ EOF2
   [ ! -e "$tmux_file" ]
   [ ! -e "$grofe_file" ]
 }
+
+@test "a machine named 0 is refused: the status line would read it as unset" {
+  run canopy-remote set --machine 0 --scope work/acme --color yellow
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"--machine"* ]]
+  [ ! -e "$tmux_file" ]
+}

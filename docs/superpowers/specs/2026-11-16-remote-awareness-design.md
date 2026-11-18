@@ -259,6 +259,8 @@ exactly as it is today.
 
 ### Edge cases
 
+- `--machine 0`: refused, because a format reads `0` as false and the segment would never
+  show.
 - `--color` given as a hex value or a 256-colour number: refused; the colour must come from
   the terminal's palette to match athome's prompt.
 - The same flag twice: the last one wins, as with most commands.
@@ -344,6 +346,7 @@ other call.
     `--machine`. The allowed characters are spelled out, not a locale range.
 33. The grofe rename fails after the tmux one (a stub `mv`): exit 1, `could not write
     <file>; removed both remote files`, and neither file exists.
+34. `--machine 0`: exit 1 naming `--machine`, no files.
 
 ### Out of scope
 

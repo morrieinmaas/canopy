@@ -155,6 +155,8 @@ remote_set() {
   done
   [ -n "$machine" ] && [ -n "$scope" ] && [ -n "$color" ] || remote_usage
   remote_check --machine "$machine" "" "letters, digits, '.', '_' and '-'"
+  # A format reads 0 as false, so the indicator would never show.
+  [ "$machine" != 0 ] || canopy_die "canopy-remote: --machine cannot be 0, which the status line reads as unset"
   remote_check --scope "$scope" / "letters, digits, '.', '_', '-' and '/'"
   remote_check_color "$color"
 
