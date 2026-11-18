@@ -120,9 +120,11 @@ remote_put_both() {
   done
   remote_tmp_t="$remote_tmux.tmp.$$"
   remote_tmp_g="$remote_grofe.tmp.$$"
-  trap 'rm -f "$remote_tmp_t" "$remote_tmp_g"' EXIT
   mkdir -p "${remote_tmux%/*}" "${remote_grofe%/*}" 2>/dev/null ||
     canopy_die "canopy-remote: could not create ${remote_tmux%/*} or ${remote_grofe%/*}, nothing was written"
+  # After the mkdir: with no directory to hold them, BSD rm complains about
+  # temporary files that were never made.
+  trap 'rm -f "$remote_tmp_t" "$remote_tmp_g"' EXIT
   remote_write_tmux "$@" >"$remote_tmp_t"
   remote_write_grofe "$@" >"$remote_tmp_g"
   mv "$remote_tmp_t" "$remote_tmux"
