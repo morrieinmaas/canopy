@@ -1972,7 +1972,8 @@ fn read_claude_tail(file: &mut fs::File, offset: u64) -> std::io::Result<ClaudeT
 }
 
 /// Folds the complete lines not yet seen into the entry and returns the bytes
-/// read. On error the entry is left untouched so the next tick retries.
+/// read. On error the entry is left untouched; the caller keeps it cached so
+/// the next tick retries from the same offset.
 fn advance_claude_entry(entry: &mut ClaudeScanEntry, file: &mut fs::File) -> std::io::Result<u64> {
     let tail = read_claude_tail(file, entry.offset)?;
     if tail.start == 0 {
@@ -2055,30 +2056,58 @@ struct ClaudeTranscriptScan {
     bytes_read: u64,
 }
 
+enum ClaudeTranscriptOutcome {
+    /// Gone or outside the recent window: the cached entry is dropped.
+    Skipped,
+    /// Recent but unreadable right now: the cached entry is kept for the next tick.
+    Failed,
+    Scanned(ClaudeTranscriptScan),
+}
+
+fn in_recent_window(mtime_ms: u64, now_ms: u64) -> bool {
+    now_ms.saturating_sub(mtime_ms) <= AGENT_WATCHER_RECENT_MS
+}
+
 /// Scans one transcript through a single handle, so identity, length and mtime
-/// all describe the same file the bytes are read from.
+/// all describe the same file the bytes are read from. The path is statted
+/// first so files outside the recent window are never opened.
 fn scan_claude_transcript(
     previous: &mut ClaudeScanCache,
     path: &Path,
     now_ms: u64,
-) -> Option<ClaudeTranscriptScan> {
-    let mut file = log_claude_io_error(path, "open", fs::File::open(path))?;
-    let meta = log_claude_io_error(path, "stat", file.metadata())?;
-    let mtime_ms = metadata_mtime_ms(&meta)?;
-    if now_ms.saturating_sub(mtime_ms) > AGENT_WATCHER_RECENT_MS {
-        return None;
+) -> ClaudeTranscriptOutcome {
+    if !file_mtime_ms(path).is_some_and(|mtime_ms| in_recent_window(mtime_ms, now_ms)) {
+        return ClaudeTranscriptOutcome::Skipped;
     }
-    let mut entry = claude_entry_for(previous, path, &meta);
-    let bytes_read = if entry.seen_len == meta.len() {
-        0
-    } else {
-        log_claude_io_error(path, "read", advance_claude_entry(&mut entry, &mut file))?
+    let Some(mut file) = log_claude_io_error(path, "open", fs::File::open(path)) else {
+        return ClaudeTranscriptOutcome::Failed;
     };
-    Some(ClaudeTranscriptScan {
-        entry,
-        mtime_ms,
-        bytes_read,
-    })
+    let Some(meta) = log_claude_io_error(path, "stat", file.metadata()) else {
+        return ClaudeTranscriptOutcome::Failed;
+    };
+    let Some(mtime_ms) = metadata_mtime_ms(&meta).filter(|ms| in_recent_window(*ms, now_ms)) else {
+        return ClaudeTranscriptOutcome::Skipped;
+    };
+    let mut entry = claude_entry_for(previous, path, &meta);
+    if entry.seen_len == meta.len() {
+        return ClaudeTranscriptOutcome::Scanned(ClaudeTranscriptScan {
+            entry,
+            mtime_ms,
+            bytes_read: 0,
+        });
+    }
+    match log_claude_io_error(path, "read", advance_claude_entry(&mut entry, &mut file)) {
+        Some(bytes_read) => ClaudeTranscriptOutcome::Scanned(ClaudeTranscriptScan {
+            entry,
+            mtime_ms,
+            bytes_read,
+        }),
+        None => {
+            // The failed read left the entry untouched; put it back for the next tick.
+            previous.entries.insert(path.to_path_buf(), entry);
+            ClaudeTranscriptOutcome::Failed
+        }
+    }
 }
 
 pub(crate) fn scan_claude_code_projects_cached(
@@ -2094,20 +2123,27 @@ pub(crate) fn scan_claude_code_projects_cached(
         let Some(thread_id) = path.file_stem().and_then(|stem| stem.to_str()) else {
             continue;
         };
-        let Some(scan) = scan_claude_transcript(&mut previous, &path, now_ms) else {
-            continue;
-        };
-        bytes_read += scan.bytes_read;
-        if let Some(snapshot) = claude_code_snapshot_from_state(
-            thread_id,
-            &project_dir,
-            &scan.entry.state,
-            scan.mtime_ms,
-            now_ms,
-        ) {
-            snapshots.push(snapshot);
+        match scan_claude_transcript(&mut previous, &path, now_ms) {
+            ClaudeTranscriptOutcome::Skipped => {}
+            ClaudeTranscriptOutcome::Failed => {
+                if let Some(entry) = previous.entries.remove(&path) {
+                    cache.entries.insert(path, entry);
+                }
+            }
+            ClaudeTranscriptOutcome::Scanned(scan) => {
+                bytes_read += scan.bytes_read;
+                if let Some(snapshot) = claude_code_snapshot_from_state(
+                    thread_id,
+                    &project_dir,
+                    &scan.entry.state,
+                    scan.mtime_ms,
+                    now_ms,
+                ) {
+                    snapshots.push(snapshot);
+                }
+                cache.entries.insert(path, scan.entry);
+            }
         }
-        cache.entries.insert(path, scan.entry);
     }
     cache.bytes_read_last_scan = bytes_read;
 }
@@ -3362,6 +3398,79 @@ mod claude_scan_cache_tests {
         fs::remove_dir_all(&home).ok();
     }
 
+    fn set_mode(path: &Path, mode: u32) {
+        use std::os::unix::fs::PermissionsExt;
+        fs::set_permissions(path, fs::Permissions::from_mode(mode)).unwrap();
+    }
+
+    /// Root ignores file modes, so a chmod-based failure cannot be provoked.
+    fn modes_are_enforced(path: &Path) -> bool {
+        set_mode(path, 0o000);
+        let enforced = fs::File::open(path).is_err();
+        set_mode(path, 0o644);
+        enforced
+    }
+
+    #[test]
+    fn unreadable_file_keeps_its_cached_offset_for_the_next_tick() {
+        let home = temp_home("keep-offset");
+        let path = transcript(&home, "a");
+        let first = user_line("Implement auth");
+        fs::write(&path, &first).unwrap();
+        if !modes_are_enforced(&path) {
+            fs::remove_dir_all(&home).ok();
+            return;
+        }
+        let mut cache = ClaudeScanCache::default();
+        scan(&home, &mut cache);
+        let cached_offset = first.len() as u64;
+        assert_eq!(cache.entries[&path].offset, cached_offset);
+
+        set_mode(&path, 0o000);
+        let snapshots = scan(&home, &mut cache);
+        assert!(snapshots.is_empty());
+        assert_eq!(cache.entries[&path].offset, cached_offset);
+
+        set_mode(&path, 0o644);
+        let added = assistant_done_line();
+        append(&path, &added);
+        let snapshots = scan(&home, &mut cache);
+
+        assert_eq!(snapshots[0].status, AgentStatus::Done);
+        assert_eq!(cache.bytes_read_last_scan(), added.len() as u64);
+        fs::remove_dir_all(&home).ok();
+    }
+
+    #[test]
+    fn failed_read_keeps_the_cached_entry_unchanged() {
+        use std::os::unix::fs::MetadataExt;
+        let home = temp_home("readerr");
+        // A directory opens fine but fails on read, whatever the user is.
+        let path = transcript(&home, "a");
+        fs::create_dir(&path).unwrap();
+        let meta = fs::metadata(&path).unwrap();
+        let mut cache = ClaudeScanCache::default();
+        cache.entries.insert(
+            path.clone(),
+            ClaudeScanEntry {
+                dev: meta.dev(),
+                ino: meta.ino(),
+                seen_len: 5,
+                offset: 5,
+                state: ClaudeCodeParseState::default(),
+            },
+        );
+
+        let snapshots = scan(&home, &mut cache);
+
+        assert!(snapshots.is_empty());
+        assert_eq!(cache.len(), 1);
+        assert_eq!(cache.entries[&path].offset, 5);
+        assert_eq!(cache.entries[&path].seen_len, 5);
+        assert_eq!(cache.bytes_read_last_scan(), 0);
+        fs::remove_dir_all(&home).ok();
+    }
+
     #[test]
     fn entries_for_files_outside_the_recent_window_are_dropped() {
         let home = temp_home("evict");
@@ -3400,15 +3509,18 @@ mod claude_scan_cache_tests {
 
     #[test]
     fn unreadable_file_is_retried_on_the_next_scan() {
-        use std::os::unix::fs::PermissionsExt;
         let home = temp_home("unreadable");
         let path = transcript(&home, "a");
         fs::write(&path, user_line("Implement auth")).unwrap();
-        fs::set_permissions(&path, fs::Permissions::from_mode(0o000)).unwrap();
+        if !modes_are_enforced(&path) {
+            fs::remove_dir_all(&home).ok();
+            return;
+        }
+        set_mode(&path, 0o000);
         let mut cache = ClaudeScanCache::default();
 
         let blocked = scan(&home, &mut cache);
-        fs::set_permissions(&path, fs::Permissions::from_mode(0o644)).unwrap();
+        set_mode(&path, 0o644);
         let retried = scan(&home, &mut cache);
 
         assert!(blocked.is_empty());
