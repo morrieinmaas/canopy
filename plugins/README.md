@@ -56,6 +56,19 @@ Commit the whole resulting diff, `CHECKSUMS` included. `vendor.sh`
 refuses a name that `VERSIONS` does not pin, so the pin is always written
 down before the tree changes.
 
+## Patched trees
+
+A tree canopy patches on top of its pin records the patched tree's digest
+in `CHECKSUMS`, so doctor and smoke treat it as intact. `vendor.sh`
+reproduces only the upstream pin, so after re-vendoring a patched plugin,
+re-apply its patch and record the digest again.
+
+- `opensessions`: incremental Claude transcript watching
+  (`docs/specs/opensessions-incremental-watcher.md`), and canopy builds its
+  own release binaries from this tree
+  (`.github/workflows/opensessions-release.yml`). Drop the patch once
+  upstream ships an equivalent fix.
+
 ## What `vendor.sh` strips, and why
 
 One invariant governs it: **what `vendor.sh` writes must be exactly what

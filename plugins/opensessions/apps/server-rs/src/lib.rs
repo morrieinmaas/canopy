@@ -1,3 +1,5 @@
+mod claude_scan;
+
 use std::collections::{HashMap, HashSet};
 use std::fs;
 use std::net::{SocketAddr, ToSocketAddrs};
@@ -10,12 +12,12 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::{Instant, SystemTime};
 
 use base64::{Engine, engine::general_purpose::STANDARD};
+use claude_scan::{ClaudeScanCache, scan_claude_code_projects_cached};
 use futures_util::{SinkExt, StreamExt};
 use opensessions_runtime::agent_watchers::{
-    AgentWatcherSnapshot, amp_snapshot_from_thread_json, claude_code_snapshot_from_jsonl,
-    codex_snapshot_from_jsonl, codex_thread_id_from_path, decode_claude_project_dir,
-    droid_snapshot_from_jsonl, opencode_snapshot_from_row, parse_codex_session_index,
-    pi_snapshot_from_jsonl,
+    AgentWatcherSnapshot, amp_snapshot_from_thread_json, codex_snapshot_from_jsonl,
+    codex_thread_id_from_path, droid_snapshot_from_jsonl, opencode_snapshot_from_row,
+    parse_codex_session_index, pi_snapshot_from_jsonl,
 };
 use opensessions_runtime::config::{
     OpensessionsConfig, load_config_from_home, save_config_to_home,
@@ -1790,15 +1792,21 @@ async fn run_agent_watcher_loop(
     let mut interval = tokio::time::interval(Duration::from_millis(AGENT_WATCHER_POLL_MS));
     interval.set_missed_tick_behavior(MissedTickBehavior::Skip);
     let mut last_seen = HashMap::<String, AgentWatcherFingerprint>::new();
+    let mut claude_cache = ClaudeScanCache::default();
 
     loop {
         tokio::select! {
             _ = shutdown_rx.recv() => return,
             _ = interval.tick() => {
                 let now = current_time_ms();
-                let snapshots = tokio::task::spawn_blocking(move || scan_agent_watcher_snapshots(now))
-                    .await
-                    .unwrap_or_default();
+                let mut cache = std::mem::take(&mut claude_cache);
+                let (snapshots, cache) = tokio::task::spawn_blocking(move || {
+                    let snapshots = scan_agent_watcher_snapshots(now, &mut cache);
+                    (snapshots, cache)
+                })
+                .await
+                .unwrap_or_default();
+                claude_cache = cache;
                 debug_log(format!(
                     "agent_watcher_loop: tick scanned {} snapshots",
                     snapshots.len()
@@ -1863,14 +1871,17 @@ fn agent_watcher_key(snapshot: &AgentWatcherSnapshot) -> String {
     )
 }
 
-fn scan_agent_watcher_snapshots(now_ms: u64) -> Vec<AgentWatcherSnapshot> {
+fn scan_agent_watcher_snapshots(
+    now_ms: u64,
+    claude_cache: &mut ClaudeScanCache,
+) -> Vec<AgentWatcherSnapshot> {
     let mut snapshots = Vec::new();
     let Some(home) = std::env::var_os("HOME").map(PathBuf::from) else {
         return snapshots;
     };
 
     scan_amp_threads(&home, now_ms, &mut snapshots);
-    scan_claude_code_projects(&home, now_ms, &mut snapshots);
+    scan_claude_code_projects_cached(&home, now_ms, claude_cache, &mut snapshots);
     scan_codex_sessions(&home, now_ms, &mut snapshots);
     scan_opencode_sessions(&home, now_ms, &mut snapshots);
     scan_pi_sessions(&home, now_ms, &mut snapshots);
@@ -1900,48 +1911,6 @@ fn scan_amp_threads(home: &Path, now_ms: u64, snapshots: &mut Vec<AgentWatcherSn
         };
         if let Some(snapshot) = amp_snapshot_from_thread_json(&raw, mtime_ms) {
             snapshots.push(snapshot);
-        }
-    }
-}
-
-fn scan_claude_code_projects(home: &Path, now_ms: u64, snapshots: &mut Vec<AgentWatcherSnapshot>) {
-    let projects_dir = home.join(".claude/projects");
-    let Ok(projects) = fs::read_dir(projects_dir) else {
-        return;
-    };
-
-    for project in projects.flatten() {
-        let project_path = project.path();
-        if !project_path.is_dir() {
-            continue;
-        }
-        let encoded = project.file_name().to_string_lossy().to_string();
-        let project_dir = decode_claude_project_dir(&encoded, |path| Path::new(path).is_dir());
-        let Ok(files) = fs::read_dir(project_path) else {
-            continue;
-        };
-        for file in files.flatten() {
-            let path = file.path();
-            if path.extension().and_then(|ext| ext.to_str()) != Some("jsonl") {
-                continue;
-            }
-            let Some(mtime_ms) = file_mtime_ms(&path) else {
-                continue;
-            };
-            if now_ms.saturating_sub(mtime_ms) > AGENT_WATCHER_RECENT_MS {
-                continue;
-            }
-            let Some(thread_id) = path.file_stem().and_then(|stem| stem.to_str()) else {
-                continue;
-            };
-            let Ok(raw) = fs::read_to_string(&path) else {
-                continue;
-            };
-            if let Some(snapshot) =
-                claude_code_snapshot_from_jsonl(thread_id, &project_dir, &raw, mtime_ms, now_ms)
-            {
-                snapshots.push(snapshot);
-            }
         }
     }
 }
@@ -2146,9 +2115,11 @@ fn collect_jsonl_files(dir: &Path) -> Vec<PathBuf> {
 }
 
 fn file_mtime_ms(path: &Path) -> Option<u64> {
-    fs::metadata(path)
-        .ok()?
-        .modified()
+    metadata_mtime_ms(&fs::metadata(path).ok()?)
+}
+
+fn metadata_mtime_ms(meta: &fs::Metadata) -> Option<u64> {
+    meta.modified()
         .ok()?
         .duration_since(SystemTime::UNIX_EPOCH)
         .ok()
