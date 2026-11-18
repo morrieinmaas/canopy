@@ -3019,3 +3019,206 @@ fn clamp_detail_panel_height(height: u16) -> u16 {
 fn parse_command(message: &Message) -> Option<Value> {
     serde_json::from_str::<Value>(message.as_text()?).ok()
 }
+
+#[cfg(test)]
+mod claude_scan_cache_tests {
+    use super::*;
+    use std::io::Write;
+
+    fn now_ms() -> u64 {
+        SystemTime::now()
+            .duration_since(SystemTime::UNIX_EPOCH)
+            .unwrap()
+            .as_millis() as u64
+    }
+
+    fn temp_home(tag: &str) -> PathBuf {
+        let home = std::env::temp_dir().join(format!(
+            "opensessions-claude-scan-{tag}-{}-{}",
+            std::process::id(),
+            now_ms()
+        ));
+        fs::create_dir_all(home.join(".claude/projects/-tmp-proj")).unwrap();
+        home
+    }
+
+    fn transcript(home: &Path, id: &str) -> PathBuf {
+        home.join(format!(".claude/projects/-tmp-proj/{id}.jsonl"))
+    }
+
+    fn user_line(text: &str) -> String {
+        format!(
+            "{{\"type\":\"user\",\"message\":{{\"role\":\"user\",\"content\":[{{\"type\":\"text\",\"text\":\"{text}\"}}]}}}}\n"
+        )
+    }
+
+    fn assistant_done_line() -> String {
+        "{\"type\":\"assistant\",\"message\":{\"role\":\"assistant\",\"content\":[{\"type\":\"text\",\"text\":\"Done\"}],\"stop_reason\":\"end_turn\"}}\n".to_string()
+    }
+
+    fn append(path: &Path, text: &str) {
+        let mut file = fs::OpenOptions::new().append(true).open(path).unwrap();
+        file.write_all(text.as_bytes()).unwrap();
+    }
+
+    fn scan(home: &Path, cache: &mut ClaudeScanCache) -> Vec<AgentWatcherSnapshot> {
+        let mut snapshots = Vec::new();
+        scan_claude_code_projects_cached(home, now_ms(), cache, &mut snapshots);
+        snapshots
+    }
+
+    #[test]
+    fn first_scan_reads_whole_file_and_returns_snapshot() {
+        let home = temp_home("first");
+        let body = format!("{}{}", user_line("Implement auth"), assistant_done_line());
+        fs::write(transcript(&home, "a"), &body).unwrap();
+        let mut cache = ClaudeScanCache::default();
+
+        let snapshots = scan(&home, &mut cache);
+
+        assert_eq!(snapshots.len(), 1);
+        assert_eq!(snapshots[0].thread_id.as_deref(), Some("a"));
+        assert_eq!(snapshots[0].thread_name.as_deref(), Some("Implement auth"));
+        assert_eq!(snapshots[0].status, AgentStatus::Done);
+        assert_eq!(cache.bytes_read_last_scan(), body.len() as u64);
+        assert_eq!(cache.len(), 1);
+        fs::remove_dir_all(&home).ok();
+    }
+
+    #[test]
+    fn unchanged_file_is_not_read_again() {
+        let home = temp_home("unchanged");
+        fs::write(transcript(&home, "a"), user_line("Implement auth")).unwrap();
+        let mut cache = ClaudeScanCache::default();
+        let first = scan(&home, &mut cache);
+        assert!(cache.bytes_read_last_scan() > 0);
+
+        let second = scan(&home, &mut cache);
+
+        assert_eq!(cache.bytes_read_last_scan(), 0);
+        assert_eq!(second.len(), 1);
+        assert_eq!(second[0].thread_name, first[0].thread_name);
+        assert_eq!(second[0].last_user_prompt, first[0].last_user_prompt);
+        assert_eq!(second[0].status, first[0].status);
+        fs::remove_dir_all(&home).ok();
+    }
+
+    #[test]
+    fn appended_lines_update_status_reading_only_new_bytes() {
+        let home = temp_home("append");
+        let path = transcript(&home, "a");
+        fs::write(&path, user_line("Implement auth")).unwrap();
+        let mut cache = ClaudeScanCache::default();
+        let first = scan(&home, &mut cache);
+        assert_eq!(first[0].status, AgentStatus::Running);
+
+        let added = assistant_done_line();
+        append(&path, &added);
+        let second = scan(&home, &mut cache);
+
+        assert_eq!(second.len(), 1);
+        assert_eq!(second[0].status, AgentStatus::Done);
+        assert_eq!(second[0].thread_name.as_deref(), Some("Implement auth"));
+        assert_eq!(cache.bytes_read_last_scan(), added.len() as u64);
+        fs::remove_dir_all(&home).ok();
+    }
+
+    #[test]
+    fn partial_trailing_line_is_left_for_the_next_tick() {
+        let home = temp_home("partial");
+        let path = transcript(&home, "a");
+        let complete = user_line("First");
+        let second = user_line("Second");
+        let (head, tail) = second.split_at(20);
+        fs::write(&path, format!("{complete}{head}")).unwrap();
+        let mut cache = ClaudeScanCache::default();
+
+        let snapshots = scan(&home, &mut cache);
+        assert_eq!(snapshots[0].last_user_prompt.as_deref(), Some("First"));
+
+        append(&path, tail);
+        let snapshots = scan(&home, &mut cache);
+        assert_eq!(snapshots[0].last_user_prompt.as_deref(), Some("Second"));
+        fs::remove_dir_all(&home).ok();
+    }
+
+    #[test]
+    fn truncated_file_is_reread_from_the_start() {
+        let home = temp_home("truncate");
+        let path = transcript(&home, "a");
+        fs::write(
+            &path,
+            format!("{}{}{}", user_line("Old task"), assistant_done_line(), user_line("Old follow up")),
+        )
+        .unwrap();
+        let mut cache = ClaudeScanCache::default();
+        scan(&home, &mut cache);
+
+        let fresh = user_line("New");
+        fs::write(&path, &fresh).unwrap();
+        let snapshots = scan(&home, &mut cache);
+
+        assert_eq!(snapshots.len(), 1);
+        assert_eq!(snapshots[0].thread_name.as_deref(), Some("New"));
+        assert_eq!(snapshots[0].last_user_prompt.as_deref(), Some("New"));
+        assert_eq!(cache.bytes_read_last_scan(), fresh.len() as u64);
+        fs::remove_dir_all(&home).ok();
+    }
+
+    #[test]
+    fn replaced_file_with_new_identity_is_reread_from_the_start() {
+        let home = temp_home("replace");
+        let path = transcript(&home, "a");
+        fs::write(&path, user_line("Old task")).unwrap();
+        let mut cache = ClaudeScanCache::default();
+        scan(&home, &mut cache);
+
+        let replacement = format!("{}{}", user_line("Replacement task"), assistant_done_line());
+        let staged = home.join("staged.jsonl");
+        fs::write(&staged, &replacement).unwrap();
+        fs::rename(&staged, &path).unwrap();
+        let snapshots = scan(&home, &mut cache);
+
+        assert_eq!(snapshots.len(), 1);
+        assert_eq!(snapshots[0].thread_name.as_deref(), Some("Replacement task"));
+        assert_eq!(snapshots[0].status, AgentStatus::Done);
+        assert_eq!(cache.bytes_read_last_scan(), replacement.len() as u64);
+        fs::remove_dir_all(&home).ok();
+    }
+
+    #[test]
+    fn entries_for_files_outside_the_recent_window_are_dropped() {
+        let home = temp_home("evict");
+        let path = transcript(&home, "a");
+        fs::write(&path, user_line("Implement auth")).unwrap();
+        let mut cache = ClaudeScanCache::default();
+        let mut snapshots = Vec::new();
+        scan_claude_code_projects_cached(&home, now_ms(), &mut cache, &mut snapshots);
+        assert_eq!(cache.len(), 1);
+
+        let later = now_ms() + AGENT_WATCHER_RECENT_MS + 60_000;
+        let mut snapshots = Vec::new();
+        scan_claude_code_projects_cached(&home, later, &mut cache, &mut snapshots);
+
+        assert!(snapshots.is_empty());
+        assert_eq!(cache.len(), 0);
+        fs::remove_dir_all(&home).ok();
+    }
+
+    #[test]
+    fn entries_for_deleted_files_are_dropped() {
+        let home = temp_home("deleted");
+        fs::write(transcript(&home, "a"), user_line("One")).unwrap();
+        fs::write(transcript(&home, "b"), user_line("Two")).unwrap();
+        let mut cache = ClaudeScanCache::default();
+        scan(&home, &mut cache);
+        assert_eq!(cache.len(), 2);
+
+        fs::remove_file(transcript(&home, "a")).unwrap();
+        let snapshots = scan(&home, &mut cache);
+
+        assert_eq!(snapshots.len(), 1);
+        assert_eq!(cache.len(), 1);
+        fs::remove_dir_all(&home).ok();
+    }
+}

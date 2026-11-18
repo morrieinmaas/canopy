@@ -800,3 +800,152 @@ mod tests {
         assert_eq!(snapshot.status, AgentStatus::Done);
     }
 }
+
+#[cfg(test)]
+mod claude_incremental_tests {
+    use super::*;
+
+    const TRANSCRIPT: &str = concat!(
+        r#"{"type":"custom-title","customTitle":"Auth rework","sessionId":"s"}"#,
+        "\n",
+        r#"{"type":"user","message":{"role":"user","content":[{"type":"text","text":"Implement ünïcode auth 日本語"}]}}"#,
+        "\n",
+        r#"{"type":"assistant","message":{"role":"assistant","content":[{"type":"tool_use","id":"t1","name":"Bash","input":{"command":"ls"}}]}}"#,
+        "\n",
+        r#"{"type":"user","message":{"role":"user","content":[{"type":"tool_result","tool_use_id":"t1","content":"ok"}]}}"#,
+        "\n",
+        r#"{"type":"assistant","message":{"role":"assistant","content":[{"type":"text","text":"Done"}],"stop_reason":"end_turn"}}"#,
+        "\n",
+        r#"{"type":"user","message":{"role":"user","content":[{"type":"text","text":"Add tests too"}]}}"#,
+        "\n",
+        r#"{"type":"assistant","message":{"role":"assistant","content":[{"type":"tool_use","id":"t2","name":"Read","input":{}}]}}"#,
+        "\n",
+    );
+
+    fn fold_in_chunks(chunks: &[&str]) -> ClaudeCodeParseState {
+        let mut state = ClaudeCodeParseState::default();
+        let mut pending = String::new();
+        for chunk in chunks {
+            pending.push_str(chunk);
+            let (next, consumed) = claude_code_fold_chunk(state, &pending);
+            state = next;
+            pending.drain(..consumed);
+        }
+        state
+    }
+
+    fn snapshot(state: &ClaudeCodeParseState, mtime: u64, now: u64) -> Option<AgentWatcherSnapshot> {
+        claude_code_snapshot_from_state("thread", "/repo", state, mtime, now)
+    }
+
+    #[test]
+    fn fold_split_at_every_byte_matches_whole_file_parse() {
+        let expected = claude_code_snapshot_from_jsonl("thread", "/repo", TRANSCRIPT, 1_000, 1_100);
+        assert!(expected.is_some());
+        for split in 0..=TRANSCRIPT.len() {
+            if !TRANSCRIPT.is_char_boundary(split) {
+                continue;
+            }
+            let (a, b) = TRANSCRIPT.split_at(split);
+            let state = fold_in_chunks(&[a, b]);
+            assert_eq!(snapshot(&state, 1_000, 1_100), expected, "split at {split}");
+        }
+    }
+
+    #[test]
+    fn fold_split_into_three_chunks_matches_whole_file_parse() {
+        let expected = claude_code_snapshot_from_jsonl("thread", "/repo", TRANSCRIPT, 1_000, 1_100);
+        let (a, rest) = TRANSCRIPT.split_at(40);
+        let (b, c) = rest.split_at(200);
+        assert_eq!(snapshot(&fold_in_chunks(&[a, b, c]), 1_000, 1_100), expected);
+    }
+
+    #[test]
+    fn fold_reports_bytes_consumed_up_to_last_newline() {
+        let chunk = "{\"type\":\"user\",\"message\":{\"role\":\"user\",\"content\":[{\"type\":\"text\",\"text\":\"hi\"}]}}\n{\"type\":\"user\"";
+        let (_, consumed) = claude_code_fold_chunk(ClaudeCodeParseState::default(), chunk);
+        assert_eq!(consumed, chunk.find('\n').unwrap() + 1);
+
+        let (state, consumed) = claude_code_fold_chunk(ClaudeCodeParseState::default(), "no newline yet");
+        assert_eq!(consumed, 0);
+        assert_eq!(state, ClaudeCodeParseState::default());
+    }
+
+    #[test]
+    fn partial_last_line_is_not_parsed_until_newline_arrives() {
+        let first = r#"{"type":"user","message":{"role":"user","content":[{"type":"text","text":"First"}]}}"#;
+        let second = r#"{"type":"user","message":{"role":"user","content":[{"type":"text","text":"Second"}]}}"#;
+        let chunk = format!("{first}\n{second}");
+
+        let (state, consumed) = claude_code_fold_chunk(ClaudeCodeParseState::default(), &chunk);
+        assert_eq!(consumed, first.len() + 1);
+        let snap = snapshot(&state, 1_000, 1_100).expect("snapshot");
+        assert_eq!(snap.last_user_prompt.as_deref(), Some("First"));
+
+        let rest = format!("{second}\n");
+        let (state, consumed) = claude_code_fold_chunk(state, &rest);
+        assert_eq!(consumed, rest.len());
+        let snap = snapshot(&state, 1_000, 1_100).expect("snapshot");
+        assert_eq!(snap.last_user_prompt.as_deref(), Some("Second"));
+    }
+
+    #[test]
+    fn only_a_partial_line_yields_no_snapshot() {
+        let (state, consumed) = claude_code_fold_chunk(
+            ClaudeCodeParseState::default(),
+            r#"{"type":"user","message":{"role":"user","content":[{"type":"text","text":"x"}]}}"#,
+        );
+        assert_eq!(consumed, 0);
+        assert!(snapshot(&state, 1_000, 1_100).is_none());
+    }
+
+    #[test]
+    fn custom_title_from_early_chunk_survives_later_chunks() {
+        let early = concat!(
+            r#"{"type":"custom-title","customTitle":"Pinned title"}"#,
+            "\n",
+            r#"{"type":"user","message":{"role":"user","content":[{"type":"text","text":"Early prompt"}]}}"#,
+            "\n",
+        );
+        let late = concat!(
+            r#"{"type":"user","message":{"role":"user","content":[{"type":"text","text":"Later prompt"}]}}"#,
+            "\n",
+            r#"{"type":"assistant","message":{"role":"assistant","content":[{"type":"text","text":"ok"}],"stop_reason":"end_turn"}}"#,
+            "\n",
+        );
+        let state = fold_in_chunks(&[early, late]);
+        let snap = snapshot(&state, 1_000, 1_100).expect("snapshot");
+        assert_eq!(snap.thread_name.as_deref(), Some("Pinned title"));
+        assert_eq!(snap.last_user_prompt.as_deref(), Some("Later prompt"));
+    }
+
+    #[test]
+    fn first_prompt_names_thread_and_survives_later_chunks() {
+        let early = concat!(
+            r#"{"type":"user","message":{"role":"user","content":[{"type":"text","text":"Implement auth"}]}}"#,
+            "\n",
+        );
+        let late = concat!(
+            r#"{"type":"user","message":{"role":"user","content":[{"type":"text","text":"Add tests too"}]}}"#,
+            "\n",
+        );
+        let state = fold_in_chunks(&[early, late]);
+        let snap = snapshot(&state, 1_000, 1_100).expect("snapshot");
+        assert_eq!(snap.thread_name.as_deref(), Some("Implement auth"));
+        assert_eq!(snap.last_user_prompt.as_deref(), Some("Add tests too"));
+    }
+
+    #[test]
+    fn snapshot_from_state_ages_tool_use_and_stale_with_current_now() {
+        let line = concat!(
+            r#"{"type":"user","message":{"role":"user","content":[{"type":"text","text":"Go"}]}}"#,
+            "\n",
+            r#"{"type":"assistant","message":{"role":"assistant","content":[{"type":"tool_use","id":"t","name":"Bash","input":{}}]}}"#,
+            "\n",
+        );
+        let (state, _) = claude_code_fold_chunk(ClaudeCodeParseState::default(), line);
+        assert_eq!(snapshot(&state, 1_000, 1_100).unwrap().status, AgentStatus::Running);
+        assert_eq!(snapshot(&state, 1_000, 5_000).unwrap().status, AgentStatus::Waiting);
+        assert_eq!(snapshot(&state, 1_000, 60_000).unwrap().status, AgentStatus::Stale);
+    }
+}
