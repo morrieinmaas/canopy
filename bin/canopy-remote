@@ -107,9 +107,13 @@ EOF
 }
 
 # Both files are rendered to temporary names beside them first, and only
-# then moved into place, so a reader never sees half a file and a failed
-# write leaves neither backend changed.
+# then moved into place, so a reader never sees half a file. Two renames
+# cannot be one, so if the second fails the first is taken back out: a box
+# then shows no indicator on either backend rather than on one of them.
 remote_put_both() {
+  for remote_f in "$remote_tmux" "$remote_grofe"; do
+    [ ! -d "$remote_f" ] || canopy_die "canopy-remote: $remote_f is a directory, nothing was written"
+  done
   remote_tmp_t="$remote_tmux.tmp.$$"
   remote_tmp_g="$remote_grofe.tmp.$$"
   trap 'rm -f "$remote_tmp_t" "$remote_tmp_g"' EXIT
@@ -117,7 +121,10 @@ remote_put_both() {
   remote_write_tmux "$@" >"$remote_tmp_t"
   remote_write_grofe "$@" >"$remote_tmp_g"
   mv "$remote_tmp_t" "$remote_tmux"
-  mv "$remote_tmp_g" "$remote_grofe"
+  if ! mv "$remote_tmp_g" "$remote_grofe"; then
+    rm -f "$remote_tmux"
+    canopy_die "canopy-remote: could not write $remote_grofe; removed $remote_tmux too"
+  fi
   trap - EXIT
 }
 
@@ -166,7 +173,7 @@ remote_follow_theme() {
   name="${line#CANOPY_THEME=}"
   [ "$name" != "$line" ] || return 0
   case "$name" in
-    '' | *[!A-Za-z0-9._-]* | .*) return 0 ;;
+    '' | *[!A-Za-z0-9._-]* | .* | -*) return 0 ;;
     *) ;;
   esac
 
@@ -174,7 +181,7 @@ remote_follow_theme() {
   # PATH, which is where athome puts `theme`.
   theme_cmd="$(command -v theme 2>/dev/null)" || theme_cmd="$HOME/.local/bin/theme"
   [ -x "$theme_cmd" ] || return 0
-  "$theme_cmd" --list 2>/dev/null | grep -qxF "$name" || return 0
+  "$theme_cmd" --list 2>/dev/null | grep -qxF -e "$name" || return 0
   [ "$("$theme_cmd" --current 2>/dev/null)" != "$name" ] || return 0
   "$theme_cmd" "$name" >/dev/null 2>&1 || true
 }

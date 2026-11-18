@@ -446,3 +446,32 @@ follow() {
   ls "$CANOPY_STATE" | grep -q tmp && false
   return 0
 }
+
+@test "follow-theme refuses an unsafe name even when theme would list it" {
+  start_tmux
+  tmux -L "$sock" new-session -d -s main
+  # A theme that lists everything it is asked about, so only canopy's own
+  # check stands between the value and `theme <value>`.
+  cat >"$fake_dir/theme" <<FAKE
+#!/bin/sh
+case "\$1" in
+  --list) printf '%s\n' 'a;b' '../x' '-eeverforest' everforest .hidden ;;
+  --current) echo gruvbox ;;
+  *) printf 'applied %s\n' "\$1" >>'$theme_log' ;;
+esac
+FAKE
+  for v in 'a;b' '../x' '-eeverforest' .hidden; do
+    tmux -L "$sock" set-environment -t main CANOPY_THEME "$v"
+    run follow
+    [ "$status" -eq 0 ]
+  done
+  [ ! -e "$theme_log" ]
+}
+
+@test "a set whose target is a directory writes nothing and says so" {
+  mkdir -p "$grofe_file"
+  run remote_set
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"is a directory"* ]]
+  [ ! -e "$tmux_file" ]
+}
