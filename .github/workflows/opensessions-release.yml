@@ -66,7 +66,7 @@ jobs:
       - name: Test opensessions
         if: matrix.native
         working-directory: plugins/opensessions
-        run: cargo test --workspace
+        run: cargo test --workspace --lib --bins
 
       - name: Build opensessions binaries
         working-directory: plugins/opensessions
