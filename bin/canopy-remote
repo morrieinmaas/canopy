@@ -108,8 +108,8 @@ EOF
 
 # Both files are rendered to temporary names beside them first, and only
 # then moved into place, so a reader never sees half a file. Two renames
-# cannot be one, so if the second fails the first is taken back out: a box
-# then shows no indicator on either backend rather than on one of them.
+# cannot be one, so if the second fails both files are removed: a box then
+# shows no indicator on either backend, never old values on one of them.
 remote_put_both() {
   for remote_f in "$remote_tmux" "$remote_grofe"; do
     [ ! -d "$remote_f" ] || canopy_die "canopy-remote: $remote_f is a directory, nothing was written"
@@ -122,8 +122,8 @@ remote_put_both() {
   remote_write_grofe "$@" >"$remote_tmp_g"
   mv "$remote_tmp_t" "$remote_tmux"
   if ! mv "$remote_tmp_g" "$remote_grofe"; then
-    rm -f "$remote_tmux"
-    canopy_die "canopy-remote: could not write $remote_grofe; removed $remote_tmux too"
+    rm -f "$remote_tmux" "$remote_grofe"
+    canopy_die "canopy-remote: could not write $remote_grofe; removed both remote files"
   fi
   trap - EXIT
 }

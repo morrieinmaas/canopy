@@ -277,6 +277,9 @@ need_grofe() {
   start_tmux
   in_terminal "env -u TMUX -u TMUX_PANE CANOPY_THEME=everforest tmux -L $sock new-session -s main"
   wait_for_log "applied everforest"
+  # Both tmux hooks could fire for one attach; the theme must still run once.
+  sleep 1
+  [ "$(grep -c . "$theme_log")" = "1" ]
 }
 
 @test "tmux: a client attaching to an existing session applies the laptop's theme" {
@@ -392,6 +395,9 @@ follow() {
   start_grofe
   in_terminal "env -u TMUX -u TMUX_PANE CANOPY_THEME=everforest SHELL=/bin/sh '$grofe_bin' -L $gsock new-session -s main"
   wait_for_log "applied everforest"
+  # Both tmux hooks could fire for one attach; the theme must still run once.
+  sleep 1
+  [ "$(grep -c . "$theme_log")" = "1" ]
   left="$("$grofe_bin" -L "$gsock" display-message -p -t main '#{T:status-left}')"
   [[ "$left" == *'#[fg=yellow]#[bg=default]#[bold]acme-dev · work/acme #[nobold]'* ]]
 }
@@ -413,6 +419,8 @@ follow() {
   start_tmux
   in_terminal "env -u TMUX -u TMUX_PANE CANOPY_THEME=everforest tmux -L $sock new-session -s \"a b'c\""
   wait_for_log "applied everforest"
+  sleep 1
+  [ "$(grep -c . "$theme_log")" = "1" ]
 }
 
 @test "follow-theme exits 0 when theme itself fails" {
