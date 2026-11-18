@@ -383,6 +383,13 @@ follow() {
     [[ "$output" == *"set-titles = false"* ]]
     [[ "$output" != *CANOPY_THEME* ]]
     [[ "$output" != *canopy-remote* ]]
+    # And the bar itself: no segment in front of the session pill. A server
+    # per step, so the second loads the config fresh.
+    [ "$step" = never ] || gsock="$gsock-2"
+    start_grofe
+    left="$("$grofe_bin" -L "$gsock" display-message -p -t boot '#{T:status-left}')"
+    [ "$step" = cleared ] || "$grofe_bin" -L "$gsock" kill-server >/dev/null 2>&1 || true
+    [[ "$left" == '#[fg=#458588'* ]]
   done
 }
 
@@ -487,7 +494,7 @@ FAKE
   mkdir -p "$grofe_file"
   run remote_set
   [ "$status" -eq 1 ]
-  [[ "$output" == *"is a directory"* ]]
+  [[ "$output" == *"$grofe_file is a directory"* ]]
   [ ! -e "$tmux_file" ]
 }
 
