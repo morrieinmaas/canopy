@@ -90,6 +90,18 @@ in_terminal() {
   "$shim_tmux" -L "$outer" -f /dev/null new-session -d -x 100 -y 30 "$1; sleep 30"
 }
 
+# A grofe server on this test's socket with every shipped fragment and
+# whatever 25-remote.toml holds. Bare `tmux` in its jobs is grofe, as on a
+# machine that switched, and the fake theme is on their PATH.
+start_grofe() {
+  mkdir -p "$XDG_CONFIG_HOME/grofe/conf.d"
+  cp "$CANOPY_STORE"/grofe/conf.d/*.toml "$XDG_CONFIG_HOME/grofe/conf.d/"
+  mkdir -p "$BATS_TEST_TMPDIR/grofe-path"
+  ln -sf "$grofe_bin" "$BATS_TEST_TMPDIR/grofe-path/tmux"
+  PATH="$BATS_TEST_TMPDIR/grofe-path:$fake_dir:$PATH" SHELL=/bin/sh \
+    "$grofe_bin" -L "$gsock" new-session -d -s boot
+}
+
 segment_of() {
   local line seg
   line="$(grep -F '#{?@canopy_machine,' "$1")"
@@ -341,7 +353,26 @@ follow() {
   [ "$status" -eq 0 ]
   [[ "$output" == *"status.left-length = 80"* ]]
   [[ "$output" == *"canopy_load_plugins"* ]]
-  [[ "$output" == *'update-environment[90]'* ]]
+  [[ "$output" == *"set-titles = true"* ]]
+  [[ "$output" == *'set-titles-string = "#{@canopy_machine} · #{session_name}"'* ]]
+}
+
+@test "grofe: where set never ran, or after clear, nothing changes" {
+  need_grofe
+  mkdir -p "$XDG_CONFIG_HOME/grofe/conf.d"
+  cp "$CANOPY_STORE"/grofe/conf.d/*.toml "$XDG_CONFIG_HOME/grofe/conf.d/"
+  for step in never cleared; do
+    if [ "$step" = cleared ]; then
+      remote_set
+      canopy-remote clear
+    fi
+    run "$grofe_bin" show-config
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"status.left-length = 40"* ]]
+    [[ "$output" == *"set-titles = false"* ]]
+    [[ "$output" != *CANOPY_THEME* ]]
+    [[ "$output" != *canopy-remote* ]]
+  done
 }
 
 @test "grofe: generate leaves 25-remote.toml alone, and writes the same with or without it" {
@@ -358,14 +389,60 @@ follow() {
 @test "grofe: a client creating its session applies the laptop's theme, and the bar says where" {
   need_grofe
   remote_set
-  cp "$CANOPY_STORE/grofe/conf.d/20-canopy-status.toml" "$XDG_CONFIG_HOME/grofe/conf.d/"
-  # Bare `tmux` in canopy's scripts is grofe, as on a machine that switched.
-  mkdir -p "$BATS_TEST_TMPDIR/grofe-path"
-  ln -s "$grofe_bin" "$BATS_TEST_TMPDIR/grofe-path/tmux"
-  PATH="$BATS_TEST_TMPDIR/grofe-path:$fake_dir:$PATH" SHELL=/bin/sh \
-    "$grofe_bin" -L "$gsock" new-session -d -s boot
+  start_grofe
   in_terminal "env -u TMUX -u TMUX_PANE CANOPY_THEME=everforest SHELL=/bin/sh '$grofe_bin' -L $gsock new-session -s main"
   wait_for_log "applied everforest"
   left="$("$grofe_bin" -L "$gsock" display-message -p -t main '#{T:status-left}')"
   [[ "$left" == *'#[fg=yellow]#[bg=default]#[bold]acme-dev · work/acme #[nobold]'* ]]
+}
+
+@test "grofe: a client attaching to an existing session applies the laptop's theme" {
+  need_grofe
+  remote_set
+  start_grofe
+  SHELL=/bin/sh "$grofe_bin" -L "$gsock" new-session -d -s main
+  in_terminal "env -u TMUX -u TMUX_PANE CANOPY_THEME=everforest '$grofe_bin' -L $gsock attach-session -t main"
+  wait_for_log "applied everforest"
+  [ "$(grep -c . "$theme_log")" = "1" ]
+}
+
+# --- edge cases --------------------------------------------------------------
+
+@test "tmux: a session name with a space and a quote reaches follow-theme as one argument" {
+  remote_set
+  start_tmux
+  in_terminal "env -u TMUX -u TMUX_PANE CANOPY_THEME=everforest tmux -L $sock new-session -s \"a b'c\""
+  wait_for_log "applied everforest"
+}
+
+@test "follow-theme exits 0 when theme itself fails" {
+  start_tmux
+  tmux -L "$sock" new-session -d -s main
+  tmux -L "$sock" set-environment -t main CANOPY_THEME everforest
+  printf '#!/bin/sh\ncase "$1" in --list) echo everforest ;; --current) echo gruvbox ;; *) exit 3 ;; esac\n' >"$fake_dir/theme"
+  run follow
+  [ "$status" -eq 0 ]
+}
+
+@test "the same flag twice: the last one wins" {
+  canopy-remote set --machine one --machine acme-dev --scope work/acme --color yellow
+  grep -qxF 'set -g @canopy_machine "acme-dev"' "$tmux_file"
+}
+
+@test "with XDG_CONFIG_HOME unset the grofe file goes under ~/.config" {
+  unset XDG_CONFIG_HOME
+  remote_set
+  [ -f "$HOME/.config/grofe/conf.d/25-remote.toml" ]
+  canopy-remote clear
+  [ ! -e "$HOME/.config/grofe/conf.d/25-remote.toml" ]
+}
+
+@test "a set that cannot write the grofe file leaves the tmux file unwritten too" {
+  mkdir -p "$XDG_CONFIG_HOME/grofe"
+  : >"$XDG_CONFIG_HOME/grofe/conf.d"
+  run remote_set
+  [ "$status" -ne 0 ]
+  [ ! -e "$tmux_file" ]
+  ls "$CANOPY_STATE" | grep -q tmp && false
+  return 0
 }

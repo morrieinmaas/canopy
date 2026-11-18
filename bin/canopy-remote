@@ -106,17 +106,18 @@ client-session-changed = """$remote_hook_cmd"""
 EOF
 }
 
-# remote_put <file> <writer> <args...>: written to a temporary name beside it
-# and moved into place, so a reader never sees half a file.
-remote_put() {
-  remote_out="$1"
-  remote_fn="$2"
-  shift 2
-  mkdir -p "${remote_out%/*}"
-  remote_tmp="$remote_out.tmp.$$"
-  trap 'rm -f "$remote_tmp"' EXIT
-  "$remote_fn" "$@" >"$remote_tmp"
-  mv "$remote_tmp" "$remote_out"
+# Both files are rendered to temporary names beside them first, and only
+# then moved into place, so a reader never sees half a file and a failed
+# write leaves neither backend changed.
+remote_put_both() {
+  remote_tmp_t="$remote_tmux.tmp.$$"
+  remote_tmp_g="$remote_grofe.tmp.$$"
+  trap 'rm -f "$remote_tmp_t" "$remote_tmp_g"' EXIT
+  mkdir -p "${remote_tmux%/*}" "${remote_grofe%/*}"
+  remote_write_tmux "$@" >"$remote_tmp_t"
+  remote_write_grofe "$@" >"$remote_tmp_g"
+  mv "$remote_tmp_t" "$remote_tmux"
+  mv "$remote_tmp_g" "$remote_grofe"
   trap - EXIT
 }
 
@@ -143,8 +144,7 @@ remote_set() {
   remote_check --scope "$scope" / "letters, digits, '.', '_', '-' and '/'"
   remote_check_color "$color"
 
-  remote_put "$remote_tmux" remote_write_tmux "$machine" "$scope" "$color"
-  remote_put "$remote_grofe" remote_write_grofe "$machine" "$scope" "$color"
+  remote_put_both "$machine" "$scope" "$color"
 }
 
 remote_clear() {
