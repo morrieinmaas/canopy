@@ -74,7 +74,7 @@ The prefix is `Ctrl-s`. The main additions to stock tmux:
 | `h` `j` `k` `l` | Move between panes |
 | `H` `J` `K` `L` | Resize; keep pressing to repeat, no prefix needed |
 | `c` | New window with one big pane on the left and two stacked on the right |
-| `C` | Plain new window |
+| `M-c` | Plain new window |
 | `t` | Jump back to the previous session |
 | `r` | Reload the config |
 | `M-s` / `M-r` | Save now / restore the last save |
