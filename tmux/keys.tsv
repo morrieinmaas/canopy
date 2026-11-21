@@ -39,7 +39,7 @@ pane-wider-left	H	-r	resize-pane -L 5	pane	Grow the pane leftwards, repeatable
 pane-taller-down	J	-r	resize-pane -D 3	pane	Grow the pane downwards, repeatable
 pane-taller-up	K	-r	resize-pane -U 3	pane	Grow the pane upwards, repeatable
 pane-wider-right	L	-r	resize-pane -R 5	pane	Grow the pane rightwards, repeatable
-window-new	C	-	new-window -c "#{pane_current_path}"	window	A plain new window, in the directory this pane is in
+window-new	M-c	-	new-window -c "#{pane_current_path}"	window	A plain new window, in the directory this pane is in
 window-cockpit	c	-	new-window -c "#{pane_current_path}" ; split-window -h -c "#{pane_current_path}" ; split-window -v -c "#{pane_current_path}" ; select-layout main-vertical ; select-pane -t 1	window	A new window in the cockpit layout: one full-height pane on the left, two stacked on the right
 layout-cockpit	V	-	select-layout main-vertical	window	Reshape this window into the cockpit layout
 session-last	t	-	switch-client -l	session	The session you were in before this one

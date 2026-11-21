@@ -21,7 +21,7 @@ H = { cmd = "resize-pane -L 5", desc = "Grow the pane leftwards, repeatable", gr
 J = { cmd = "resize-pane -D 3", desc = "Grow the pane downwards, repeatable", group = "pane", name = "pane-taller-down", repeat = true }
 K = { cmd = "resize-pane -U 3", desc = "Grow the pane upwards, repeatable", group = "pane", name = "pane-taller-up", repeat = true }
 L = { cmd = "resize-pane -R 5", desc = "Grow the pane rightwards, repeatable", group = "pane", name = "pane-wider-right", repeat = true }
-C = { cmd = 'new-window -c "#{pane_current_path}"', desc = "A plain new window, in the directory this pane is in", group = "window", name = "window-new" }
+M-c = { cmd = 'new-window -c "#{pane_current_path}"', desc = "A plain new window, in the directory this pane is in", group = "window", name = "window-new" }
 c = { cmd = 'new-window -c "#{pane_current_path}" ; split-window -h -c "#{pane_current_path}" ; split-window -v -c "#{pane_current_path}" ; select-layout main-vertical ; select-pane -t 1', desc = "A new window in the cockpit layout: one full-height pane on the left, two stacked on the right", group = "window", name = "window-cockpit" }
 V = { cmd = "select-layout main-vertical", desc = "Reshape this window into the cockpit layout", group = "window", name = "layout-cockpit" }
 t = { cmd = "switch-client -l", desc = "The session you were in before this one", group = "session", name = "session-last" }
