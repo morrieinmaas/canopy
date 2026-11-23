@@ -160,13 +160,20 @@ The plugin is vendored verbatim and its menu builder cannot run there, so it
 loads its prebuilt default menu. canopy lays its own over it in
 [`tmux/which-key.conf`](https://github.com/morrieinmaas/canopy/blob/main/tmux/which-key.conf):
 the plugin loader sources that file straight after which-key loads, and again on
-every reload. The differences from the prebuilt menu are:
+every reload. It binds `prefix Space` again as well, because tmux expands a key's
+alias when the key is bound: left alone, Space would still open the prebuilt menu.
+The differences from the prebuilt menu are:
 
 - **Windows, Layout, Tiled** runs `select-layout tiled`. Commands in the menu are
   written with full names, not tmux's short aliases, so tmux and grofe parse the
   same menu.
-- **Client, Reload config** reloads canopy: grofe's own `reload` on grofe, canopy's
-  `tmux.conf` on tmux, the same as `prefix r`. It used to source `~/.tmux.conf`.
+- **Client, Reload config** reloads canopy, the same as `prefix r`: canopy's
+  `tmux.conf` on tmux, grofe's own `reload` on grofe. The item runs in tmux's
+  dialect on both, where grofe has no `reload` command, so on grofe it runs
+  `reload` as a shell command, through the binary behind the `tmux` on the job's
+  `PATH`. It used to source `~/.tmux.conf`.
+- **Windows, Rename** and **Sessions, Rename** take a name with a space in it. The
+  prompt's template had lost a level of quoting and refused one.
 - **Client, Plugins** is gone. It called TPM, which canopy does not install, and
   canopy has no plugin install, update or clean command: the plugins are vendored
   and pinned (`plugins/VERSIONS`).

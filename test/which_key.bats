@@ -54,12 +54,11 @@ start_which_key() {
   srv run-shell '. "$CANOPY_STORE/lib/env.sh"; . "$CANOPY_STORE/lib/plugins.sh"; canopy_load_plugins tmux-which-key'
 }
 
-# menu_items <option>: one "name<TAB>key<TAB>command" line per item of a
-# which-key menu option, split by tmux's own word rules (double quotes group,
-# a backslash escapes). A "" is a separator.
-menu_items() {
-  srv show-option -gqv "$1" | awk '
-    function flush() { if (inword) words[n++] = w; w = ""; inword = 0 }
+# tmux_words: stdin split into one word per line by tmux's own word rules
+# (double quotes group, a backslash escapes). A "" is an empty line.
+tmux_words() {
+  awk '
+    function flush() { if (inword) print w; w = ""; inword = 0 }
     {
       for (i = 1; i <= length($0); i++) {
         c = substr($0, i, 1)
@@ -73,7 +72,14 @@ menu_items() {
         else { w = w c; inword = 1 }
       }
       flush()
-    }
+    }'
+}
+
+# menu_items <option>: one "name<TAB>key<TAB>command" line per item of a
+# which-key menu option. A "" is a separator.
+menu_items() {
+  srv show-option -gqv "$1" | tmux_words | awk '
+    { words[n++] = $0 }
     END {
       for (i = 0; i < n; i++) {
         if (words[i] == "") continue
@@ -81,6 +87,19 @@ menu_items() {
         i += 2
       }
     }'
+}
+
+# run_prompt_template <option> <item name> <input>: what choosing the item
+# does, for a command-prompt item: the last word of its command is the
+# template command-prompt runs, with %% in it replaced by the text typed,
+# as it is.
+run_prompt_template() {
+  local cmd template
+  cmd="$(menu_items "$1" | awk -F'\t' -v n="$2" '$1 == n { print $3 }')"
+  [[ "$cmd" == "command-prompt "* ]]
+  template="$(printf '%s\n' "$cmd" | tmux_words | tail -n 1)"
+  printf '%s\n' "${template//%%/$3}" >"$BATS_TEST_TMPDIR/template"
+  srv source-file "$BATS_TEST_TMPDIR/template"
 }
 
 menu_options() {
@@ -186,9 +205,33 @@ menu_options() {
   start_which_key
   srv set-environment -g CANOPY_PLUGINS off
   printf "set -g @reload_marker yes\n" >"$CANOPY_CONFIG/user.conf"
+  printf "set -g @home_marker yes\n" >"$HOME/.tmux.conf"
   [ -z "$(srv show-options -gqv @reload_marker)" ]
-  srv show-options -g command-alias | grep -F 'reload-config=' | grep -qF 'tmux/tmux.conf'
-  [ -z "$(srv show-options -g command-alias | grep -F 'reload-config=' | grep -F '.tmux.conf')" ]
-  srv reload-config
+  # What choosing the item runs.
+  cmd="$(menu_items @wk_menu_client | awk -F'\t' '$1 == "Reload config" { print $3 }')"
+  [ -n "$cmd" ]
+  run srv "$cmd"
+  printf '%s\n' "$output"
+  [ "$status" -eq 0 ]
   [ "$(srv show-options -gqv @reload_marker)" = yes ]
+  [ -z "$(srv show-options -gqv @home_marker)" ]
+}
+
+@test "which-key: prefix Space opens canopy's root menu, with Copy a submenu and Keys not" {
+  start_which_key
+  # tmux expands an alias when a key is bound, so the binding has to be made
+  # again after the root menu is.
+  binding="$(srv list-keys -T prefix | grep -E 'prefix +Space ')"
+  [[ "$binding" == *display-menu* ]]
+  [[ "$binding" == *+Copy* ]]
+  [[ "$binding" != *+Keys* ]]
+}
+
+@test "which-key: the Rename items rename to a name with a space in it" {
+  start_which_key
+  srv new-window -t main: 'sleep 600'
+  run_prompt_template @wk_menu_windows Rename "my name"
+  [ "$(srv display-message -p -t main: '#{window_name}')" = "my name" ]
+  run_prompt_template @wk_menu_sessions Rename "my other name"
+  [ "$(srv list-sessions -F '#{session_name}')" = "my other name" ]
 }

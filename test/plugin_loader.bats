@@ -527,6 +527,25 @@ EOF
   [[ "$output" != *"MODIFIED"* ]]
 }
 
+# reload_config_through_tmux <socket-name>: canopy's which-key Reload config
+# on a grofe server, run through the tmux-named client the menu item runs in.
+# It has to succeed and reload: a user option added to user.toml since the
+# server started is there afterwards.
+reload_config_through_tmux() {
+  local toml="$XDG_CONFIG_HOME/grofe/user.toml" i
+  [ -z "$("$bin/tmux" -L "$1" show-options -gqv @reload_marker)" ]
+  awk '{ print } /^\[user-options\]$/ { print "reload_marker = \"yes\"" }' "$toml" >"$toml.new"
+  mv "$toml.new" "$toml"
+  run "$bin/tmux" -L "$1" reload-config
+  printf '%s\n' "$output"
+  [ "$status" -eq 0 ]
+  for i in $(seq 1 40); do
+    [ "$("$bin/tmux" -L "$1" show-options -gqv @reload_marker)" = yes ] && return 0
+    sleep 0.25
+  done
+  return 1
+}
+
 # --- a real server -----------------------------------------------------------
 
 @test "grofe as tmux: the ported config loads the eight, with no load error and no load miss" {
@@ -547,15 +566,17 @@ EOF
   ! srv show-options -g command-alias | grep 'show-wk-menu' | grep -qF ']tmux#[
   # canopy's own menu, tmux/which-key.conf, is the one the Space alias holds,
   # and its aliases expand when they run.
-  srv show-options -g command-alias | grep 'show-wk-menu-root=' | grep -qF '+Copy'
+  srv list-keys -T prefix | grep -E 'prefix +Space ' | grep -qF '+Copy'
+  ! srv list-keys -T prefix | grep -E 'prefix +Space ' | grep -qF '+Keys'
   srv show-options -g command-alias | grep 'restart-pane=' | grep -qF '#{pane_current_path}'
-  srv show-options -g command-alias | grep 'reload-config=' | grep -qF 'reload'
   run plugin_log
   assert_dormant_count "$output" 2
   # No plugin wrote into its vendored tree.
   for name in $PLUGINS; do
     [ "$(canopy_plugin_recorded_digest "$name")" = "$(canopy_plugin_digest "$store/plugins/$name")" ]
   done
+  # The menu's Reload config, last: a reload loads the plugins again.
+  reload_config_through_tmux grofe-tp3
 }
 
 @test "grofe under its own name, on its native config, loads the same set" {
@@ -564,14 +585,13 @@ EOF
   start grofe
   wait_loaded tmux-fzf-url/fzf-url.sh
   assert_grofe_load
-  # canopy's which-key menu, and its Reload config item: on grofe, run under
-  # its own name, that is grofe's own reload. Under the tmux name grofe has no
-  # such command.
-  srv show-options -g command-alias | grep 'show-wk-menu-root=' | grep -qF '+Copy'
-  run srv reload-config
-  [ "$status" -eq 0 ]
+  # canopy's which-key menu: Space opens its root menu. Its Reload config item
+  # runs in the tmux dialect, where grofe has no reload command, so it
+  # reaches grofe's own reload as a shell command.
+  "$bin/tmux" -L grofe-tp3n list-keys -T prefix | grep -E 'prefix +Space ' | grep -qF '+Copy'
   run plugin_log
   assert_dormant_count "$output" 2
+  reload_config_through_tmux grofe-tp3n
 }
 
 @test "grofe: with tmux-fzf-url moved aside only it is dormant, and doctor calls it missing" {
@@ -599,7 +619,7 @@ EOF
   start tmux
   wait_loaded
   assert_loaded_except
-  srv show-options -g command-alias | grep 'show-wk-menu-root=' | grep -qF '+Copy'
+  srv list-keys -T prefix | grep -E 'prefix +Space ' | grep -qF '+Copy'
   run plugin_log
   [ -z "$output" ]
   for name in $PLUGINS; do
