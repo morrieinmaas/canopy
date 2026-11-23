@@ -569,6 +569,21 @@ reload_config_through_tmux() {
   srv list-keys -T prefix | grep -E 'prefix +Space ' | grep -qF '+Copy'
   ! srv list-keys -T prefix | grep -E 'prefix +Space ' | grep -qF '+Keys'
   srv show-options -g @wk_menu_panes | grep -qF 'respawn-pane -k -c'
+  # tmux-sensible binds prefix R to a tmux.conf source; on grofe that would
+  # leave prefix r reloading tmux.conf. R is grofe's reload instead, and
+  # running it leaves prefix r on grofe's reload too.
+  r_before="$(srv list-keys -T prefix | grep -E '^bind-key +-T prefix +r ')"
+  [[ "$r_before" == *reload* ]]
+  [[ "$r_before" != *source-file* ]]
+  big_r="$(srv list-keys -T prefix | grep -E '^bind-key +-T prefix +R ')"
+  [[ "$big_r" == *reload* ]]
+  [[ "$big_r" != *source-file* ]]
+  # What R now runs, by grofe's own name: `reload` is no tmux command.
+  "$grofe_bin" -L grofe-tp3 reload
+  sleep 1
+  r_after="$(srv list-keys -T prefix | grep -E '^bind-key +-T prefix +r ')"
+  [[ "$r_after" == *reload* ]]
+  [[ "$r_after" != *source-file* ]]
   run plugin_log
   assert_dormant_count "$output" 2
   # No plugin wrote into its vendored tree.
