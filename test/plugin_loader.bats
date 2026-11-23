@@ -667,6 +667,7 @@ reload_config_through_tmux() {
     sleep 0.25
   done
   [[ "$big_r" == *reload* ]]
+  [[ "$big_r" == *'display-message "canopy: reloaded"'* ]]
   [[ "$big_r" != *source-file* ]]
   # Pressing it reloads, and r stays grofe's reload.
   mark_loader

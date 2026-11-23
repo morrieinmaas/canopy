@@ -56,7 +56,7 @@ load-commands = [
   # A runtime binding beats the config's and survives `reload`, so the row
   # never takes over, and sensible skips. Rebind it to grofe's reload, as the
   # row does, only while it still sources a tmux config.
-  """if-shell 'tmux list-keys -T prefix | grep -E "prefix +R " | grep -q source-file' 'bind-key R reload ; display-message "canopy: reloaded"'""",
+  """if-shell 'tmux list-keys -T prefix | grep -E "prefix +R " | grep -q source-file' 'bind-key R { reload ; display-message "canopy: reloaded" }'""",
   # No save wrapper and no M-s rebind here, which is where the tmux layer
   # has both: neither resurrect nor continuum loads on grofe, so there is no
   # save loop to serialise, and the key table's own M-s says grofe saves by
