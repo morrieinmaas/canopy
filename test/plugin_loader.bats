@@ -545,6 +545,11 @@ EOF
   srv list-keys -T prefix | grep -E 'prefix +Space ' | grep -qF ']grofe#['
   srv show-options -g command-alias | grep 'show-wk-menu=' | grep -qF ']grofe#['
   ! srv show-options -g command-alias | grep 'show-wk-menu' | grep -qF ']tmux#[
+  # canopy's own menu, tmux/which-key.conf, is the one the Space alias holds,
+  # and its aliases expand when they run.
+  srv show-options -g command-alias | grep 'show-wk-menu-root=' | grep -qF '+Copy'
+  srv show-options -g command-alias | grep 'restart-pane=' | grep -qF '#{pane_current_path}'
+  srv show-options -g command-alias | grep 'reload-config=' | grep -qF 'reload'
   run plugin_log
   assert_dormant_count "$output" 2
   # No plugin wrote into its vendored tree.
@@ -559,6 +564,12 @@ EOF
   start grofe
   wait_loaded tmux-fzf-url/fzf-url.sh
   assert_grofe_load
+  # canopy's which-key menu, and its Reload config item: on grofe, run under
+  # its own name, that is grofe's own reload. Under the tmux name grofe has no
+  # such command.
+  srv show-options -g command-alias | grep 'show-wk-menu-root=' | grep -qF '+Copy'
+  run srv reload-config
+  [ "$status" -eq 0 ]
   run plugin_log
   assert_dormant_count "$output" 2
 }
@@ -588,6 +599,7 @@ EOF
   start tmux
   wait_loaded
   assert_loaded_except
+  srv show-options -g command-alias | grep 'show-wk-menu-root=' | grep -qF '+Copy'
   run plugin_log
   [ -z "$output" ]
   for name in $PLUGINS; do

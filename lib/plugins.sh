@@ -397,6 +397,22 @@ canopy_load_plugin() {
   return 0
 }
 
+# canopy_which_key_menu
+#
+# Puts canopy's menu over the one tmux-which-key has just loaded:
+# tmux/which-key.conf, on this server. Nothing happens when which-key did
+# not load, which it shows by having set @wk_menu_root, so a dormant
+# which-key leaves no menu options and no command aliases behind.
+canopy_which_key_menu() {
+  local conf
+  conf="$CANOPY_STORE/tmux/which-key.conf"
+  [ -f "$conf" ] || return 0
+  [ -n "$(tmux -S "$canopy_load_socket" show-option -gqv @wk_menu_root 2>/dev/null)" ] || return 0
+  if ! "$canopy_load_tmux" -S "$canopy_load_socket" source-file "$conf" >/dev/null 2>&1; then
+    canopy_plugin_note tmux-which-key "canopy's menu, tmux/which-key.conf, failed to load"
+  fi
+}
+
 # canopy_load_plugins <name>...
 #
 # One load pass, in the order given. The log is started afresh, so it
@@ -457,6 +473,9 @@ canopy_load_plugins() {
       *) ;;
     esac
     canopy_load_plugin "$name"
+    if [ "$name" = tmux-which-key ]; then
+      canopy_which_key_menu
+    fi
   done
   return 0
 }

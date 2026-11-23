@@ -153,6 +153,36 @@ Your own bindings go in `user.conf`, not in the table, and because `user.conf` i
 sourced last they win over anything in it. Rebinding one of canopy's keys is a
 `bind` line in `user.conf`; there is no need to edit the table.
 
+## The which-key menu
+
+`prefix Space` opens the grouped menu from tmux-which-key, on tmux and on grofe.
+The plugin is vendored verbatim and its menu builder cannot run there, so it
+loads its prebuilt default menu. canopy lays its own over it in
+[`tmux/which-key.conf`](https://github.com/morrieinmaas/canopy/blob/main/tmux/which-key.conf):
+the plugin loader sources that file straight after which-key loads, and again on
+every reload. The differences from the prebuilt menu are:
+
+- **Windows, Layout, Tiled** runs `select-layout tiled`. Commands in the menu are
+  written with full names, not tmux's short aliases, so tmux and grofe parse the
+  same menu.
+- **Client, Reload config** reloads canopy: grofe's own `reload` on grofe, canopy's
+  `tmux.conf` on tmux, the same as `prefix r`. It used to source `~/.tmux.conf`.
+- **Client, Plugins** is gone. It called TPM, which canopy does not install, and
+  canopy has no plugin install, update or clean command: the plugins are vendored
+  and pinned (`plugins/VERSIONS`).
+- **Panes, Respawn pane** asks before it kills the running process, and respawns in
+  the directory of the pane it runs in, not of the pane that was current when the
+  config loaded.
+- A `+` in front of an item marks a submenu: **Copy** has one now, **Keys** does not.
+
+To change the menu, edit that file. A line in `user.conf` that sets a `@wk_menu_*`
+option is overwritten by it, because the menu is sourced after `user.conf`.
+
+which-key writes `config.yaml` and `plugin/init.tmux` into its own tree on its first
+load, with autobuild off. Both are gitignored and listed in `plugins/LOCAL`, so the
+checkout stays clean and `canopy doctor` compares each with the file it was copied
+from.
+
 ## The status line
 
 `20-status.conf` draws the status line, and every colour in it is read from an
