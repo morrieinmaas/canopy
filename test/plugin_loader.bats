@@ -568,7 +568,7 @@ reload_config_through_tmux() {
   # and its aliases expand when they run.
   srv list-keys -T prefix | grep -E 'prefix +Space ' | grep -qF '+Copy'
   ! srv list-keys -T prefix | grep -E 'prefix +Space ' | grep -qF '+Keys'
-  srv show-options -g command-alias | grep 'restart-pane=' | grep -qF '#{pane_current_path}'
+  srv show-options -g @wk_menu_panes | grep -qF 'respawn-pane -k -c'
   run plugin_log
   assert_dormant_count "$output" 2
   # No plugin wrote into its vendored tree.

@@ -143,7 +143,7 @@ menu_options() {
       done
       case "$cmd" in
         confirm-before*)
-          word="${cmd##* }"
+          word="$(printf '%s\n' "$cmd" | tmux_words | tail -n 1 | awk '{ print $1 }')"
           printf '%s\n' "$names" | grep -qxF -- "$word" || {
             printf '%s: "%s" in "%s" is no full command name\n' "$opt" "$word" "$cmd"
             false
@@ -182,23 +182,68 @@ menu_options() {
   [ -z "$(menu_items @wk_menu_client | grep '^+Plugins')" ]
 }
 
-@test "which-key: Respawn pane asks first, and takes the pane directory when it runs" {
-  start_which_key
-  menu_items @wk_menu_panes | grep -q "^Respawn pane	R	confirm-before .*restart-pane$"
-  # The alias keeps the format for the pane it runs in. -gF would have
-  # replaced it with the directory of whatever pane was current at load.
-  srv show-options -g command-alias | grep -F 'restart-pane=' | grep -qF '#{pane_current_path}'
-  # The window the alias runs in is the session's current one.
-  srv new-window -t main: -c "$there" 'sleep 600'
-  [ "$(srv display-message -p -t main:1 '#{pane_current_path}')" = "$there" ]
-  old="$(srv display-message -p -t main:1 '#{pane_pid}')"
-  srv restart-pane
+# attach_client <binary> <socket>: a client on a pty, kept for 30 s, whose name
+# lands in $client. A command-prompt or confirm-before needs one.
+attach_client() {
+  (sleep 30 | script -q /dev/null "$1" -L "$2" attach -t main) >/dev/null 2>&1 3>&- &
+  client=""
   for _ in $(seq 1 40); do
-    [ "$(srv display-message -p -t main:1 '#{pane_pid}')" != "$old" ] && break
+    client="$("$1" -L "$2" list-clients -F '#{client_name}' 2>/dev/null | head -n 1)"
+    [ -n "$client" ] && return 0
     sleep 0.1
   done
-  [ "$(srv display-message -p -t main:1 '#{pane_pid}')" != "$old" ]
-  [ "$(srv display-message -p -t main:1 '#{pane_current_path}')" = "$there" ]
+  return 1
+}
+
+# menu_command <option> <item>: the command choosing the item runs.
+menu_command() {
+  menu_items "$1" | awk -F'\t' -v n="$2" '$1 == n { print $3 }'
+}
+
+# respawn_changes_pid <binary> <socket> <command>: run the Respawn item's
+# confirm-before, answered with y, in a window whose pane directory is $there,
+# and check the pane's process changed and it respawned in that directory.
+respawn_changes_pid() {
+  local bin="$1" sk="$2" cmd="$3"
+  "$bin" -L "$sk" new-window -t main: -c "$there" 'sleep 600'
+  "$bin" -L "$sk" select-window -t main:1
+  attach_client "$bin" "$sk"
+  [ "$("$bin" -L "$sk" display-message -p -t main:1 '#{pane_current_path}')" = "$there" ]
+  old="$("$bin" -L "$sk" display-message -p -t main:1 '#{pane_pid}')"
+  # The confirm waits on the client until it is answered, so it runs apart.
+  printf '%s\n' "${cmd/confirm-before/confirm-before -t $client}" >"$BATS_TEST_TMPDIR/confirm"
+  ("$bin" -L "$sk" source-file "$BATS_TEST_TMPDIR/confirm" >/dev/null 2>&1 3>&- &)
+  sleep 1
+  "$bin" -L "$sk" send-keys -K -c "$client" y
+  for _ in $(seq 1 40); do
+    [ "$("$bin" -L "$sk" display-message -p -t main:1 '#{pane_pid}')" != "$old" ] && break
+    sleep 0.1
+  done
+  [ "$("$bin" -L "$sk" display-message -p -t main:1 '#{pane_pid}')" != "$old" ]
+  [ "$("$bin" -L "$sk" display-message -p -t main:1 '#{pane_current_path}')" = "$there" ]
+}
+
+@test "which-key: Respawn pane asks first, and takes the pane directory when it runs" {
+  start_which_key
+  cmd="$(menu_command @wk_menu_panes "Respawn pane")"
+  [[ "$cmd" == "confirm-before "* ]]
+  # The real commands are in the confirm, not behind an alias.
+  [[ "$cmd" == *"respawn-pane -k -c"* ]]
+  [[ "$cmd" != *restart-pane* ]]
+  respawn_changes_pid "$tmux37" "$sock" "$cmd"
+}
+
+@test "which-key: Respawn pane works on grofe too" {
+  start_which_key
+  grofe_bin="$(command -v "${CANOPY_GROFE:-}" || true)"
+  [ -n "$grofe_bin" ] || skip "no grofe binary (set CANOPY_GROFE)"
+  cmd="$(menu_command @wk_menu_panes "Respawn pane")"
+  gsock="canopy-wkg-$$"
+  "$grofe_bin" -L "$gsock" new-session -d -s main -c "$BATS_TEST_TMPDIR/here" 'sleep 600'
+  run respawn_changes_pid "$grofe_bin" "$gsock" "$cmd"
+  "$grofe_bin" -L "$gsock" kill-server 2>/dev/null || true
+  printf '%s\n' "$output"
+  [ "$status" -eq 0 ]
 }
 
 @test "which-key: Reload config on tmux reloads canopy's tmux.conf, not ~/.tmux.conf" {
@@ -227,11 +272,60 @@ menu_options() {
   [[ "$binding" != *+Keys* ]]
 }
 
-@test "which-key: the Rename items rename to a name with a space in it" {
+# prompt_rename <binary> <socket> <option> <item> <typed>: choose the Rename
+# item's command-prompt on a client and type <typed> into it, as a user does.
+prompt_rename() {
+  local bin="$1" sk="$2" cmd
+  cmd="$(menu_command "$3" "$4")"
+  [[ "$cmd" == "command-prompt "* ]]
+  attach_client "$bin" "$sk"
+  printf '%s\n' "${cmd/command-prompt/command-prompt -t $client}" >"$BATS_TEST_TMPDIR/prompt"
+  ("$bin" -L "$sk" source-file "$BATS_TEST_TMPDIR/prompt" >/dev/null 2>&1 3>&- &)
+  sleep 1
+  "$bin" -L "$sk" send-keys -K -c "$client" C-u "$5" Enter
+  sleep 0.5
+}
+
+typed='q "x" $HOME ; y \z'
+
+# stored_as_typed <binary> <socket> <kind>: the name a rename of the current
+# window or session to $typed with the plain command stores. tmux and grofe
+# both sanitise a name, so that, not $typed itself, is what a prompt must match.
+stored_as_typed() {
+  printf "rename-%s -- 'q \"x\" \$HOME ; y \\z'\n" "$3" >"$BATS_TEST_TMPDIR/plain"
+  "$1" -L "$2" source-file "$BATS_TEST_TMPDIR/plain"
+}
+
+@test "which-key: the Rename items store a name with quotes, a backslash and a dollar as typed" {
   start_which_key
   srv new-window -t main: 'sleep 600'
-  run_prompt_template @wk_menu_windows Rename "my name"
-  [ "$(srv display-message -p -t main: '#{window_name}')" = "my name" ]
-  run_prompt_template @wk_menu_sessions Rename "my other name"
-  [ "$(srv list-sessions -F '#{session_name}')" = "my other name" ]
+  srv select-window -t main:1
+  stored_as_typed "$tmux37" "$sock" window
+  want="$(srv list-windows -t main -F '#{window_name}' | /usr/bin/sed -n 2p)"
+  [ "$want" != "zsh" ] && [ "$want" != sleep ]
+  srv rename-window -t main:1 plain
+  prompt_rename "$tmux37" "$sock" @wk_menu_windows Rename "$typed"
+  [ "$(srv list-windows -t main -F '#{window_name}' | /usr/bin/sed -n 2p)" = "$want" ]
+  stored_as_typed "$tmux37" "$sock" session
+  want="$(srv list-sessions -F '#{session_name}')"
+  srv rename-session plain
+  prompt_rename "$tmux37" "$sock" @wk_menu_sessions Rename "$typed"
+  [ "$(srv list-sessions -F '#{session_name}')" = "$want" ]
+}
+
+@test "which-key: the Rename items store such a name on grofe too" {
+  start_which_key
+  grofe_bin="$(command -v "${CANOPY_GROFE:-}" || true)"
+  [ -n "$grofe_bin" ] || skip "no grofe binary (set CANOPY_GROFE)"
+  gsock="canopy-wkg-$$"
+  "$grofe_bin" -L "$gsock" new-session -d -s main 'sleep 600'
+  "$grofe_bin" -L "$gsock" new-window -t main: 'sleep 600'
+  "$grofe_bin" -L "$gsock" select-window -t main:1
+  stored_as_typed "$grofe_bin" "$gsock" window
+  want="$("$grofe_bin" -L "$gsock" list-windows -t main -F '#{window_name}' | /usr/bin/sed -n 2p)"
+  "$grofe_bin" -L "$gsock" rename-window -t main:1 plain
+  run prompt_rename "$grofe_bin" "$gsock" @wk_menu_windows Rename "$typed"
+  name="$("$grofe_bin" -L "$gsock" list-windows -t main -F '#{window_name}' | /usr/bin/sed -n 2p)"
+  "$grofe_bin" -L "$gsock" kill-server 2>/dev/null || true
+  [ "$name" = "$want" ] || skip "this grofe lacks %%% (got: $name, want: $want)"
 }

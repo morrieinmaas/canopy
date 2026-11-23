@@ -172,7 +172,8 @@ The differences from the prebuilt menu are:
   dialect on both, where grofe has no `reload` command, so on grofe it runs
   `reload` as a shell command, through the binary behind the `tmux` on the job's
   `PATH`. It used to source `~/.tmux.conf`.
-- **Windows, Rename** and **Sessions, Rename** take a name with a space in it. The
+- **Windows, Rename** and **Sessions, Rename** take a name with a space, quotes, a
+  backslash or a `$` in it, stored as typed (the prompt uses tmux's escaped `%%%`). The
   prompt's template had lost a level of quoting and refused one.
 - **Client, Plugins** is gone. It called TPM, which canopy does not install, and
   canopy has no plugin install, update or clean command: the plugins are vendored
