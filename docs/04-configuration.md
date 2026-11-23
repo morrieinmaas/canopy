@@ -149,9 +149,59 @@ the truth.
 and what happens to a malformed row is in
 [02-commands.md](02-commands.md#canopy-keys).
 
+`prefix R` is a row too, `canopy-reload-alt`, and does what `prefix r` does: reload
+canopy, with canopy's `tmux.conf` on tmux and grofe's own `reload` on grofe.
+tmux-sensible binds `R` to a `source-file` of a tmux config, when nothing has bound it
+yet. canopy-install writes canopy's entry point stub at `~/.tmux.conf` or
+`$XDG_CONFIG_HOME/tmux/tmux.conf`, and sensible prefers the XDG path, so it can source a
+different file from the one tmux loaded. On grofe it sources the tmux-dialect stub, which
+would rebind `r` to a tmux-dialect reload that grofe's own `reload` then keeps. The key layer
+loads before the plugins, so `R` is already bound when tmux-sensible looks and it leaves it
+alone. A server started before this row existed still has sensible's runtime `R`, which
+survives `reload`, so on grofe the plugin layer rebinds it to `reload` while it still sources
+a tmux config. Rebinding it is no different from rebinding any other key in the table.
+
 Your own bindings go in `user.conf`, not in the table, and because `user.conf` is
 sourced last they win over anything in it. Rebinding one of canopy's keys is a
 `bind` line in `user.conf`; there is no need to edit the table.
+
+## The which-key menu
+
+`prefix Space` opens the grouped menu from tmux-which-key, on tmux and on grofe.
+The plugin is vendored verbatim and its menu builder cannot run there, so it
+loads its prebuilt default menu. canopy lays its own over it in
+[`tmux/which-key.conf`](https://github.com/morrieinmaas/canopy/blob/main/tmux/which-key.conf):
+the plugin loader sources that file straight after which-key loads, and again on
+every reload. It binds `prefix Space` again as well, because tmux expands a key's
+alias when the key is bound: left alone, Space would still open the prebuilt menu.
+The differences from the prebuilt menu are:
+
+- **Windows, Layout, Tiled** runs `select-layout tiled`. Commands in the menu are
+  written with full names, not tmux's short aliases, so tmux and grofe parse the
+  same menu.
+- **Client, Reload config** reloads canopy, the same as `prefix r`: canopy's
+  `tmux.conf` on tmux, grofe's own `reload` on grofe. The item runs in tmux's
+  dialect on both, where grofe has no `reload` command, so on grofe it runs
+  `reload` as a shell command, through the binary behind the `tmux` on the job's
+  `PATH`. It used to source `~/.tmux.conf`.
+- **Windows, Rename** and **Sessions, Rename** take a name with a space, quotes, a
+  backslash or a `$` in it, stored as typed (the prompt uses tmux's escaped `%%%`). The
+  prompt's template had lost a level of quoting and refused one.
+- **Client, Plugins** is gone. It called TPM, which canopy does not install, and
+  canopy has no plugin install, update or clean command: the plugins are vendored
+  and pinned (`plugins/VERSIONS`).
+- **Panes, Respawn pane** asks before it kills the running process, and respawns in
+  the directory of the pane it runs in, not of the pane that was current when the
+  config loaded.
+- A `+` in front of an item marks a submenu: **Copy** has one now, **Keys** does not.
+
+To change the menu, edit that file. A line in `user.conf` that sets a `@wk_menu_*`
+option is overwritten by it, because the menu is sourced after `user.conf`.
+
+which-key writes `config.yaml` and `plugin/init.tmux` into its own tree on its first
+load, with autobuild off. Both are gitignored and listed in `plugins/LOCAL`, so the
+checkout stays clean and `canopy doctor` compares each with the file it was copied
+from.
 
 ## The status line
 

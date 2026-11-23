@@ -527,6 +527,60 @@ EOF
   [[ "$output" != *"MODIFIED"* ]]
 }
 
+# mark_loader, then a reload, then wait_loader_ran: the loader has run again
+# once the marker is gone. The marker is an alias upstream's which-key sets
+# and canopy's which-key.conf unsets, and which-key loads after tmux-sensible,
+# so by then sensible has had its say too.
+mark_loader() {
+  srv set-option -g 'command-alias[203]' 'restart-pane=display-message marker'
+  srv show-options -g command-alias | grep -qF 'restart-pane='
+}
+
+wait_loader_ran() {
+  local i
+  for i in $(seq 1 120); do
+    srv show-options -g command-alias | grep -qF 'restart-pane=' || return 0
+    sleep 0.25
+  done
+  printf 'the loader did not run again\n' >&2
+  return 1
+}
+
+# press_prefix_key <key>: the key after the prefix, typed on a client on a
+# pty, as a user does. The client is kept for 30 s.
+press_prefix_key() {
+  local client="" i
+  if ! srv list-clients -F '#{client_name}' | grep -q .; then
+    (sleep 30 | script -q /dev/null "$bin/tmux" -L grofe-tp3 attach -t main) >/dev/null 2>&1 3>&- &
+    for i in $(seq 1 40); do
+      srv list-clients -F '#{client_name}' | grep -q . && break
+      sleep 0.1
+    done
+  fi
+  client="$(srv list-clients -F '#{client_name}' | head -n 1)"
+  [ -n "$client" ] || return 1
+  srv send-keys -K -c "$client" C-s "$1"
+}
+
+# reload_config_through_tmux <socket-name>: canopy's which-key Reload config
+# on a grofe server, run through the tmux-named client the menu item runs in.
+# It has to succeed and reload: a user option added to user.toml since the
+# server started is there afterwards.
+reload_config_through_tmux() {
+  local toml="$XDG_CONFIG_HOME/grofe/user.toml" i
+  [ -z "$("$bin/tmux" -L "$1" show-options -gqv @reload_marker)" ]
+  awk '{ print } /^\[user-options\]$/ { print "reload_marker = \"yes\"" }' "$toml" >"$toml.new"
+  mv "$toml.new" "$toml"
+  run "$bin/tmux" -L "$1" reload-config
+  printf '%s\n' "$output"
+  [ "$status" -eq 0 ]
+  for i in $(seq 1 40); do
+    [ "$("$bin/tmux" -L "$1" show-options -gqv @reload_marker)" = yes ] && return 0
+    sleep 0.25
+  done
+  return 1
+}
+
 # --- a real server -----------------------------------------------------------
 
 @test "grofe as tmux: the ported config loads the eight, with no load error and no load miss" {
@@ -545,11 +599,84 @@ EOF
   srv list-keys -T prefix | grep -E 'prefix +Space ' | grep -qF ']grofe#['
   srv show-options -g command-alias | grep 'show-wk-menu=' | grep -qF ']grofe#['
   ! srv show-options -g command-alias | grep 'show-wk-menu' | grep -qF ']tmux#[
+  # canopy's own menu, tmux/which-key.conf, is the one the Space alias holds,
+  # and its aliases expand when they run.
+  srv list-keys -T prefix | grep -E 'prefix +Space ' | grep -qF '+Copy'
+  ! srv list-keys -T prefix | grep -E 'prefix +Space ' | grep -qF '+Keys'
+  srv show-options -g @wk_menu_panes | grep -qF 'respawn-pane -k -c'
+  # tmux-sensible binds prefix R to a tmux.conf source; on grofe that would
+  # leave prefix r reloading tmux.conf. R is grofe's reload instead, and
+  # running it leaves prefix r on grofe's reload too.
+  r_before="$(srv list-keys -T prefix | grep -E '^bind-key +-T prefix +r ')"
+  [[ "$r_before" == *reload* ]]
+  [[ "$r_before" != *source-file* ]]
+  big_r="$(srv list-keys -T prefix | grep -E '^bind-key +-T prefix +R ')"
+  [[ "$big_r" == *reload* ]]
+  [[ "$big_r" != *source-file* ]]
+  # What R now runs, by grofe's own name: `reload` is no tmux command. The
+  # loader runs again on it, tmux-sensible included, and must leave R alone.
+  mark_loader
+  "$grofe_bin" -L grofe-tp3 reload
+  wait_loader_ran
+  r_after="$(srv list-keys -T prefix | grep -E '^bind-key +-T prefix +r ')"
+  [[ "$r_after" == *reload* ]]
+  [[ "$r_after" != *source-file* ]]
+  big_r="$(srv list-keys -T prefix | grep -E '^bind-key +-T prefix +R ')"
+  [[ "$big_r" == *reload* ]]
+  [[ "$big_r" != *source-file* ]]
+  # Pressing it reloads the config, and leaves r and R as they were.
+  toml="$XDG_CONFIG_HOME/grofe/user.toml"
+  [ -z "$(srv show-options -gqv @reload_marker_r)" ]
+  awk '{ print } /^\[user-options\]$/ { print "reload_marker_r = \"yes\"" }' "$toml" >"$toml.new"
+  mv "$toml.new" "$toml"
+  mark_loader
+  press_prefix_key R
+  wait_loader_ran
+  [ "$(srv show-options -gqv @reload_marker_r)" = yes ]
+  for key in r R; do
+    after_press="$(srv list-keys -T prefix | grep -E "^bind-key +-T prefix +$key ")"
+    [[ "$after_press" == *reload* ]]
+    [[ "$after_press" != *source-file* ]]
+  done
   run plugin_log
   assert_dormant_count "$output" 2
   # No plugin wrote into its vendored tree.
   for name in $PLUGINS; do
     [ "$(canopy_plugin_recorded_digest "$name")" = "$(canopy_plugin_digest "$store/plugins/$name")" ]
+  done
+  # The menu's Reload config, last: a reload loads the plugins again.
+  reload_config_through_tmux grofe-tp3
+}
+
+@test "grofe: a runtime R from tmux-sensible, as an older server had, is rebound to grofe's reload" {
+  need_grofe
+  copy_store
+  start grofe-tmux
+  wait_loaded tmux-fzf-url/fzf-url.sh
+  # What a server started on canopy main holds: sensible's runtime R, which
+  # beats the config's row and survives reload.
+  srv bind-key R run-shell "tmux source-file $CANOPY_STORE/tmux/tmux.conf"
+  [[ "$(srv list-keys -T prefix | grep -E '^bind-key +-T prefix +R ')" == *source-file* ]]
+  mark_loader
+  "$grofe_bin" -L grofe-tp3 reload
+  wait_loader_ran
+  local i big_r
+  for i in $(seq 1 40); do
+    big_r="$(srv list-keys -T prefix | grep -E '^bind-key +-T prefix +R ')"
+    [[ "$big_r" != *source-file* ]] && break
+    sleep 0.25
+  done
+  [[ "$big_r" == *reload* ]]
+  [[ "$big_r" == *'display-message "canopy: reloaded"'* ]]
+  [[ "$big_r" != *source-file* ]]
+  # Pressing it reloads, and r stays grofe's reload.
+  mark_loader
+  press_prefix_key R
+  wait_loader_ran
+  for key in r R; do
+    after_press="$(srv list-keys -T prefix | grep -E "^bind-key +-T prefix +$key ")"
+    [[ "$after_press" == *reload* ]]
+    [[ "$after_press" != *source-file* ]]
   done
 }
 
@@ -559,8 +686,13 @@ EOF
   start grofe
   wait_loaded tmux-fzf-url/fzf-url.sh
   assert_grofe_load
+  # canopy's which-key menu: Space opens its root menu. Its Reload config item
+  # runs in the tmux dialect, where grofe has no reload command, so it
+  # reaches grofe's own reload as a shell command.
+  "$bin/tmux" -L grofe-tp3n list-keys -T prefix | grep -E 'prefix +Space ' | grep -qF '+Copy'
   run plugin_log
   assert_dormant_count "$output" 2
+  reload_config_through_tmux grofe-tp3n
 }
 
 @test "grofe: with tmux-fzf-url moved aside only it is dormant, and doctor calls it missing" {
@@ -588,6 +720,7 @@ EOF
   start tmux
   wait_loaded
   assert_loaded_except
+  srv list-keys -T prefix | grep -E 'prefix +Space ' | grep -qF '+Copy'
   run plugin_log
   [ -z "$output" ]
   for name in $PLUGINS; do
