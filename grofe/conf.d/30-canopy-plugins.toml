@@ -54,6 +54,12 @@ load-commands = [
   # in its prebuilt form, is retitled grofe, in the same shell so it runs
   # once which-key has bound it.
   '''run-shell 'f="$CANOPY_STORE/lib/plugins.sh"; [ -r "$f" ] || exit 0; . "$CANOPY_STORE/lib/env.sh"; . "$f"; canopy_load_plugins tmux-resurrect tmux-continuum tmux-sensible tmux-yank tmux-fzf tmux-sessionx tmux-which-key tmux-fzf-url; sh "$CANOPY_STORE/grofe/which-key-title.sh"'''',
+  # An upgrade gap: a server started before the config R row existed has a
+  # runtime R from tmux-sensible, `run-shell "tmux source-file <tmux.conf>"`.
+  # A runtime binding beats the config's and survives `reload`, so the row
+  # never takes over, and sensible skips. Rebind it to grofe's reload, as the
+  # row does, only while it still sources a tmux config.
+  """if-shell 'tmux list-keys -T prefix | grep -E "prefix +R " | grep -q source-file' 'bind-key R reload ; display-message "canopy: reloaded"'""",
   # No save wrapper and no M-s rebind here, which is where the tmux layer
   # has both: neither resurrect nor continuum loads on grofe, so there is no
   # save loop to serialise, and the key table's own M-s says grofe saves by

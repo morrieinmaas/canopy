@@ -150,13 +150,16 @@ and what happens to a malformed row is in
 [02-commands.md](02-commands.md#canopy-keys).
 
 `prefix R` is a row too, `canopy-reload-alt`, and does what `prefix r` does: reload
-canopy, with canopy's `tmux.conf` on tmux and grofe's own `reload` on grofe. tmux-sensible
-binds `R` to a `source-file` of `~/.tmux.conf`, when nothing has bound it yet, and
-canopy reads no such file. On grofe that binding would be worse than useless:
-sourcing canopy's `tmux.conf` there rebinds `r` to a tmux-dialect reload that grofe's
-own `reload` then keeps. Because the key layer loads before the plugins, `R` is
-already bound when tmux-sensible looks, so it leaves it alone, on every reload too.
-Rebinding it is no different from rebinding any other key in the table.
+canopy, with canopy's `tmux.conf` on tmux and grofe's own `reload` on grofe.
+tmux-sensible binds `R` to a `source-file` of a tmux config, when nothing has bound it
+yet. canopy-install writes canopy's entry point stub at `~/.tmux.conf` or
+`$XDG_CONFIG_HOME/tmux/tmux.conf`, and sensible prefers the XDG path, so it can source a
+different file from the one tmux loaded. On grofe it sources the tmux-dialect stub, which
+would rebind `r` to a tmux-dialect reload that grofe's own `reload` then keeps. The key layer
+loads before the plugins, so `R` is already bound when tmux-sensible looks and it leaves it
+alone. A server started before this row existed still has sensible's runtime `R`, which
+survives `reload`, so on grofe the plugin layer rebinds it to `reload` while it still sources
+a tmux config. Rebinding it is no different from rebinding any other key in the table.
 
 Your own bindings go in `user.conf`, not in the table, and because `user.conf` is
 sourced last they win over anything in it. Rebinding one of canopy's keys is a

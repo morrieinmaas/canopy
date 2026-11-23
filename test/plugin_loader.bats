@@ -648,6 +648,37 @@ reload_config_through_tmux() {
   reload_config_through_tmux grofe-tp3
 }
 
+@test "grofe: a runtime R from tmux-sensible, as an older server had, is rebound to grofe's reload" {
+  need_grofe
+  copy_store
+  start grofe-tmux
+  wait_loaded tmux-fzf-url/fzf-url.sh
+  # What a server started on canopy main holds: sensible's runtime R, which
+  # beats the config's row and survives reload.
+  srv bind-key R run-shell "tmux source-file $CANOPY_STORE/tmux/tmux.conf"
+  [[ "$(srv list-keys -T prefix | grep -E '^bind-key +-T prefix +R ')" == *source-file* ]]
+  mark_loader
+  "$grofe_bin" -L grofe-tp3 reload
+  wait_loader_ran
+  local i big_r
+  for i in $(seq 1 40); do
+    big_r="$(srv list-keys -T prefix | grep -E '^bind-key +-T prefix +R ')"
+    [[ "$big_r" != *source-file* ]] && break
+    sleep 0.25
+  done
+  [[ "$big_r" == *reload* ]]
+  [[ "$big_r" != *source-file* ]]
+  # Pressing it reloads, and r stays grofe's reload.
+  mark_loader
+  press_prefix_key R
+  wait_loader_ran
+  for key in r R; do
+    after_press="$(srv list-keys -T prefix | grep -E "^bind-key +-T prefix +$key ")"
+    [[ "$after_press" == *reload* ]]
+    [[ "$after_press" != *source-file* ]]
+  done
+}
+
 @test "grofe under its own name, on its native config, loads the same set" {
   need_grofe
   copy_store
