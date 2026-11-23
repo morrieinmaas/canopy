@@ -237,6 +237,10 @@ respawn_changes_pid() {
   start_which_key
   grofe_bin="$(command -v "${CANOPY_GROFE:-}" || true)"
   [ -n "$grofe_bin" ] || skip "no grofe binary (set CANOPY_GROFE)"
+  # The menu reaches grofe as `tmux`, so it parses in tmux's dialect.
+  mkdir -p "$BATS_TEST_TMPDIR/gbin"
+  ln -sf "$grofe_bin" "$BATS_TEST_TMPDIR/gbin/tmux"
+  grofe_bin="$BATS_TEST_TMPDIR/gbin/tmux"
   cmd="$(menu_command @wk_menu_panes "Respawn pane")"
   gsock="canopy-wkg-$$"
   "$grofe_bin" -L "$gsock" new-session -d -s main -c "$BATS_TEST_TMPDIR/here" 'sleep 600'
@@ -317,6 +321,10 @@ stored_as_typed() {
   start_which_key
   grofe_bin="$(command -v "${CANOPY_GROFE:-}" || true)"
   [ -n "$grofe_bin" ] || skip "no grofe binary (set CANOPY_GROFE)"
+  # The menu reaches grofe as `tmux`, so it parses in tmux's dialect.
+  mkdir -p "$BATS_TEST_TMPDIR/gbin"
+  ln -sf "$grofe_bin" "$BATS_TEST_TMPDIR/gbin/tmux"
+  grofe_bin="$BATS_TEST_TMPDIR/gbin/tmux"
   gsock="canopy-wkg-$$"
   "$grofe_bin" -L "$gsock" new-session -d -s main 'sleep 600'
   "$grofe_bin" -L "$gsock" new-window -t main: 'sleep 600'
