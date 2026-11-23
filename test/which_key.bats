@@ -34,6 +34,7 @@ setup() {
 
 teardown() {
   [ -z "${tmux37:-}" ] || kill_tmux_server "$sock"
+  [ -z "${gsock:-}" ] || "$grofe_bin" -L "$gsock" kill-server >/dev/null 2>&1 || true
   return 0
 }
 
@@ -205,22 +206,22 @@ menu_command() {
 # and check the pane's process changed and it respawned in that directory.
 respawn_changes_pid() {
   local bin="$1" sk="$2" cmd="$3"
-  "$bin" -L "$sk" new-window -t main: -c "$there" 'sleep 600'
-  "$bin" -L "$sk" select-window -t main:1
-  attach_client "$bin" "$sk"
-  [ "$("$bin" -L "$sk" display-message -p -t main:1 '#{pane_current_path}')" = "$there" ]
+  "$bin" -L "$sk" new-window -t main: -c "$there" 'sleep 600' || return 1
+  "$bin" -L "$sk" select-window -t main:1 || return 1
+  attach_client "$bin" "$sk" || return 1
+  [ "$("$bin" -L "$sk" display-message -p -t main:1 '#{pane_current_path}')" = "$there" ] || return 1
   old="$("$bin" -L "$sk" display-message -p -t main:1 '#{pane_pid}')"
   # The confirm waits on the client until it is answered, so it runs apart.
   printf '%s\n' "${cmd/confirm-before/confirm-before -t $client}" >"$BATS_TEST_TMPDIR/confirm"
   ("$bin" -L "$sk" source-file "$BATS_TEST_TMPDIR/confirm" >/dev/null 2>&1 3>&- &)
   sleep 1
-  "$bin" -L "$sk" send-keys -K -c "$client" y
+  "$bin" -L "$sk" send-keys -K -c "$client" y || return 1
   for _ in $(seq 1 40); do
     [ "$("$bin" -L "$sk" display-message -p -t main:1 '#{pane_pid}')" != "$old" ] && break
     sleep 0.1
   done
-  [ "$("$bin" -L "$sk" display-message -p -t main:1 '#{pane_pid}')" != "$old" ]
-  [ "$("$bin" -L "$sk" display-message -p -t main:1 '#{pane_current_path}')" = "$there" ]
+  [ "$("$bin" -L "$sk" display-message -p -t main:1 '#{pane_pid}')" != "$old" ] || return 1
+  [ "$("$bin" -L "$sk" display-message -p -t main:1 '#{pane_current_path}')" = "$there" ] || return 1
 }
 
 @test "which-key: Respawn pane asks first, and takes the pane directory when it runs" {
@@ -233,10 +234,18 @@ respawn_changes_pid() {
   respawn_changes_pid "$tmux37" "$sock" "$cmd"
 }
 
+@test "which-key: upstream's restart-pane alias, which bakes in a directory, is gone" {
+  start_which_key
+  # The plugin sets it at load, and tmux expands it once, in the pane then
+  # current; the Respawn pane item does not use it.
+  grep -qF 'restart-pane=' "$store/plugins/tmux-which-key/plugin/init.tmux"
+  [ -z "$(srv show-options -g command-alias | grep -F 'restart-pane')" ]
+}
+
 @test "which-key: Respawn pane works on grofe too" {
   start_which_key
-  grofe_bin="$(command -v "${CANOPY_GROFE:-}" || true)"
-  [ -n "$grofe_bin" ] || skip "no grofe binary (set CANOPY_GROFE)"
+  grofe_bin="$(command -v "${CANOPY_GROFE:-grofe}" || true)"
+  [ -n "$grofe_bin" ] || skip "no grofe binary"
   # The menu reaches grofe as `tmux`, so it parses in tmux's dialect.
   mkdir -p "$BATS_TEST_TMPDIR/gbin"
   ln -sf "$grofe_bin" "$BATS_TEST_TMPDIR/gbin/tmux"
@@ -244,10 +253,9 @@ respawn_changes_pid() {
   cmd="$(menu_command @wk_menu_panes "Respawn pane")"
   gsock="canopy-wkg-$$"
   "$grofe_bin" -L "$gsock" new-session -d -s main -c "$BATS_TEST_TMPDIR/here" 'sleep 600'
-  run respawn_changes_pid "$grofe_bin" "$gsock" "$cmd"
-  "$grofe_bin" -L "$gsock" kill-server 2>/dev/null || true
-  printf '%s\n' "$output"
-  [ "$status" -eq 0 ]
+  # Called directly, so each of its checks fails the test; teardown kills the
+  # server.
+  respawn_changes_pid "$grofe_bin" "$gsock" "$cmd"
 }
 
 @test "which-key: Reload config on tmux reloads canopy's tmux.conf, not ~/.tmux.conf" {
@@ -281,8 +289,8 @@ respawn_changes_pid() {
 prompt_rename() {
   local bin="$1" sk="$2" cmd
   cmd="$(menu_command "$3" "$4")"
-  [[ "$cmd" == "command-prompt "* ]]
-  attach_client "$bin" "$sk"
+  [[ "$cmd" == "command-prompt "* ]] || return 1
+  attach_client "$bin" "$sk" || return 1
   printf '%s\n' "${cmd/command-prompt/command-prompt -t $client}" >"$BATS_TEST_TMPDIR/prompt"
   ("$bin" -L "$sk" source-file "$BATS_TEST_TMPDIR/prompt" >/dev/null 2>&1 3>&- &)
   sleep 1
@@ -319,8 +327,8 @@ stored_as_typed() {
 
 @test "which-key: the Rename items store such a name on grofe too" {
   start_which_key
-  grofe_bin="$(command -v "${CANOPY_GROFE:-}" || true)"
-  [ -n "$grofe_bin" ] || skip "no grofe binary (set CANOPY_GROFE)"
+  grofe_bin="$(command -v "${CANOPY_GROFE:-grofe}" || true)"
+  [ -n "$grofe_bin" ] || skip "no grofe binary"
   # The menu reaches grofe as `tmux`, so it parses in tmux's dialect.
   mkdir -p "$BATS_TEST_TMPDIR/gbin"
   ln -sf "$grofe_bin" "$BATS_TEST_TMPDIR/gbin/tmux"
@@ -331,9 +339,14 @@ stored_as_typed() {
   "$grofe_bin" -L "$gsock" select-window -t main:1
   stored_as_typed "$grofe_bin" "$gsock" window
   want="$("$grofe_bin" -L "$gsock" list-windows -t main -F '#{window_name}' | /usr/bin/sed -n 2p)"
+  [ "$want" != plain ]
   "$grofe_bin" -L "$gsock" rename-window -t main:1 plain
-  run prompt_rename "$grofe_bin" "$gsock" @wk_menu_windows Rename "$typed"
-  name="$("$grofe_bin" -L "$gsock" list-windows -t main -F '#{window_name}' | /usr/bin/sed -n 2p)"
-  "$grofe_bin" -L "$gsock" kill-server 2>/dev/null || true
-  [ "$name" = "$want" ] || skip "this grofe lacks %%% (got: $name, want: $want)"
+  prompt_rename "$grofe_bin" "$gsock" @wk_menu_windows Rename "$typed"
+  [ "$("$grofe_bin" -L "$gsock" list-windows -t main -F '#{window_name}' | /usr/bin/sed -n 2p)" = "$want" ]
+  stored_as_typed "$grofe_bin" "$gsock" session
+  want="$("$grofe_bin" -L "$gsock" list-sessions -F '#{session_name}')"
+  [ "$want" != plain ]
+  "$grofe_bin" -L "$gsock" rename-session plain
+  prompt_rename "$grofe_bin" "$gsock" @wk_menu_sessions Rename "$typed"
+  [ "$("$grofe_bin" -L "$gsock" list-sessions -F '#{session_name}')" = "$want" ]
 }

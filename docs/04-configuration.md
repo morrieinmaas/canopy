@@ -149,6 +149,15 @@ the truth.
 and what happens to a malformed row is in
 [02-commands.md](02-commands.md#canopy-keys).
 
+`prefix R` is a row too, `canopy-reload-alt`, and does what `prefix r` does: reload
+canopy, with canopy's `tmux.conf` on tmux and grofe's own `reload` on grofe. tmux-sensible
+binds `R` to a `source-file` of `~/.tmux.conf`, when nothing has bound it yet, and
+canopy reads no such file. On grofe that binding would be worse than useless:
+sourcing canopy's `tmux.conf` there rebinds `r` to a tmux-dialect reload that grofe's
+own `reload` then keeps. Because the key layer loads before the plugins, `R` is
+already bound when tmux-sensible looks, so it leaves it alone, on every reload too.
+Rebinding it is no different from rebinding any other key in the table.
+
 Your own bindings go in `user.conf`, not in the table, and because `user.conf` is
 sourced last they win over anything in it. Rebinding one of canopy's keys is a
 `bind` line in `user.conf`; there is no need to edit the table.

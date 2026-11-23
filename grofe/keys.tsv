@@ -13,3 +13,4 @@
 #
 # name	command	reason
 canopy-reload	reload ; display-message "canopy: reloaded"	grofe re-reads every layer with its own reload, which validates them all first and applies all or nothing
+canopy-reload-alt	reload ; display-message "canopy: reloaded"	the same as canopy-reload: grofe re-reads every layer with its own reload, and with R bound here tmux-sensible leaves it alone

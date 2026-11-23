@@ -527,6 +527,41 @@ EOF
   [[ "$output" != *"MODIFIED"* ]]
 }
 
+# mark_loader, then a reload, then wait_loader_ran: the loader has run again
+# once the marker is gone. The marker is an alias upstream's which-key sets
+# and canopy's which-key.conf unsets, and which-key loads after tmux-sensible,
+# so by then sensible has had its say too.
+mark_loader() {
+  srv set-option -g 'command-alias[203]' 'restart-pane=display-message marker'
+  srv show-options -g command-alias | grep -qF 'restart-pane='
+}
+
+wait_loader_ran() {
+  local i
+  for i in $(seq 1 120); do
+    srv show-options -g command-alias | grep -qF 'restart-pane=' || return 0
+    sleep 0.25
+  done
+  printf 'the loader did not run again\n' >&2
+  return 1
+}
+
+# press_prefix_key <key>: the key after the prefix, typed on a client on a
+# pty, as a user does. The client is kept for 30 s.
+press_prefix_key() {
+  local client="" i
+  if ! srv list-clients -F '#{client_name}' | grep -q .; then
+    (sleep 30 | script -q /dev/null "$bin/tmux" -L grofe-tp3 attach -t main) >/dev/null 2>&1 3>&- &
+    for i in $(seq 1 40); do
+      srv list-clients -F '#{client_name}' | grep -q . && break
+      sleep 0.1
+    done
+  fi
+  client="$(srv list-clients -F '#{client_name}' | head -n 1)"
+  [ -n "$client" ] || return 1
+  srv send-keys -K -c "$client" C-s "$1"
+}
+
 # reload_config_through_tmux <socket-name>: canopy's which-key Reload config
 # on a grofe server, run through the tmux-named client the menu item runs in.
 # It has to succeed and reload: a user option added to user.toml since the
@@ -578,12 +613,31 @@ reload_config_through_tmux() {
   big_r="$(srv list-keys -T prefix | grep -E '^bind-key +-T prefix +R ')"
   [[ "$big_r" == *reload* ]]
   [[ "$big_r" != *source-file* ]]
-  # What R now runs, by grofe's own name: `reload` is no tmux command.
+  # What R now runs, by grofe's own name: `reload` is no tmux command. The
+  # loader runs again on it, tmux-sensible included, and must leave R alone.
+  mark_loader
   "$grofe_bin" -L grofe-tp3 reload
-  sleep 1
+  wait_loader_ran
   r_after="$(srv list-keys -T prefix | grep -E '^bind-key +-T prefix +r ')"
   [[ "$r_after" == *reload* ]]
   [[ "$r_after" != *source-file* ]]
+  big_r="$(srv list-keys -T prefix | grep -E '^bind-key +-T prefix +R ')"
+  [[ "$big_r" == *reload* ]]
+  [[ "$big_r" != *source-file* ]]
+  # Pressing it reloads the config, and leaves r and R as they were.
+  toml="$XDG_CONFIG_HOME/grofe/user.toml"
+  [ -z "$(srv show-options -gqv @reload_marker_r)" ]
+  awk '{ print } /^\[user-options\]$/ { print "reload_marker_r = \"yes\"" }' "$toml" >"$toml.new"
+  mv "$toml.new" "$toml"
+  mark_loader
+  press_prefix_key R
+  wait_loader_ran
+  [ "$(srv show-options -gqv @reload_marker_r)" = yes ]
+  for key in r R; do
+    after_press="$(srv list-keys -T prefix | grep -E "^bind-key +-T prefix +$key ")"
+    [[ "$after_press" == *reload* ]]
+    [[ "$after_press" != *source-file* ]]
+  done
   run plugin_log
   assert_dormant_count "$output" 2
   # No plugin wrote into its vendored tree.
