@@ -60,6 +60,11 @@ load-commands = [
   # never takes over, and sensible skips. Rebind it to grofe's reload, as the
   # row does, only while it still sources a tmux config.
   """if-shell 'tmux list-keys -T prefix | grep -E "prefix +R " | grep -q source-file' 'bind-key R { reload ; display-message "canopy: reloaded" }'""",
+  # The same gap for y: a server that loaded tmux-yank before yank_line
+  # moved has a runtime prefix y running copy_line.sh, which flashes copy
+  # mode instead of opening the notification tray. Rebind it to the tray
+  # only while it still runs that script.
+  """if-shell 'tmux list-keys -T prefix | grep -E "prefix +y " | grep -q copy_line' 'bind-key y choose-notification'""",
   # No save wrapper and no M-s rebind here, which is where the tmux layer
   # has both: neither resurrect nor continuum loads on grofe, so there is no
   # save loop to serialise, and the key table's own M-s says grofe saves by
@@ -80,6 +85,9 @@ resurrect-save-command-strategy = "../../strategies/canopy_save_command"
 # takes canopy's prefix-send binding.
 resurrect-save = "M-s"
 resurrect-restore = "M-r"
+# tmux-yank's copy-line key, moved off y before it loads: on grofe, prefix y
+# opens the notification tray.
+yank_line = "M-y"
 # which-key loads its prebuilt default menu: its build imports a git
 # submodule vendoring leaves out.
 tmux-which-key-disable-autobuild = "1"
