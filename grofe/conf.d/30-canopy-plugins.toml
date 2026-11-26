@@ -28,9 +28,9 @@ requires = "grofe >= 0.1"
 #
 # opensessions and tmux-claude-session-manager are not in the loader list
 # either: grofe has its own agent list and sidebar. The tmux layer still
-# loads them. tmux-which-key does load: its grouped prefix Space menu is
-# plain display-menu, which grofe draws as tmux does, and grofe's own key
-# menu lists every binding rather than grouping the common ones.
+# loads them. tmux-which-key does not load either: prefix Space is grofe's own
+# key menu (`key-menu -T prefix`, its built-in binding), which has an Agents
+# section and fuzzy search. The tmux layer still loads which-key.
 
 load-commands = [
   # Which persistence this server got, the same answer 30-plugins.conf
@@ -49,11 +49,9 @@ load-commands = [
   # Which saved commands resurrect may replay, generated from the installed
   # adapters, before resurrect loads.
   """if-shell '[ -x "$CANOPY_STORE/plugins/strategies/canopy_restore_processes.sh" ]' 'run-shell "$CANOPY_STORE/plugins/strategies/canopy_restore_processes.sh"'""",
-  # The plugin loader, over the eight names in tmux.conf's order. It loads into
-  # the server in $TMUX and no other. Then which-key's menu, titled "tmux"
-  # in its prebuilt form, is retitled grofe, in the same shell so it runs
-  # once which-key has bound it.
-  '''run-shell 'f="$CANOPY_STORE/lib/plugins.sh"; [ -r "$f" ] || exit 0; . "$CANOPY_STORE/lib/env.sh"; . "$f"; canopy_load_plugins tmux-resurrect tmux-continuum tmux-sensible tmux-yank tmux-fzf tmux-sessionx tmux-which-key tmux-fzf-url; sh "$CANOPY_STORE/grofe/which-key-title.sh"'''',
+  # The plugin loader, over the seven names in tmux.conf's order, minus
+  # which-key. It loads into the server in $TMUX and no other.
+  '''run-shell 'f="$CANOPY_STORE/lib/plugins.sh"; [ -r "$f" ] || exit 0; . "$CANOPY_STORE/lib/env.sh"; . "$f"; canopy_load_plugins tmux-resurrect tmux-continuum tmux-sensible tmux-yank tmux-fzf tmux-sessionx tmux-fzf-url'''',
   # An upgrade gap: a server started before the config R row existed has a
   # runtime R from tmux-sensible, `run-shell "tmux source-file <tmux.conf>"`.
   # A runtime binding beats the config's and survives `reload`, so the row
@@ -88,6 +86,6 @@ resurrect-restore = "M-r"
 # tmux-yank's copy-line key, moved off y before it loads: on grofe, prefix y
 # opens the notification tray.
 yank_line = "M-y"
-# which-key loads its prebuilt default menu: its build imports a git
+# which-key (tmux layer only) loads its prebuilt default menu: its build imports a git
 # submodule vendoring leaves out.
 tmux-which-key-disable-autobuild = "1"

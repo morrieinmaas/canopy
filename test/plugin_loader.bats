@@ -223,7 +223,7 @@ loaded() {
       esac
       ;;
     tmux-sensible) [[ "$(prefix_binding C-p)" == *" previous-window"* ]] ;;
-    tmux-yank) [[ "$(prefix_binding y)" == *"tmux-yank/scripts/copy_line.sh"* ]] ;;
+    tmux-yank) [[ "$(prefix_binding y)$(prefix_binding M-y)" == *"tmux-yank/scripts/copy_line.sh"* ]] ;;
     tmux-fzf) [[ "$(prefix_binding F)" == *"tmux-fzf/main.sh"* ]] ;;
     tmux-sessionx) [[ "$(prefix_binding O)" == *"tmux-sessionx/scripts/sessionx.sh"* ]] ;;
     # tmux expands the command alias which-key binds Space to.
@@ -255,19 +255,19 @@ assert_loaded_except() {
 
 plugin_log() { cat "$CANOPY_STATE/plugins.log" 2>/dev/null || true; }
 
-# Eight of the ten load on grofe. grofe snapshots, restores and resumes panes
+# Seven of the ten load on grofe. grofe snapshots, restores and resumes panes
 # itself, so resurrect and continuum are left dormant there (owner ruling
 # 2026-11-05), and the two lines saying so are the expected content of
 # plugins.log rather than noise. grofe also has its own agent list and
 # sidebar, so opensessions and tmux-claude-session-manager are not in its
-# loader list at all: not loaded, and not logged. Nothing else may be in the
+# loader list at all, nor is tmux-which-key (prefix Space is grofe key menu): not loaded, and not logged. Nothing else may be in the
 # log.
 #
 # Not named GROFE_*: setup_canopy_env unsets "${!GROFE@}" so no grofe
 # variable of the developer's leaks into a test, and that net caught this
 # one too, leaving every plugin expected to load and the exclusion silent.
 DORMANT_ON_GROFE="tmux-resurrect tmux-continuum"
-NATIVE_ON_GROFE="opensessions tmux-claude-session-manager"
+NATIVE_ON_GROFE="opensessions tmux-claude-session-manager tmux-which-key"
 
 assert_grofe_load() {
   local line
@@ -528,18 +528,20 @@ EOF
 }
 
 # mark_loader, then a reload, then wait_loader_ran: the loader has run again
-# once the marker is gone. The marker is an alias upstream's which-key sets
-# and canopy's which-key.conf unsets, and which-key loads after tmux-sensible,
-# so by then sensible has had its say too.
+# once the marker is gone. The marker is @canopy_persistence, which the first
+# load command of the grofe plugin layer sets back to grofe; the loader runs
+# after it, so wait_loader_ran also gives it a moment to finish.
 mark_loader() {
-  srv set-option -g 'command-alias[203]' 'restart-pane=display-message marker'
-  srv show-options -g command-alias | grep -qF 'restart-pane='
+  srv set-option -g @canopy_persistence marker
 }
 
 wait_loader_ran() {
   local i
   for i in $(seq 1 120); do
-    srv show-options -g command-alias | grep -qF 'restart-pane=' || return 0
+    if [ "$(srv show-options -gqv @canopy_persistence)" = grofe ]; then
+      sleep 3
+      return 0
+    fi
     sleep 0.25
   done
   printf 'the loader did not run again\n' >&2
@@ -562,25 +564,6 @@ press_prefix_key() {
   srv send-keys -K -c "$client" C-s "$1"
 }
 
-# reload_config_through_tmux <socket-name>: canopy's which-key Reload config
-# on a grofe server, run through the tmux-named client the menu item runs in.
-# It has to succeed and reload: a user option added to user.toml since the
-# server started is there afterwards.
-reload_config_through_tmux() {
-  local toml="$XDG_CONFIG_HOME/grofe/user.toml" i
-  [ -z "$("$bin/tmux" -L "$1" show-options -gqv @reload_marker)" ]
-  awk '{ print } /^\[user-options\]$/ { print "reload_marker = \"yes\"" }' "$toml" >"$toml.new"
-  mv "$toml.new" "$toml"
-  run "$bin/tmux" -L "$1" reload-config
-  printf '%s\n' "$output"
-  [ "$status" -eq 0 ]
-  for i in $(seq 1 40); do
-    [ "$("$bin/tmux" -L "$1" show-options -gqv @reload_marker)" = yes ] && return 0
-    sleep 0.25
-  done
-  return 1
-}
-
 # --- a real server -----------------------------------------------------------
 
 @test "grofe as tmux: the ported config loads the eight, with no load error and no load miss" {
@@ -590,20 +573,10 @@ reload_config_through_tmux() {
   wait_loaded tmux-fzf-url/fzf-url.sh
   assert_grofe_load
   assert_no_load_miss
-  # which-key's menu says grofe, not the "tmux" of its prebuilt form, once
-  # the loader's shell has run grofe/which-key-title.sh after the plugins.
-  for _ in $(seq 1 40); do
-    srv list-keys -T prefix | grep -E 'prefix +Space ' | grep -qF ']grofe#[' && break
-    sleep 0.25
-  done
-  srv list-keys -T prefix | grep -E 'prefix +Space ' | grep -qF ']grofe#['
-  srv show-options -g command-alias | grep 'show-wk-menu=' | grep -qF ']grofe#['
-  ! srv show-options -g command-alias | grep 'show-wk-menu' | grep -qF ']tmux#[
-  # canopy's own menu, tmux/which-key.conf, is the one the Space alias holds,
-  # and its aliases expand when they run.
-  srv list-keys -T prefix | grep -E 'prefix +Space ' | grep -qF '+Copy'
-  ! srv list-keys -T prefix | grep -E 'prefix +Space ' | grep -qF '+Keys'
-  srv show-options -g @wk_menu_panes | grep -qF 'respawn-pane -k -c'
+  # which-key is not loaded: no display-menu on Space, no wk aliases. (Under
+  # the tmux name Space keeps tmux's default; grofe's key menu is native.)
+  ! srv list-keys -T prefix | grep -E 'prefix +Space ' | grep -qF 'display-menu'
+  ! srv show-options -g command-alias | grep -qF 'show-wk-menu'
   # tmux-sensible binds prefix R to a tmux.conf source; on grofe that would
   # leave prefix r reloading tmux.conf. R is grofe's reload instead, and
   # running it leaves prefix r on grofe's reload too.
@@ -644,8 +617,6 @@ reload_config_through_tmux() {
   for name in $PLUGINS; do
     [ "$(canopy_plugin_recorded_digest "$name")" = "$(canopy_plugin_digest "$store/plugins/$name")" ]
   done
-  # The menu's Reload config, last: a reload loads the plugins again.
-  reload_config_through_tmux grofe-tp3
 }
 
 @test "grofe: a runtime R from tmux-sensible, as an older server had, is rebound to grofe's reload" {
@@ -686,13 +657,10 @@ reload_config_through_tmux() {
   start grofe
   wait_loaded tmux-fzf-url/fzf-url.sh
   assert_grofe_load
-  # canopy's which-key menu: Space opens its root menu. Its Reload config item
-  # runs in the tmux dialect, where grofe has no reload command, so it
-  # reaches grofe's own reload as a shell command.
-  "$bin/tmux" -L grofe-tp3n list-keys -T prefix | grep -E 'prefix +Space ' | grep -qF '+Copy'
+  # Space is grofe's key menu, and which-key is not loaded.
+  "$bin/tmux" -L grofe-tp3n list-keys -T prefix | grep -E 'prefix +Space ' | grep -qF 'key-menu'
   run plugin_log
   assert_dormant_count "$output" 2
-  reload_config_through_tmux grofe-tp3n
 }
 
 @test "grofe: with tmux-fzf-url moved aside only it is dormant, and doctor calls it missing" {
@@ -700,8 +668,8 @@ reload_config_through_tmux() {
   copy_store
   mv "$store/plugins/tmux-fzf-url" "$BATS_TEST_TMPDIR/tmux-fzf-url.aside"
   start grofe-tmux
-  # which-key is the last to load with tmux-fzf-url aside.
-  wait_loaded show-wk-menu
+  # tmux-fzf-url is aside, so wait on the last plugin before it.
+  wait_loaded tmux-sessionx/scripts/sessionx.sh
   # shellcheck disable=SC2086
   assert_loaded_except $DORMANT_ON_GROFE $NATIVE_ON_GROFE tmux-fzf-url
   run plugin_log
