@@ -3,7 +3,7 @@ load helper
 
 # The plugin loader: canopy_load_plugins in lib/plugins.sh, called from
 # 30-plugins.conf on tmux and from the grofe plugin fragment's
-# load-commands, over the ten vendored plugins (eight of them on grofe).
+# load-commands, over the ten vendored plugins (seven of them on grofe).
 #
 # Every server here runs on a private socket in the suite's private socket
 # directory (test/setup_suite.bash), with a scratch $HOME and XDG tree, and
@@ -260,8 +260,8 @@ plugin_log() { cat "$CANOPY_STATE/plugins.log" 2>/dev/null || true; }
 # 2026-11-05), and the two lines saying so are the expected content of
 # plugins.log rather than noise. grofe also has its own agent list and
 # sidebar, so opensessions and tmux-claude-session-manager are not in its
-# loader list at all, nor is tmux-which-key (prefix Space is grofe key menu): not loaded, and not logged. Nothing else may be in the
-# log.
+# loader list at all, nor is tmux-which-key (prefix Space is grofe's key
+# menu): not loaded, and not logged. Nothing else may be in the log.
 #
 # Not named GROFE_*: setup_canopy_env unsets "${!GROFE@}" so no grofe
 # variable of the developer's leaks into a test, and that net caught this
@@ -376,7 +376,7 @@ call_list() {
   tr '\n' ' ' <"$1" | sed -n 's/.*canopy_load_plugins \(.*\)/\1/p' | sed "s/[';].*//; s/\\\\//g" | tr -s ' ' | sed 's/^ //; s/ $//'
 }
 
-@test "tmux.conf loads the ten in VERSIONS order, the grofe fragment the eight" {
+@test "tmux.conf loads the ten in VERSIONS order, the grofe fragment the seven" {
   want="$(canopy_plugin_names | tr '\n' ' ' | sed 's/ $//')"
   [ "$(call_list "$CANOPY_STORE/tmux/tmux.conf")" = "$want" ]
   # grofe does agents and the sidebar natively, so its list leaves out two.
@@ -528,20 +528,16 @@ EOF
 }
 
 # mark_loader, then a reload, then wait_loader_ran: the loader has run again
-# once the marker is gone. The marker is @canopy_persistence, which the first
-# load command of the grofe plugin layer sets back to grofe; the loader runs
-# after it, so wait_loader_ran also gives it a moment to finish.
+# once prefix u is bound to tmux-fzf-url again. That is the last plugin the
+# loader loads, so tmux-sensible has had its say by then.
 mark_loader() {
-  srv set-option -g @canopy_persistence marker
+  srv unbind-key -T prefix u
 }
 
 wait_loader_ran() {
   local i
   for i in $(seq 1 120); do
-    if [ "$(srv show-options -gqv @canopy_persistence)" = grofe ]; then
-      sleep 3
-      return 0
-    fi
+    srv list-keys -T prefix | grep -E 'prefix +u ' | grep -qF 'tmux-fzf-url/fzf-url.sh' && return 0
     sleep 0.25
   done
   printf 'the loader did not run again\n' >&2
@@ -566,16 +562,15 @@ press_prefix_key() {
 
 # --- a real server -----------------------------------------------------------
 
-@test "grofe as tmux: the ported config loads the eight, with no load error and no load miss" {
+@test "grofe as tmux: the ported config loads the seven, with no load error and no load miss" {
   need_grofe
   copy_store
   start grofe-tmux
   wait_loaded tmux-fzf-url/fzf-url.sh
   assert_grofe_load
   assert_no_load_miss
-  # which-key is not loaded: no display-menu on Space, no wk aliases. (Under
-  # the tmux name Space keeps tmux's default; grofe's key menu is native.)
-  ! srv list-keys -T prefix | grep -E 'prefix +Space ' | grep -qF 'display-menu'
+  # which-key is not loaded: Space is grofe's key menu even under the tmux name.
+  srv list-keys -T prefix | grep -E 'prefix +Space ' | grep -qF 'key-menu'
   ! srv show-options -g command-alias | grep -qF 'show-wk-menu'
   # tmux-sensible binds prefix R to a tmux.conf source; on grofe that would
   # leave prefix r reloading tmux.conf. R is grofe's reload instead, and
