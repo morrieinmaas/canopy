@@ -167,8 +167,11 @@ sourced last they win over anything in it. Rebinding one of canopy's keys is a
 
 ## The which-key menu
 
-`prefix Space` opens the grouped menu from tmux-which-key, on tmux and on grofe.
-The plugin is vendored verbatim and its menu builder cannot run there, so it
+`prefix Space` opens the grouped menu from tmux-which-key on tmux. On grofe it
+opens grofe's own key menu (`key-menu -T prefix`, with an Agents section and fuzzy
+search) and which-key does not load; the rest of this section is the tmux menu.
+The plugin is vendored verbatim and its menu builder cannot run vendored (its build imports a git submodule
+vendoring leaves out), so it
 loads its prebuilt default menu. canopy lays its own over it in
 [`tmux/which-key.conf`](https://github.com/morrieinmaas/canopy/blob/main/tmux/which-key.conf):
 the plugin loader sources that file straight after which-key loads, and again on
@@ -177,13 +180,9 @@ alias when the key is bound: left alone, Space would still open the prebuilt men
 The differences from the prebuilt menu are:
 
 - **Windows, Layout, Tiled** runs `select-layout tiled`. Commands in the menu are
-  written with full names, not tmux's short aliases, so tmux and grofe parse the
-  same menu.
+  written with full names, not tmux's short aliases.
 - **Client, Reload config** reloads canopy, the same as `prefix r`: canopy's
-  `tmux.conf` on tmux, grofe's own `reload` on grofe. The item runs in tmux's
-  dialect on both, where grofe has no `reload` command, so on grofe it runs
-  `reload` as a shell command, through the binary behind the `tmux` on the job's
-  `PATH`. It used to source `~/.tmux.conf`.
+  `tmux.conf`. It used to source `~/.tmux.conf`.
 - **Windows, Rename** and **Sessions, Rename** take a name with a space, quotes, a
   backslash or a `$` in it, stored as typed (the prompt uses tmux's escaped `%%%`). The
   prompt's template had lost a level of quoting and refused one.
