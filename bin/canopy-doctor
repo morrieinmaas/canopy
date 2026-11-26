@@ -171,7 +171,7 @@ else
   if canopy_have bash; then
     printf '  bash (nine of the ten plugins are bash scripts): yes\n'
   else
-    printf '  bash (nine of the ten plugins are bash scripts): dormant (bash not found, only tmux-which-key loads)\n'
+    printf '  bash (nine of the ten plugins are bash scripts): dormant (bash not found)\n'
   fi
 
   # ps is the other half of the same story and the nastier half. An absent

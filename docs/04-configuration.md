@@ -170,7 +170,8 @@ sourced last they win over anything in it. Rebinding one of canopy's keys is a
 `prefix Space` opens the grouped menu from tmux-which-key on tmux. On grofe it
 opens grofe's own key menu (`key-menu -T prefix`, with an Agents section and fuzzy
 search) and which-key does not load; the rest of this section is the tmux menu.
-The plugin is vendored verbatim and its menu builder cannot run there, so it
+The plugin is vendored verbatim and its menu builder cannot run vendored (its build imports a git submodule
+vendoring leaves out), so it
 loads its prebuilt default menu. canopy lays its own over it in
 [`tmux/which-key.conf`](https://github.com/morrieinmaas/canopy/blob/main/tmux/which-key.conf):
 the plugin loader sources that file straight after which-key loads, and again on
